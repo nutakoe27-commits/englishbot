@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import urllib.parse
 from typing import Optional
 
@@ -19,6 +20,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .yandex_voice import run_yandex_session
+
+# ─── Конфигурация логирования ──────────────────────────────────────────
+# Без этого logger.info(...) не виден в stdout docker'а — uvicorn настраивает
+# только свои логгеры, а рут-логгер остаётся на WARNING.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -165,8 +176,8 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
 
     # ── Принимаем WebSocket-соединение ────────────────────────────────────
     await websocket.accept()
-    logger.info(
-        "WebSocket /ws/voice принят: client=%s user_id=%s",
+    logger.warning(
+        "[WS] /ws/voice принят: client=%s user_id=%s",
         websocket.client,
         user_info.get("id") if user_info else "anonymous",
     )

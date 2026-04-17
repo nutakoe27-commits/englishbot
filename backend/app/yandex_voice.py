@@ -138,6 +138,7 @@ async def _stt_stream(
                 if event == "final":
                     alts = response.final.alternatives
                     if alts and alts[0].text.strip():
+                        logger.warning("[STT] final: %s", alts[0].text.strip())
                         yield ("final", alts[0].text.strip())
                 elif event == "final_refinement":
                     alts = response.final_refinement.normalized_text.alternatives
@@ -283,6 +284,8 @@ async def run_yandex_session(websocket: WebSocket) -> None:
         logger.error("YC_API_KEY или YC_FOLDER_ID не заданы")
         await websocket.close(code=1011, reason="Server misconfiguration: Yandex credentials missing")
         return
+
+    logger.warning("[Yandex] run_yandex_session старт (folder=%s, voice=%s)", folder_id, voice)
 
     # Общая очередь событий для STT: audio-чанки + eou-маркеры от клиента.
     # Порядок важен: eou должен прийти после всех audio-чанков текущей фразы.
