@@ -4,7 +4,7 @@
  * Архитектура:
  *   1. Push-to-talk: удерживай кнопку → запись идёт, отпусти → ждём ответ
  *   2. Аудио захватывается через getUserMedia → AudioWorklet (PCM 16kHz 16bit)
- *   3. PCM-фреймы отправляются по WebSocket на backend → Gemini Live API
+ *   3. PCM-фреймы отправляются по WebSocket на backend → Yandex SpeechKit
  *   4. Ответный PCM 24kHz воспроизводится через AudioContext / AudioBuffer
  *   5. Транскрипции отображаются в лог диалога
  */
@@ -31,7 +31,7 @@ interface DialogEntry {
 // ─── Константы ────────────────────────────────────────────────────────────────
 
 const WS_URL = "wss://api-english.krichigindocs.ru/ws/voice";
-const OUTPUT_SAMPLE_RATE = 24000; // Gemini отдаёт 24 kHz PCM
+const OUTPUT_SAMPLE_RATE = 24000; // Yandex TTS отдаёт 24 kHz PCM
 const MAX_LOG_ENTRIES = 6;
 
 // ─── Утилиты ──────────────────────────────────────────────────────────────────
@@ -196,13 +196,80 @@ export default function App() {
     };
   }, [addLogEntry, enqueueAudio]);
 
-  // ── Начало записи: getUserMedia + AudioWorklet ────────────────────────────
+  // ── Инициализация микрофона (один раз за сессию) ──────────────────────────
+  // Запрашиваем getUserMedia только при первом push-to-talk в сессии.
+  // Дальше push-to-talk только mute/unmute трека — браузер не спрашивает повторно.
+  const ensureMicrophone = useCallback(async () => {
+    if (mediaStreamRef.current && workletNodeRef.current) {
+      // Уже инициализирован
+      return true;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      mediaStreamRef.current = stream;
+      // Сразу мьютим — иначе фрейма уйдут пока пользователь ещё не нажал кнопку
+      stream.getAudioTracks().forEach((t) => (t.enabled = false));
+
+      let captureCtx = audioCtxRef.current;
+      if (!captureCtx || captureCtx.state === "closed") {
+        captureCtx = new AudioContext();
+        audioCtxRef.current = captureCtx;
+      }
+      if (captureCtx.state === "suspended") {
+        await captureCtx.resume();
+      }
+
+      try {
+        await captureCtx.audioWorklet.addModule("/pcm-recorder-worklet.js");
+      } catch {
+        // уже загружен
+      }
+
+      const workletNode = new AudioWorkletNode(
+        captureCtx,
+        "pcm-recorder-processor"
+      );
+      workletNodeRef.current = workletNode;
+
+      workletNode.port.onmessage = (e: MessageEvent<Int16Array>) => {
+        if (
+          wsRef.current?.readyState === WebSocket.OPEN &&
+          isRecordingRef.current
+        ) {
+          wsRef.current.send(e.data.buffer);
+        }
+      };
+
+      const source = captureCtx.createMediaStreamSource(stream);
+      sourceNodeRef.current = source;
+      source.connect(workletNode);
+      // Не подключаем к destination — чтобы не было эха
+      return true;
+    } catch (err) {
+      console.error("Ошибка захвата микрофона:", err);
+      setAppState("error");
+      setErrorMsg("Microphone access denied or unavailable.");
+      setStatusText("Error");
+      return false;
+    }
+  }, []);
+
+  // ── Начало записи (unmute уже открытого микрофона) ────────────────────────
   const startRecording = useCallback(async () => {
     if (appState === "idle") {
       await openConnection();
     }
 
-    // Ждём соединения (если только что открыли)
+    // Ждём соединения
     let attempts = 0;
     while (
       wsRef.current?.readyState !== WebSocket.OPEN &&
@@ -218,75 +285,36 @@ export default function App() {
       return;
     }
 
+    // Первый раз — запрашиваем микрофон. Дальше — только unmute.
+    const micOk = await ensureMicrophone();
+    if (!micOk) return;
+
     setAppState("recording");
     isRecordingRef.current = true;
     setStatusText("Listening…");
 
-    try {
-      // Захватываем микрофон
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      mediaStreamRef.current = stream;
-
-      // Создаём AudioContext для захвата (если нужен отдельный)
-      let captureCtx = audioCtxRef.current;
-      if (!captureCtx || captureCtx.state === "closed") {
-        captureCtx = new AudioContext();
-        audioCtxRef.current = captureCtx;
-      }
-      if (captureCtx.state === "suspended") {
-        await captureCtx.resume();
-      }
-
-      // Загружаем AudioWorklet
-      try {
-        await captureCtx.audioWorklet.addModule("/pcm-recorder-worklet.js");
-      } catch {
-        // Если уже загружен — игнорируем ошибку
-      }
-
-      const workletNode = new AudioWorkletNode(
-        captureCtx,
-        "pcm-recorder-processor"
-      );
-      workletNodeRef.current = workletNode;
-
-      // Получаем PCM-фреймы из воркплета и отправляем по WebSocket
-      workletNode.port.onmessage = (e: MessageEvent<Int16Array>) => {
-        if (
-          wsRef.current?.readyState === WebSocket.OPEN &&
-          isRecordingRef.current
-        ) {
-          wsRef.current.send(e.data.buffer);
-        }
-      };
-
-      // Подключаем источник → воркплет
-      const source = captureCtx.createMediaStreamSource(stream);
-      sourceNodeRef.current = source;
-      source.connect(workletNode);
-      // Не подключаем к destination — чтобы не было эха
-    } catch (err) {
-      console.error("Ошибка захвата микрофона:", err);
-      setAppState("error");
-      setErrorMsg("Microphone access denied or unavailable.");
-      setStatusText("Error");
+    // Размьютим трек — пошли фреймы из worklet'а в WS
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = true));
     }
-  }, [appState, openConnection]);
+  }, [appState, openConnection, ensureMicrophone]);
 
-  // ── Остановка записи ──────────────────────────────────────────────────────
+  // ── Остановка записи (mute, но микрофон не релизим) ───────────────────────
   const stopRecording = useCallback(() => {
     if (!isRecordingRef.current) return;
     isRecordingRef.current = false;
 
-    // Останавливаем воркплет и медиапоток
+    // Мьютим трек — браузер перестаёт давать семплы, но разрешение остаётся
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = false));
+    }
+
+    setAppState("connected");
+    setStatusText("Thinking…");
+  }, []);
+
+  // ── Полный релиз микрофона и аудио — только при End Session ──────────────
+  const releaseMicrophone = useCallback(() => {
     if (sourceNodeRef.current) {
       sourceNodeRef.current.disconnect();
       sourceNodeRef.current = null;
@@ -299,14 +327,12 @@ export default function App() {
       mediaStreamRef.current.getTracks().forEach((t) => t.stop());
       mediaStreamRef.current = null;
     }
-
-    setAppState("connected");
-    setStatusText("Thinking…");
-  }, [appState]);
+  }, []);
 
   // ── Разрыв соединения ─────────────────────────────────────────────────────
   const closeConnection = useCallback(() => {
     stopRecording();
+    releaseMicrophone();
     wsClosingRef.current = true;
     if (wsRef.current) {
       wsRef.current.close(1000);
@@ -314,7 +340,7 @@ export default function App() {
     }
     setAppState("idle");
     setStatusText("Ready to talk");
-  }, [stopRecording]);
+  }, [stopRecording, releaseMicrophone]);
 
   // ── Обработчики кнопки (pointer events — работают и на mobile, и на desktop)
   const handlePointerDown = useCallback(
@@ -444,7 +470,7 @@ export default function App() {
 
       {/* Подвал */}
       <div style={styles.footer}>
-        <p style={styles.footerText}>Powered by Gemini Live · A2–B1 English</p>
+        <p style={styles.footerText}>Powered by Yandex SpeechKit · A2–B1 English</p>
       </div>
 
       {/* Pulse-анимация для состояния записи */}

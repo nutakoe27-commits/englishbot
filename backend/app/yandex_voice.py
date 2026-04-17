@@ -216,6 +216,21 @@ async def _tts_stream(
             raise
 
 
+# ─── Хелпер: синтез + отправка в WebSocket ───────────────────────────
+
+async def _send_tts_to_ws(
+    websocket: WebSocket, text: str, api_key: str, voice: str
+) -> None:
+    """Синтезирует текст и стримит PCM-чанки в WebSocket."""
+    try:
+        async for pcm_chunk in _tts_stream(text, api_key, voice):
+            if websocket.client_state != WebSocketState.CONNECTED:
+                return
+            await websocket.send_bytes(pcm_chunk)
+    except Exception as exc:
+        logger.error("Ошибка отправки TTS: %s", exc, exc_info=True)
+
+
 # ─── Оркестратор WebSocket-сессии ─────────────────────────────────────────────
 
 async def run_yandex_session(websocket: WebSocket) -> None:
@@ -240,6 +255,24 @@ async def run_yandex_session(websocket: WebSocket) -> None:
     history: list[dict] = []
     last_final: str = ""
 
+    # ─── Приветственное сообщение репетитора ───────────────────────
+    # Сразу после подключения приглашаем пользователя заговорить — чтобы было понятно,
+    # что бот готов, и сессия не выглядела «зависшей» при молчании.
+    greeting = "Hi! I'm your English tutor. What would you like to talk about today?"
+    try:
+        if websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.send_json({
+                "type": "text",
+                "role": "tutor",
+                "text": greeting,
+            })
+            # Озвучиваем приветствие в фоне — не блокируем STT-пайплайн
+            asyncio.create_task(_send_tts_to_ws(websocket, greeting, api_key, voice))
+            # Добавляем приветствие в историю, чтобы GPT видел контекст
+            history.append({"role": "assistant", "text": greeting})
+    except Exception as exc:
+        logger.warning("Не удалось отправить приветствие: %s", exc)
+
     async def receive_audio() -> None:
         """Фоновая задача: читаем PCM из WebSocket и кладём в очередь STT."""
         try:
@@ -262,13 +295,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
 
     async def send_tts(text: str) -> None:
         """Синтезирует текст и отправляет PCM в WebSocket."""
-        try:
-            async for pcm_chunk in _tts_stream(text, api_key, voice):
-                if websocket.client_state != WebSocketState.CONNECTED:
-                    return
-                await websocket.send_bytes(pcm_chunk)
-        except Exception as exc:
-            logger.error("Ошибка отправки TTS: %s", exc, exc_info=True)
+        await _send_tts_to_ws(websocket, text, api_key, voice)
 
     async def process_stt() -> None:
         """Главный цикл: STT → YandexGPT → TTS."""
