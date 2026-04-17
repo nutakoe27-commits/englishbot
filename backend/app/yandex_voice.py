@@ -55,7 +55,7 @@ MAX_HISTORY_TURNS = 6
 
 # ─── STT: потоковое распознавание с внешним EOU ──────────────────────────────
 
-# Типы событий в общей очереди stt:
+# Типы событий в очереди stt:
 #   {"kind": "audio", "data": bytes}  — PCM-чанк
 #   {"kind": "eou"}                    — клиент отпустил кнопку, пора финализировать
 #   None                                — закрыть стрим (session end)
@@ -64,6 +64,11 @@ MAX_HISTORY_TURNS = 6
 #   ("final", text)            — финальная гипотеза от Yandex
 #   ("refine", text)           — уточнение final_refinement (точнее, приходит позже)
 #   ("eou", "")                — сервер подтвердил end-of-utterance
+#
+# ВАЖНО: gRPC-стрим Yandex STT закрывается после Eou. Для диалога push-to-talk
+# из нескольких фраз нужно переоткрывать STT-сессию на каждую реплику.
+# Этот генератор покрывает одну фразу (от начала аудио до Eou), вызывать
+# его нужно заново на каждое новое нажатие кнопки.
 
 
 async def _stt_stream(
@@ -339,7 +344,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
                         logger.debug("Непарсимый text-фрейм: %r", msg["text"][:120])
                         continue
                     if ctrl.get("type") == "eou":
-                        logger.info("EOU от клиента — просим STT финализировать")
+                        logger.warning("[WS] EOU от клиента")
                         await stt_queue.put({"kind": "eou"})
         except WebSocketDisconnect:
             pass
@@ -390,30 +395,88 @@ async def run_yandex_session(websocket: WebSocket) -> None:
 
     async def process_stt() -> None:
         """
-        Главный цикл: аккумулируем final/refine между EOU,
-        по EOU склеиваем в одну реплику → YandexGPT → TTS.
+        Внешний цикл диалога: на каждую фразу открываем новую STT-сессию.
+
+        Yandex STT закрывает gRPC-стрим после Eou, поэтому нельзя держать
+        один поток на всю WS-сессию. Перекладываем события из общей очереди в
+        локальную (на одну фразу) и запускаем _stt_stream для каждой.
         """
         try:
-            async for kind, text in _stt_stream(stt_queue, api_key):
-                if kind == "final":
-                    if text:
-                        pending_finals.append(text)
-                elif kind == "refine":
-                    # Рефайн уточняет последний final — заменяем
-                    if text:
-                        if pending_finals:
-                            pending_finals[-1] = text
-                        else:
+            while True:
+                # Ждём первое аудио-событие текущей фразы.
+                # None в очереди значит WS закрылся — выходим.
+                first = await stt_queue.get()
+                if first is None:
+                    logger.info("[STT] WS закрыт, выходим из process_stt")
+                    return
+                if first.get("kind") == "eou":
+                    # EOU без начавшейся фразы (но трек был mute'нут) — игнорируем.
+                    logger.info("[STT] EOU без аудио — пропускаем")
+                    continue
+
+                # Локальная очередь на одну фразу. Сразу кладём в неё первый чанк.
+                utter_queue: asyncio.Queue[Optional[dict]] = asyncio.Queue()
+                await utter_queue.put(first)
+                pending_finals.clear()
+                eou_seen = False
+
+                async def pump_to_utter() -> None:
+                    """Перекладываем события из глобальной очереди в локальную, пока не Eou/None."""
+                    nonlocal eou_seen
+                    while True:
+                        ev = await stt_queue.get()
+                        if ev is None:
+                            # Конец всей сессии
+                            await utter_queue.put(None)
+                            return
+                        await utter_queue.put(ev)
+                        if ev.get("kind") == "eou":
+                            eou_seen = True
+                            return
+
+                pump_task = asyncio.create_task(pump_to_utter(), name="pump_to_utter")
+
+                try:
+                    async for kind, text in _stt_stream(utter_queue, api_key):
+                        if kind == "final" and text:
                             pending_finals.append(text)
-                elif kind == "eou":
-                    # Склеиваем все накопленные финалы в одну реплику
-                    utterance = " ".join(s.strip() for s in pending_finals if s.strip()).strip()
-                    pending_finals.clear()
-                    if not utterance:
-                        logger.info("EOU без финалов — пропускаем")
-                        continue
-                    logger.info("User utterance: %s", utterance)
+                        elif kind == "refine" and text:
+                            if pending_finals:
+                                pending_finals[-1] = text
+                            else:
+                                pending_finals.append(text)
+                        elif kind == "eou":
+                            # Yandex подтвердил EOU — стрим сейчас закроется
+                            pass
+                except Exception as exc:
+                    logger.error("[STT] stream error: %s", exc, exc_info=True)
+                finally:
+                    # Если _stt_stream закончился раньше, чем pump_task, останавливаем pump
+                    if not pump_task.done():
+                        pump_task.cancel()
+                        try:
+                            await pump_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+
+                utterance = " ".join(s.strip() for s in pending_finals if s.strip()).strip()
+                pending_finals.clear()
+                if not utterance:
+                    logger.warning("[STT] фраза пустая после EOU — пропускаем")
+                    if not eou_seen:
+                        # pump завершился по None (WS закрыт) — выходим из внешнего цикла
+                        return
+                    continue
+
+                logger.warning("[STT] user utterance: %s", utterance)
+                try:
                     await handle_user_utterance(utterance)
+                except Exception as exc:
+                    logger.error("[pipeline] handle_user_utterance упал: %s", exc, exc_info=True)
+
+                if not eou_seen:
+                    # pump вышел по None (WS закрылся) — больше фраз не будет
+                    return
         except Exception as exc:
             logger.error("Ошибка в process_stt: %s", exc, exc_info=True)
 
@@ -432,4 +495,4 @@ async def run_yandex_session(websocket: WebSocket) -> None:
         # Даём им завершиться корректно
         await asyncio.gather(*pending, return_exceptions=True)
     finally:
-        logger.info("Yandex-сессия завершена для %s", websocket.client)
+        logger.warning("[Yandex] сессия завершена для %s", websocket.client)
