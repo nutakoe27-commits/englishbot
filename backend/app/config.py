@@ -23,7 +23,9 @@ class Settings(BaseSettings):
 
     # Gemini AI
     GEMINI_API_KEY: Optional[str] = None
-    GEMINI_MODEL: str = "gemini-2.5-flash-preview-native-audio-dialog"
+    # Актуальная preview-модель Live API (Gemini Developer API, v1beta).
+    # Старая "gemini-2.5-flash-preview-native-audio-dialog" устарела в конце 2025.
+    GEMINI_MODEL: str = "gemini-2.5-flash-native-audio-preview-12-2025"
     # Доступные голоса: Puck, Charon, Kore, Fenrir, Aoede, Zephyr
     GEMINI_VOICE: str = "Puck"
 
