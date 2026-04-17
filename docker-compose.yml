@@ -10,18 +10,13 @@ networks:
 
 services:
 
-  # ── Backend — FastAPI ─────────────────────────────────────────────────────
+  # ── Backend — FastAPI (Yandex SpeechKit + YandexGPT) ─────────────────────
   backend:
     build: ./backend
     restart: unless-stopped
     env_file: .env
-    environment:
-      # Путь до Vertex AI service account JSON внутри контейнера.
-      # Файл монтируется через volume из /var/www/englishbot/secrets/vertex-sa.json
-      GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
-    volumes:
-      # read-only монт JSON-ключа service account
-      - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
+    # Аутентификация — через Api-Key из .env (YC_API_KEY).
+    # Никакие volumes с ключами и доп. environment не требуются.
     ports:
       - "127.0.0.1:8082:8000"
     healthcheck:

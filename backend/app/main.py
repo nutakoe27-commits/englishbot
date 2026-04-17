@@ -4,7 +4,7 @@ main.py — точка входа FastAPI-приложения.
 Эндпоинты:
   GET  /health          — healthcheck для Docker
   GET  /api/v1/ping     — тестовый REST-эндпоинт
-  WS   /ws/voice        — голосовой диалог через Gemini Live API
+  WS   /ws/voice        — голосовой диалог через Yandex SpeechKit + YandexGPT
 """
 
 import hashlib
@@ -18,7 +18,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .gemini_live import run_gemini_session
+from .yandex_voice import run_yandex_session
 
 logger = logging.getLogger(__name__)
 
@@ -117,13 +117,13 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
 
     Протокол:
         Входящие бинарные сообщения → PCM 16-bit 16kHz mono (от браузера).
-        Исходящие бинарные сообщения → PCM 16-bit 24kHz mono (от Gemini).
+        Исходящие бинарные сообщения → PCM 16-bit 24kHz mono (от Yandex TTS).
         Исходящие JSON-сообщения → {"type": "text", "role": "user"|"tutor", "text": "..."}
     """
     # ── Проверка конфигурации ──────────────────────────────────────────────
-    if not settings.GOOGLE_CLOUD_PROJECT:
-        logger.error("GOOGLE_CLOUD_PROJECT не задан — отклоняем соединение")
-        await websocket.close(code=1011, reason="Server misconfiguration: missing GCP project")
+    if not settings.YC_API_KEY or not settings.YC_FOLDER_ID:
+        logger.error("YC_API_KEY или YC_FOLDER_ID не заданы — отклоняем соединение")
+        await websocket.close(code=1011, reason="Server misconfiguration: missing Yandex credentials")
         return
 
     # ── Валидация Telegram initData ────────────────────────────────────────
@@ -171,9 +171,9 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
         user_info.get("id") if user_info else "anonymous",
     )
 
-    # ── Запуск Gemini Live сессии ──────────────────────────────────────────
+    # ── Запуск Yandex SpeechKit + YandexGPT сессии ─────────────────────────
     try:
-        await run_gemini_session(websocket)
+        await run_yandex_session(websocket)
     except WebSocketDisconnect:
         logger.info("Клиент отключился: %s", websocket.client)
     except Exception as exc:

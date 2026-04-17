@@ -21,19 +21,24 @@ class Settings(BaseSettings):
     # Telegram Bot token — используется для валидации initData
     BOT_TOKEN: Optional[str] = None
 
-    # Gemini AI через Vertex AI.
-    # Мы используем Vertex AI (а не Gemini Developer API), потому что сервер
-    # расположен в РФ, а Gemini Developer API блокирует российские IP.
-    # Аутентификация — через service account JSON
-    # (переменная GOOGLE_APPLICATION_CREDENTIALS).
-    GOOGLE_CLOUD_PROJECT: Optional[str] = None
-    GOOGLE_CLOUD_LOCATION: str = "us-central1"
+    # ─── Yandex Cloud (SpeechKit + YandexGPT) ─────────────────────────────
+    # Мы используем Yandex, потому что сервер в РФ.
+    # Gemini/Vertex либо блокирует РФ-IP, либо требует активного billing.
+    # Yandex работает напрямую и принимает оплату в рублях.
 
-    # Vertex AI Live API model ID (GA с 12 декабря 2025).
-    # Поддержка до 12 декабря 2026.
-    GEMINI_MODEL: str = "gemini-live-2.5-flash-native-audio"
-    # Доступные голоса: Puck, Charon, Kore, Fenrir, Aoede, Zephyr
-    GEMINI_VOICE: str = "Puck"
+    # API-ключ сервисного аккаунта с ролями:
+    #   ai.speechkit-stt.user, ai.speechkit-tts.user, ai.languageModels.user
+    YC_API_KEY: Optional[str] = None
+
+    # ID каталога Yandex Cloud (формат b1g... или bpf...).
+    # Нужен для YandexGPT modelUri и для биллинга.
+    YC_FOLDER_ID: Optional[str] = None
+
+    # Голос для TTS.
+    # Английские голоса: john, nick, alyss (вежливые, нейтральные).
+    # Русские голоса: alena, filipp, ermil, zahar, jane, oksana.
+    # Для английского репетитора по умолчанию — john.
+    YC_TTS_VOICE: str = "john"
 
     @property
     def admin_url(self) -> str:
