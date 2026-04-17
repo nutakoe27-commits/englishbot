@@ -37,13 +37,13 @@ import yandex.cloud.ai.tts.v3.tts_pb2 as tts_pb2
 import yandex.cloud.ai.tts.v3.tts_service_pb2_grpc as tts_service_pb2_grpc
 
 from .config import SYSTEM_PROMPT, settings
+from .llm_providers import get_llm_provider
 
 logger = logging.getLogger(__name__)
 
 # ─── Константы ────────────────────────────────────────────────────────────────
 STT_ENDPOINT = "stt.api.cloud.yandex.net:443"
 TTS_ENDPOINT = "tts.api.cloud.yandex.net:443"
-YANDEXGPT_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 
 # Аудио-параметры. Браузер шлёт 16kHz, воспроизводит 24kHz.
 INPUT_SAMPLE_RATE = 16000
@@ -230,50 +230,9 @@ async def _stt_stream(
             )
 
 
-# ─── YandexGPT: генерация ответа репетитора ──────────────────────────────────
-
-async def _yandex_gpt_complete(
-    user_text: str,
-    history: list[dict],
-    api_key: str,
-    folder_id: str,
-) -> str:
-    """
-    Отправляет диалог в YandexGPT и возвращает ответ ассистента.
-    history — список {"role": "user"|"assistant", "text": "..."} последних реплик.
-    """
-    messages = [{"role": "system", "text": SYSTEM_PROMPT}]
-    messages.extend(history)
-    messages.append({"role": "user", "text": user_text})
-
-    payload = {
-        "modelUri": f"gpt://{folder_id}/yandexgpt-lite/latest",
-        "completionOptions": {
-            "stream": False,
-            "temperature": 0.6,
-            "maxTokens": 200,
-        },
-        "messages": messages,
-    }
-    headers = {
-        "Authorization": f"Api-Key {api_key}",
-        "x-folder-id": folder_id,
-        "Content-Type": "application/json",
-    }
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(YANDEXGPT_URL, json=payload, headers=headers)
-        if resp.status_code != 200:
-            logger.error("YandexGPT HTTP %s: %s", resp.status_code, resp.text)
-            resp.raise_for_status()
-        data = resp.json()
-
-    # Структура ответа: result.alternatives[0].message.text
-    try:
-        return data["result"]["alternatives"][0]["message"]["text"].strip()
-    except (KeyError, IndexError) as exc:
-        logger.error("Неожиданный формат ответа YandexGPT: %s — %s", data, exc)
-        return "Sorry, I didn't catch that. Could you say it again?"
+# ─── LLM: генерация ответа репетитора ─────────────────────────────────────
+# Вся логика вынесена в llm_providers.py — get_llm_provider() выбирает
+# YandexGPT или локальный vLLM по settings.LLM_PROVIDER.
 
 
 # ─── TTS: потоковый синтез речи ──────────────────────────────────────────────
@@ -396,6 +355,15 @@ async def run_yandex_session(websocket: WebSocket) -> None:
 
     logger.warning("[Yandex] run_yandex_session старт (folder=%s, voice=%s)", folder_id, voice)
 
+    # LLM-провайдер выбирается по settings.LLM_PROVIDER (yandex | vllm).
+    # Создаём один раз на сессию — он лёгкий и содержит только URL/токены.
+    try:
+        llm = get_llm_provider()
+    except Exception as exc:
+        logger.error("Не удалось создать LLM-провайдера: %s", exc)
+        await websocket.close(code=1011, reason="Server misconfiguration: LLM provider")
+        return
+
     # Общая очередь событий для STT: audio-чанки + eou-маркеры от клиента.
     # Порядок важен: eou должен прийти после всех audio-чанков текущей фразы.
     # Каждый чанк = 20мс PCM @ 16kHz (= 50 чанков/сек). 4096 ≈ 80 сек запаса.
@@ -492,14 +460,9 @@ async def run_yandex_session(websocket: WebSocket) -> None:
             })
 
         try:
-            reply = await _yandex_gpt_complete(
-                user_text=text,
-                history=history,
-                api_key=api_key,
-                folder_id=folder_id,
-            )
+            reply = await llm.complete(user_text=text, history=history)
         except Exception as exc:
-            logger.error("YandexGPT сбой: %s", exc, exc_info=True)
+            logger.error("LLM сбой (%s): %s", type(llm).__name__, exc, exc_info=True)
             reply = "I'm having trouble right now. Let's try again in a moment."
 
         history.append({"role": "user", "text": text})

@@ -40,6 +40,23 @@ class Settings(BaseSettings):
     # Для английского репетитора по умолчанию — john.
     YC_TTS_VOICE: str = "john"
 
+    # ─── LLM provider ────────────────────────────────────────────────────
+    # Какой LLM использовать для генерации ответов репетитора.
+    # "yandex" — YandexGPT (HTTP), "vllm" — локальный vLLM (OpenAI API).
+    LLM_PROVIDER: str = "yandex"
+
+    # Base URL локального vLLM, должен заканчиваться на /v1.
+    # Пример через Cloudflare Tunnel: https://abcd-1234.cfargotunnel.com/v1
+    VLLM_BASE_URL: Optional[str] = None
+
+    # Имя модели, как её выставил 1Cat-vLLM (поле served-model-name).
+    # Пример: "Qwen3.5-35B-A3B-AWQ"
+    VLLM_MODEL_NAME: Optional[str] = None
+
+    # API-ключ vLLM. По умолчанию vLLM его не требует — ставим "not-needed".
+    # Если в 1Cat-vLLM включена авторизация, подставьте реальный токен.
+    VLLM_API_KEY: Optional[str] = None
+
     @property
     def admin_url(self) -> str:
         return f"https://{self.ADMIN_HOST}"
