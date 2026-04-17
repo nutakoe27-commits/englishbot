@@ -134,6 +134,10 @@ class VLLMProvider:
             # токенов на <think></think> — чистый ответ влезет с запасом.
             "max_tokens": 400,
             "stream": False,
+            # Жёсткий выключатель reasoning для Qwen3 через chat template.
+            # Работает только если vLLM запущен с --reasoning-parser qwen3.
+            # Это strict-switch (сильнее чем soft /no_think в промпте).
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         headers = {
             "Authorization": f"Bearer {self.api_key}",
