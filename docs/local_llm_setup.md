@@ -1,6 +1,6 @@
 # Local LLM Setup — V100 + SSH Reverse Tunnel
 
-End-to-end guide to switch EnglishBot from YandexGPT to a local
+End-to-end guide for running EnglishBot on a local
 Qwen3.5-35B-A3B-AWQ running on a V100 home server, connected to the
 RF VPS via an SSH reverse tunnel (no open ports on the V100 router).
 
@@ -256,20 +256,6 @@ correction.
 
 ---
 
-## Rollback
-
-If anything breaks, flip the provider back — no code deploy needed:
-
-```bash
-# on VPS
-sed -i 's/^LLM_PROVIDER=vllm/LLM_PROVIDER=yandex/' /var/www/englishbot/.env
-docker compose up -d backend
-```
-
-`YANDEXGPT_API_KEY` remains in `.env` and is used immediately.
-
----
-
 ## Troubleshooting
 
 **From inside backend container `curl http://host.docker.internal:23333/v1/models` fails**
@@ -291,4 +277,4 @@ docker compose up -d backend
 
 **Model returns "Thinking Process" in content**
 - Request is missing `chat_template_kwargs.enable_thinking=false`.
-- Confirm `VLLMProvider` is deployed (env `LLM_PROVIDER=vllm` active).
+- Confirm `VLLMProvider` is deployed and `VLLM_BASE_URL`/`VLLM_MODEL_NAME` are set in `.env`.

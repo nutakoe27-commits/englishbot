@@ -10,15 +10,14 @@ networks:
 
 services:
 
-  # ── Backend — FastAPI (Yandex SpeechKit + LLM provider) ──────────────────
+  # ── Backend — FastAPI (vLLM + Whisper STT + Kokoro TTS) ────────────────
   backend:
     build: ./backend
     restart: unless-stopped
     env_file: .env
-    # Аутентификация — через Api-Key из .env (YC_API_KEY).
-    # Никакие volumes с ключами и доп. environment не требуются.
-    # host.docker.internal нужен, чтобы бэкенд дотягивался до
-    # vLLM на хосте VPS (reverse SSH tunnel VPS:23333 -> V100).
+    # Все LLM/STT/TTS — self-hosted на GPU-сервере.
+    # host.docker.internal нужен, чтобы бэкенд дотягивался до vLLM/Whisper/Kokoro
+    # на хосте VPS (reverse SSH tunnel VPS:23333/23334/23335 -> GPU-сервер).
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

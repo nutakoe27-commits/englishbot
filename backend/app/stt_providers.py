@@ -1,25 +1,22 @@
 """
-stt_providers.py — абстракция над STT-провайдерами.
+stt_providers.py — STT-провайдер (распознавание речи).
 
-Позволяет переключать STT-бэкенд через переменную окружения STT_PROVIDER:
-  - "yandex"  — Yandex SpeechKit STT v3 (gRPC, ExternalEouClassifier)
-  - "whisper" — локальный faster-whisper (large-v3-turbo) на V100 через
-                SSH-reverse-туннель, WebSocket JSON-протокол
+Единственный бэкенд — локальный faster-whisper (large-v3-turbo) на V100,
+пробрасываемый на VPS через SSH-reverse-tunnel. WebSocket JSON-протокол.
 
 Контракт провайдера:
     async def stream(
         stt_queue: asyncio.Queue[Optional[dict]],
     ) -> AsyncIterator[tuple[str, str]]
 
-Очередь событий (события кладёт оркестратор в yandex_voice.py):
+Очередь событий (события кладёт оркестратор в voice.py):
     {"kind": "audio", "data": bytes}  — PCM s16le 16kHz mono
     {"kind": "eou"}                    — клиент отпустил кнопку
     None                                — конец сессии
 
 Выход:
     ("final",  text)  — финальная гипотеза распознавания
-    ("refine", text)  — уточнение (только Yandex; Whisper не эмитит)
-    ("eou",    "")    — подтверждение EOU сервером, после этого генератор выходит
+    ("eou",    "")    — подтверждение EOU, после этого генератор выходит
 
 Одна итерация stream() покрывает ровно одну фразу push-to-talk:
 от первого audio-чанка до Eou. На каждое нажатие кнопки оркестратор
@@ -34,22 +31,15 @@ import json
 import logging
 from typing import AsyncIterator, Optional, Protocol
 
-import grpc
 import websockets
 from websockets.exceptions import ConnectionClosed
-
-import yandex.cloud.ai.stt.v3.stt_pb2 as stt_pb2
-import yandex.cloud.ai.stt.v3.stt_service_pb2_grpc as stt_service_pb2_grpc
 
 from .config import settings
 
 logger = logging.getLogger(__name__)
 
-# Аудио-параметры фиксированы по всему пайплайну (см. yandex_voice.py).
+# Аудио-параметры фиксированы по всему пайплайну (см. voice.py).
 INPUT_SAMPLE_RATE = 16000
-
-# Endpoint Yandex STT
-STT_ENDPOINT = "stt.api.cloud.yandex.net:443"
 
 
 # ─── Общий контракт ──────────────────────────────────────────────────────────
@@ -58,161 +48,6 @@ class STTProvider(Protocol):
     def stream(
         self, stt_queue: "asyncio.Queue[Optional[dict]]"
     ) -> AsyncIterator[tuple[str, str]]: ...
-
-
-# ─── Yandex SpeechKit STT ───────────────────────────────────────────────────
-
-class YandexSTTProvider:
-    """
-    Потоковое распознавание через Yandex SpeechKit STT v3 (gRPC).
-
-    Использует ExternalEouClassifier — сервер не детектит паузы автоматически,
-    ждёт явный Eou-маркер от нас. Это нужно для push-to-talk: пауза ≠ конец фразы.
-    """
-
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-
-    async def stream(
-        self, stt_queue: "asyncio.Queue[Optional[dict]]"
-    ) -> AsyncIterator[tuple[str, str]]:
-        api_key = self.api_key
-
-        def options_request() -> stt_pb2.StreamingRequest:
-            return stt_pb2.StreamingRequest(
-                session_options=stt_pb2.StreamingOptions(
-                    recognition_model=stt_pb2.RecognitionModelOptions(
-                        audio_format=stt_pb2.AudioFormatOptions(
-                            raw_audio=stt_pb2.RawAudio(
-                                audio_encoding=stt_pb2.RawAudio.LINEAR16_PCM,
-                                sample_rate_hertz=INPUT_SAMPLE_RATE,
-                                audio_channel_count=1,
-                            )
-                        ),
-                        text_normalization=stt_pb2.TextNormalizationOptions(
-                            text_normalization=stt_pb2.TextNormalizationOptions.TEXT_NORMALIZATION_ENABLED,
-                            profanity_filter=False,
-                            literature_text=False,
-                        ),
-                        language_restriction=stt_pb2.LanguageRestrictionOptions(
-                            restriction_type=stt_pb2.LanguageRestrictionOptions.WHITELIST,
-                            language_code=["en-US", "ru-RU"],
-                        ),
-                        audio_processing_type=stt_pb2.RecognitionModelOptions.REAL_TIME,
-                    ),
-                    eou_classifier=stt_pb2.EouClassifierOptions(
-                        external_classifier=stt_pb2.ExternalEouClassifier()
-                    ),
-                )
-            )
-
-        stats = {"audio_sent": 0, "audio_bytes": 0, "eou_sent": 0}
-        eou_sent_event = asyncio.Event()
-
-        async def request_iterator():
-            yield options_request()
-            while True:
-                event = await stt_queue.get()
-                if event is None:
-                    return
-                kind = event.get("kind")
-                if kind == "audio":
-                    data = event["data"]
-                    stats["audio_sent"] += 1
-                    stats["audio_bytes"] += len(data)
-                    yield stt_pb2.StreamingRequest(chunk=stt_pb2.AudioChunk(data=data))
-                elif kind == "eou":
-                    stats["eou_sent"] += 1
-                    logger.warning(
-                        "[Yandex STT] → Eou() (аудио отправлено: %d чанков, %d байт)",
-                        stats["audio_sent"], stats["audio_bytes"],
-                    )
-                    eou_sent_event.set()
-                    yield stt_pb2.StreamingRequest(eou=stt_pb2.Eou())
-
-        credentials = grpc.ssl_channel_credentials()
-        async with grpc.aio.secure_channel(STT_ENDPOINT, credentials) as channel:
-            stub = stt_service_pb2_grpc.RecognizerStub(channel)
-            metadata = (("authorization", f"Api-Key {api_key}"),)
-            grpc_stream = stub.RecognizeStreaming(request_iterator(), metadata=metadata)
-            logger.warning("[Yandex STT] gRPC стрим открыт, ждём события…")
-
-            partial_count = 0
-            eou_received = False
-            out_queue: asyncio.Queue = asyncio.Queue()
-
-            async def reader():
-                nonlocal partial_count, eou_received
-                try:
-                    async for response in grpc_stream:
-                        event_type = response.WhichOneof("Event")
-                        if event_type == "partial":
-                            alts = response.partial.alternatives
-                            txt = alts[0].text.strip() if alts else ""
-                            partial_count += 1
-                            if partial_count <= 3 or partial_count % 5 == 0:
-                                logger.warning("[Yandex STT] partial #%d: %r", partial_count, txt)
-                        elif event_type == "final":
-                            alts = response.final.alternatives
-                            txt = alts[0].text.strip() if alts else ""
-                            logger.warning("[Yandex STT] final: %r", txt)
-                            if txt:
-                                await out_queue.put(("final", txt))
-                        elif event_type == "final_refinement":
-                            alts = response.final_refinement.normalized_text.alternatives
-                            txt = alts[0].text.strip() if alts else ""
-                            if txt:
-                                logger.warning("[Yandex STT] refine: %r", txt)
-                                await out_queue.put(("refine", txt))
-                        elif event_type == "eou_update":
-                            logger.warning("[Yandex STT] eou_update от сервера")
-                            eou_received = True
-                            await out_queue.put(("eou", ""))
-                            return
-                        elif event_type == "status_code":
-                            logger.warning(
-                                "[Yandex STT] status: code=%s msg=%s",
-                                response.status_code.code_type,
-                                response.status_code.message,
-                            )
-                        else:
-                            logger.warning("[Yandex STT] другое событие: %s", event_type)
-                    logger.warning("[Yandex STT] gRPC стрим закрыт сервером")
-                except grpc.aio.AioRpcError as exc:
-                    logger.error("[Yandex STT] gRPC ошибка: %s — %s", exc.code(), exc.details())
-                except Exception as exc:
-                    logger.error("[Yandex STT] чтение упало: %s", exc, exc_info=True)
-                finally:
-                    await out_queue.put(None)
-
-            reader_task = asyncio.create_task(reader(), name="_yandex_stt_reader")
-
-            try:
-                while True:
-                    timeout = 5.0 if eou_sent_event.is_set() else None
-                    try:
-                        item = await asyncio.wait_for(out_queue.get(), timeout=timeout)
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "[Yandex STT] таймаут: сервер не ответил на Eou() за 5с. Закрываем стрим."
-                        )
-                        break
-                    if item is None:
-                        break
-                    yield item
-                    if item[0] == "eou":
-                        break
-            finally:
-                if not reader_task.done():
-                    reader_task.cancel()
-                    try:
-                        await reader_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                logger.warning(
-                    "[Yandex STT] сессия завершена: audio_sent=%d (%d байт), partial=%d, eou_received=%s",
-                    stats["audio_sent"], stats["audio_bytes"], partial_count, eou_received,
-                )
 
 
 # ─── Whisper (faster-whisper large-v3-turbo) ────────────────────────────────
@@ -377,29 +212,16 @@ class WhisperSTTProvider:
 # ─── Фабрика ─────────────────────────────────────────────────────────────────
 
 def get_stt_provider() -> STTProvider:
-    """
-    Возвращает провайдера согласно settings.STT_PROVIDER.
-    Значения: "yandex" (по умолчанию) или "whisper".
-    """
-    provider = (settings.STT_PROVIDER or "yandex").lower()
-
-    if provider == "whisper":
-        if not settings.WHISPER_STT_URL:
-            logger.error(
-                "STT_PROVIDER=whisper, но WHISPER_STT_URL не задан. Откат на Yandex STT."
-            )
-        else:
-            logger.warning(
-                "[STT] провайдер=whisper url=%s language=%s",
-                settings.WHISPER_STT_URL, settings.WHISPER_STT_LANGUAGE,
-            )
-            return WhisperSTTProvider(
-                url=settings.WHISPER_STT_URL,
-                language=settings.WHISPER_STT_LANGUAGE or "en",
-            )
-
-    # fallback: Yandex STT
-    if not settings.YC_API_KEY:
-        raise RuntimeError("Yandex STT выбран провайдером, но YC_API_KEY не задан")
-    logger.warning("[STT] провайдер=yandex")
-    return YandexSTTProvider(api_key=settings.YC_API_KEY)
+    """Создаёт WhisperSTTProvider из настроек. Требует WHISPER_STT_URL."""
+    if not settings.WHISPER_STT_URL:
+        raise RuntimeError(
+            "STT не сконфигурирован: задайте WHISPER_STT_URL в .env"
+        )
+    logger.warning(
+        "[STT] url=%s language=%s",
+        settings.WHISPER_STT_URL, settings.WHISPER_STT_LANGUAGE,
+    )
+    return WhisperSTTProvider(
+        url=settings.WHISPER_STT_URL,
+        language=settings.WHISPER_STT_LANGUAGE or "en",
+    )

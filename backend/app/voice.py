@@ -1,12 +1,12 @@
 """
-yandex_voice.py — оркестратор голосового диалога.
+voice.py — оркестратор голосового диалога.
 
 Архитектура:
     Browser (PCM 16kHz 16-bit LE mono)
       → WebSocket /ws/voice
-      → STTProvider (yandex | whisper) → финалы пользователя
-      → LLMProvider (yandex | vllm) → текст ответа репетитора
-      → Yandex TTS v3 streaming (gRPC, LINEAR16_PCM 24kHz) → PCM в браузер
+      → WhisperSTTProvider → финалы пользователя
+      → VLLMProvider (Qwen3) → текст ответа репетитора
+      → KokoroTTSProvider → PCM 24kHz в браузер
       → Browser
 
 End-of-utterance (EOU) управляется клиентом:
@@ -14,10 +14,8 @@ End-of-utterance (EOU) управляется клиентом:
     STT-провайдер прокидывает маркер на свой бэкенд. По финалу фраза собирается
     и уходит в LLM → TTS.
 
-Историческая справка:
-    Изначально всё шло через Yandex Cloud (сервер в РФ, Gemini/Vertex недоступны).
-    Сейчас STT и LLM переехали на собственный V100 через SSH-reverse-tunnel;
-    TTS пока остаётся Yandex.
+Весь стек (STT/LLM/TTS) крутится на собственном V100 и пробрасывается
+на VPS через SSH-reverse-tunnel.
 """
 
 import asyncio
@@ -28,7 +26,6 @@ from typing import Optional
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
-from .config import SYSTEM_PROMPT, settings
 from .llm_providers import get_llm_provider
 from .stt_providers import get_stt_provider
 from .tts_providers import get_tts_provider
@@ -40,31 +37,17 @@ logger = logging.getLogger(__name__)
 INPUT_SAMPLE_RATE = 16000
 OUTPUT_SAMPLE_RATE = 24000
 
-# История диалога — храним несколько последних реплик для контекста YandexGPT.
+# История диалога — храним несколько последних реплик для контекста LLM.
 MAX_HISTORY_TURNS = 6
-
-
-# ─── STT: вынесено в stt_providers.py ────────────────────────────────────────
-# Вся логика потокового распознавания (Yandex SpeechKit + Whisper) теперь живёт
-# в stt_providers.py — get_stt_provider() выбирает бэкенд по settings.STT_PROVIDER.
-
-# ─── LLM: генерация ответа репетитора ─────────────────────────────────────
-# Вся логика вынесена в llm_providers.py — get_llm_provider() выбирает
-# YandexGPT или локальный vLLM по settings.LLM_PROVIDER.
-
-
-# ─── TTS: вынесено в tts_providers.py ────────────────────────────────────────
-# Вся логика синтеза (Yandex SpeechKit + Kokoro) теперь живёт в
-# tts_providers.py — get_tts_provider() выбирает бэкенд по settings.TTS_PROVIDER.
 
 
 # ─── Хелпер: синтез + отправка в WebSocket ───────────────────────────
 
 async def _send_tts_to_ws(websocket: WebSocket, tts, text: str) -> None:
-    """Синтезирует текст через выбранный TTS-провайдер и стримит PCM в WS."""
+    """Синтезирует текст через TTS-провайдер и стримит PCM в WS."""
     chunks_sent = 0
     bytes_sent = 0
-    logger.warning("[TTS] старт синтеза (%s): %r", type(tts).__name__, text[:80])
+    logger.warning("[TTS] старт синтеза: %r", text[:80])
     try:
         async for pcm_chunk in tts.synthesize(text):
             if websocket.client_state != WebSocketState.CONNECTED:
@@ -81,7 +64,7 @@ async def _send_tts_to_ws(websocket: WebSocket, tts, text: str) -> None:
 
 # ─── Оркестратор WebSocket-сессии ─────────────────────────────────────────────
 
-async def run_yandex_session(websocket: WebSocket) -> None:
+async def run_voice_session(websocket: WebSocket) -> None:
     """
     Основной цикл голосового диалога.
 
@@ -90,10 +73,9 @@ async def run_yandex_session(websocket: WebSocket) -> None:
       Сервер → JSON {"type":"text","role":"user"|"tutor","text":"..."}
       Сервер → PCM 24kHz 16-bit LE mono (binary frames)
     """
-    logger.warning("[voice] run_yandex_session старт")
+    logger.warning("[voice] run_voice_session старт")
 
-    # Инициализируем три провайдера одним блоком — каждый читает свои настройки.
-    # Проверка YC_API_KEY/YC_FOLDER_ID теперь внутри провайдеров (если выбран yandex).
+    # Инициализируем три провайдера — каждый читает свои настройки.
     try:
         llm = get_llm_provider()
     except Exception as exc:
@@ -137,7 +119,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
             })
             # Озвучиваем приветствие в фоне — не блокируем STT-пайплайн
             asyncio.create_task(_send_tts_to_ws(websocket, tts, greeting))
-            # Добавляем приветствие в историю, чтобы GPT видел контекст
+            # Добавляем приветствие в историю, чтобы LLM видел контекст
             history.append({"role": "assistant", "text": greeting})
     except Exception as exc:
         logger.warning("Не удалось отправить приветствие: %s", exc)
@@ -202,7 +184,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
         await _send_tts_to_ws(websocket, tts, text)
 
     async def handle_user_utterance(text: str) -> None:
-        """Для готовой реплики пользователя: GPT в ответ и озвучка."""
+        """Для готовой реплики пользователя: LLM в ответ и озвучка."""
         if websocket.client_state == WebSocketState.CONNECTED:
             await websocket.send_json({
                 "type": "text",
@@ -213,7 +195,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
         try:
             reply = await llm.complete(user_text=text, history=history)
         except Exception as exc:
-            logger.error("LLM сбой (%s): %s", type(llm).__name__, exc, exc_info=True)
+            logger.error("LLM сбой: %s", exc, exc_info=True)
             reply = "I'm having trouble right now. Let's try again in a moment."
 
         history.append({"role": "user", "text": text})
@@ -235,9 +217,8 @@ async def run_yandex_session(websocket: WebSocket) -> None:
         """
         Внешний цикл диалога: на каждую фразу открываем новую STT-сессию.
 
-        Yandex STT закрывает gRPC-стрим после Eou, поэтому нельзя держать
-        один поток на всю WS-сессию. Перекладываем события из общей очереди в
-        локальную (на одну фразу) и запускаем stt.stream() для каждой.
+        Перекладываем события из общей очереди в локальную (на одну фразу) и
+        запускаем stt.stream() для каждой.
         """
         try:
             while True:
@@ -284,7 +265,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
                             else:
                                 pending_finals.append(text)
                         elif kind == "eou":
-                            # Yandex подтвердил EOU — стрим сейчас закроется
+                            # STT-сервер подтвердил EOU — стрим сейчас закроется
                             pass
                 except Exception as exc:
                     logger.error("[STT] stream error: %s", exc, exc_info=True)
@@ -333,4 +314,4 @@ async def run_yandex_session(websocket: WebSocket) -> None:
         # Даём им завершиться корректно
         await asyncio.gather(*pending, return_exceptions=True)
     finally:
-        logger.warning("[Yandex] сессия завершена для %s", websocket.client)
+        logger.warning("[voice] сессия завершена для %s", websocket.client)
