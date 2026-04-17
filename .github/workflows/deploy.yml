@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -16,9 +17,15 @@ jobs:
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            export COMPOSER_ALLOW_SUPERUSER=1
+            set -e
             cd /var/www/englishbot
             git fetch origin
             git reset --hard origin/main
-            composer install --no-dev --optimize-autoloader
-            systemctl restart docbot || true
+            # Stack will be added in next steps. For now just confirm pull works.
+            if [ -f docker-compose.yml ]; then
+              docker compose pull || true
+              docker compose up -d --build
+              docker system prune -f
+            else
+              echo "docker-compose.yml not yet present — skipping stack restart"
+            fi
