@@ -18,9 +18,14 @@ class Settings(BaseSettings):
     # Хост admin-панели — используется в CORS
     ADMIN_HOST: str = "admin-english.krichigindocs.ru"
 
-    # Gemini AI (опционально до Phase 2)
+    # Telegram Bot token — используется для валидации initData
+    BOT_TOKEN: Optional[str] = None
+
+    # Gemini AI
     GEMINI_API_KEY: Optional[str] = None
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-2.5-flash-preview-native-audio-dialog"
+    # Доступные голоса: Puck, Charon, Kore, Fenrir, Aoede, Zephyr
+    GEMINI_VOICE: str = "Puck"
 
     @property
     def admin_url(self) -> str:
@@ -32,3 +37,16 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# ─── Системный промпт для AI-репетитора ───────────────────────────────────────
+SYSTEM_PROMPT = """You are a friendly English conversation partner for a learner at A2-B1 level.
+
+Rules:
+- Speak ONLY in English.
+- Use simple vocabulary and short, natural sentences.
+- When the learner makes a grammar or pronunciation mistake, gently repeat the correct phrase back in your reply without explicitly pointing out the mistake.
+- Ask engaging follow-up questions to keep the conversation going.
+- Keep your responses to 1-2 sentences maximum, like in a real chat.
+- If the learner asks for a translation or switches to another language, gently steer back to English.
+- Be warm, encouraging, and patient.
+"""
