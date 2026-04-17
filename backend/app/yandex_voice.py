@@ -23,27 +23,19 @@ End-of-utterance (EOU) управляется клиентом:
 import asyncio
 import json
 import logging
-from typing import Any, AsyncIterator, Optional
+from typing import Optional
 
-import grpc
-import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
-
-# Yandex Cloud API — сгенерированные protobuf stubs (пакет yandexcloud).
-# STT-stubs теперь живут в stt_providers.py, здесь нужны только TTS.
-import yandex.cloud.ai.tts.v3.tts_pb2 as tts_pb2
-import yandex.cloud.ai.tts.v3.tts_service_pb2_grpc as tts_service_pb2_grpc
 
 from .config import SYSTEM_PROMPT, settings
 from .llm_providers import get_llm_provider
 from .stt_providers import get_stt_provider
+from .tts_providers import get_tts_provider
 
 logger = logging.getLogger(__name__)
 
 # ─── Константы ────────────────────────────────────────────────────────────────
-TTS_ENDPOINT = "tts.api.cloud.yandex.net:443"
-
 # Аудио-параметры. Браузер шлёт 16kHz, воспроизводит 24kHz.
 INPUT_SAMPLE_RATE = 16000
 OUTPUT_SAMPLE_RATE = 24000
@@ -61,92 +53,20 @@ MAX_HISTORY_TURNS = 6
 # YandexGPT или локальный vLLM по settings.LLM_PROVIDER.
 
 
-# ─── TTS: потоковый синтез речи ──────────────────────────────────────────────
-
-async def _tts_stream(
-    text: str,
-    api_key: str,
-    voice: str,
-    folder_id: str,
-) -> AsyncIterator[bytes]:
-    """
-    Синтезирует текст через Yandex TTS v3 StreamSynthesis.
-    Возвращает PCM 24kHz 16-bit LE chunks для отправки в браузер.
-    """
-
-    # Конфигурация по образцу оф. примера (aistudio.yandex.ru/docs/en/speechkit/tts/api/tts-streaming).
-    # Не задаём model / role / loudness_normalization_type / x-folder-id — оно не требуется
-    # и у ряда голосов вешает стрим.
-    synthesis_options = tts_pb2.SynthesisOptions(
-        voice=voice,
-        output_audio_spec=tts_pb2.AudioFormatOptions(
-            raw_audio=tts_pb2.RawAudio(
-                audio_encoding=tts_pb2.RawAudio.LINEAR16_PCM,
-                sample_rate_hertz=OUTPUT_SAMPLE_RATE,
-            )
-        ),
-    )
-
-    async def request_iterator():
-        yield tts_pb2.StreamSynthesisRequest(options=synthesis_options)
-        yield tts_pb2.StreamSynthesisRequest(
-            synthesis_input=tts_pb2.SynthesisInput(text=text)
-        )
-
-    credentials = grpc.ssl_channel_credentials()
-    async with grpc.aio.secure_channel(TTS_ENDPOINT, credentials) as channel:
-        stub = tts_service_pb2_grpc.SynthesizerStub(channel)
-        metadata = (
-            ("authorization", f"Api-Key {api_key}"),
-        )
-        stream = stub.StreamSynthesis(request_iterator(), metadata=metadata)
-
-        logger.warning("[TTS] gRPC стрим открыт, ждём чанки…")
-        chunks_sent = 0
-        first_chunk = True
-        try:
-            while True:
-                try:
-                    # Жёсткий таймаут на первый ответ сервера, чтобы не висеть.
-                    response = await asyncio.wait_for(
-                        stream.read(), timeout=10.0 if first_chunk else 30.0
-                    )
-                except asyncio.TimeoutError:
-                    logger.error(
-                        "[TTS] таймаут ожидания чанка (%s). Закрываем стрим.",
-                        "первый" if first_chunk else "очередной",
-                    )
-                    stream.cancel()
-                    return
-                if response == grpc.aio.EOF:
-                    break
-                first_chunk = False
-                if response.audio_chunk.data:
-                    chunks_sent += 1
-                    yield response.audio_chunk.data
-            logger.warning("[TTS] gRPC стрим закрылся штатно, чанков: %d", chunks_sent)
-        except grpc.aio.AioRpcError as exc:
-            logger.error(
-                "[TTS] gRPC ошибка: code=%s details=%s",
-                exc.code(), exc.details(),
-            )
-            raise
-        except Exception as exc:
-            logger.error("[TTS] неизвестная ошибка: %s", exc, exc_info=True)
-            raise
+# ─── TTS: вынесено в tts_providers.py ────────────────────────────────────────
+# Вся логика синтеза (Yandex SpeechKit + Kokoro) теперь живёт в
+# tts_providers.py — get_tts_provider() выбирает бэкенд по settings.TTS_PROVIDER.
 
 
 # ─── Хелпер: синтез + отправка в WebSocket ───────────────────────────
 
-async def _send_tts_to_ws(
-    websocket: WebSocket, text: str, api_key: str, voice: str, folder_id: str
-) -> None:
-    """Синтезирует текст и стримит PCM-чанки в WebSocket."""
+async def _send_tts_to_ws(websocket: WebSocket, tts, text: str) -> None:
+    """Синтезирует текст через выбранный TTS-провайдер и стримит PCM в WS."""
     chunks_sent = 0
     bytes_sent = 0
-    logger.warning("[TTS] старт синтеза: voice=%s text=%r", voice, text[:80])
+    logger.warning("[TTS] старт синтеза (%s): %r", type(tts).__name__, text[:80])
     try:
-        async for pcm_chunk in _tts_stream(text, api_key, voice, folder_id):
+        async for pcm_chunk in tts.synthesize(text):
             if websocket.client_state != WebSocketState.CONNECTED:
                 logger.warning("[TTS] WS не в CONNECTED (сост. %s), прерываем отправку",
                     websocket.client_state)
@@ -170,19 +90,10 @@ async def run_yandex_session(websocket: WebSocket) -> None:
       Сервер → JSON {"type":"text","role":"user"|"tutor","text":"..."}
       Сервер → PCM 24kHz 16-bit LE mono (binary frames)
     """
-    api_key = settings.YC_API_KEY
-    folder_id = settings.YC_FOLDER_ID
-    voice = settings.YC_TTS_VOICE
+    logger.warning("[voice] run_yandex_session старт")
 
-    if not api_key or not folder_id:
-        logger.error("YC_API_KEY или YC_FOLDER_ID не заданы")
-        await websocket.close(code=1011, reason="Server misconfiguration: Yandex credentials missing")
-        return
-
-    logger.warning("[Yandex] run_yandex_session старт (folder=%s, voice=%s)", folder_id, voice)
-
-    # LLM-провайдер выбирается по settings.LLM_PROVIDER (yandex | vllm).
-    # Создаём один раз на сессию — он лёгкий и содержит только URL/токены.
+    # Инициализируем три провайдера одним блоком — каждый читает свои настройки.
+    # Проверка YC_API_KEY/YC_FOLDER_ID теперь внутри провайдеров (если выбран yandex).
     try:
         llm = get_llm_provider()
     except Exception as exc:
@@ -190,13 +101,18 @@ async def run_yandex_session(websocket: WebSocket) -> None:
         await websocket.close(code=1011, reason="Server misconfiguration: LLM provider")
         return
 
-    # STT-провайдер — по settings.STT_PROVIDER (yandex | whisper).
-    # Тоже лёгкий объект: URL + язык или API-ключ, без сетевых соединений.
     try:
         stt = get_stt_provider()
     except Exception as exc:
         logger.error("Не удалось создать STT-провайдера: %s", exc)
         await websocket.close(code=1011, reason="Server misconfiguration: STT provider")
+        return
+
+    try:
+        tts = get_tts_provider()
+    except Exception as exc:
+        logger.error("Не удалось создать TTS-провайдера: %s", exc)
+        await websocket.close(code=1011, reason="Server misconfiguration: TTS provider")
         return
 
     # Общая очередь событий для STT: audio-чанки + eou-маркеры от клиента.
@@ -220,7 +136,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
                 "text": greeting,
             })
             # Озвучиваем приветствие в фоне — не блокируем STT-пайплайн
-            asyncio.create_task(_send_tts_to_ws(websocket, greeting, api_key, voice, folder_id))
+            asyncio.create_task(_send_tts_to_ws(websocket, tts, greeting))
             # Добавляем приветствие в историю, чтобы GPT видел контекст
             history.append({"role": "assistant", "text": greeting})
     except Exception as exc:
@@ -283,7 +199,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
 
     async def send_tts(text: str) -> None:
         """Синтезирует текст и отправляет PCM в WebSocket."""
-        await _send_tts_to_ws(websocket, text, api_key, voice, folder_id)
+        await _send_tts_to_ws(websocket, tts, text)
 
     async def handle_user_utterance(text: str) -> None:
         """Для готовой реплики пользователя: GPT в ответ и озвучка."""

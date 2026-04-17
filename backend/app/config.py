@@ -74,6 +74,26 @@ class Settings(BaseSettings):
     # None/"" — авто-детект (медленнее, риск путаницы).
     WHISPER_STT_LANGUAGE: str = "en"
 
+    # ─── TTS provider ────────────────────────────────────────────────
+    # Какой TTS использовать для синтеза речи.
+    # "yandex" — Yandex SpeechKit TTS v3 (gRPC стрим, платно).
+    # "kokoro" — локальный Kokoro-82M на V100, WebSocket JSON-протокол.
+    TTS_PROVIDER: str = "yandex"
+
+    # URL WebSocket-endpoint'а Kokoro-сервера.
+    # В докере в проде: ws://host.docker.internal:23335/ws
+    # (через SSH-reverse-tunnel до V100).
+    KOKORO_TTS_URL: Optional[str] = None
+
+    # Голос Kokoro. Список и оценки качества:
+    # https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
+    # af_heart (A), af_bella (A-) — женские US; am_michael (C+) — мужской US;
+    # bf_emma (B-) — женский UK.
+    KOKORO_TTS_VOICE: str = "af_heart"
+
+    # Скорость речи Kokoro (0.5 — медленно, 1.0 — обычно, 2.0 — быстро).
+    KOKORO_TTS_SPEED: float = 1.0
+
     @property
     def admin_url(self) -> str:
         return f"https://{self.ADMIN_HOST}"
