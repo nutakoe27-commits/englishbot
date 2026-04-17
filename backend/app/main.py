@@ -121,9 +121,9 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
         Исходящие JSON-сообщения → {"type": "text", "role": "user"|"tutor", "text": "..."}
     """
     # ── Проверка конфигурации ──────────────────────────────────────────────
-    if not settings.GEMINI_API_KEY:
-        logger.error("GEMINI_API_KEY не задан — отклоняем соединение")
-        await websocket.close(code=1011, reason="Server misconfiguration: missing API key")
+    if not settings.GOOGLE_CLOUD_PROJECT:
+        logger.error("GOOGLE_CLOUD_PROJECT не задан — отклоняем соединение")
+        await websocket.close(code=1011, reason="Server misconfiguration: missing GCP project")
         return
 
     # ── Валидация Telegram initData ────────────────────────────────────────
