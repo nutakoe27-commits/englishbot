@@ -1,6 +1,11 @@
 # Environment
 .env
 
+# Secrets — service account JSON и другие приватные ключи
+secrets/
+*.json.key
+vertex-sa.json
+
 # Python
 __pycache__/
 *.pyc

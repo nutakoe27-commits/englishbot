@@ -21,11 +21,17 @@ class Settings(BaseSettings):
     # Telegram Bot token — используется для валидации initData
     BOT_TOKEN: Optional[str] = None
 
-    # Gemini AI
-    GEMINI_API_KEY: Optional[str] = None
-    # Актуальная preview-модель Live API (Gemini Developer API, v1beta).
-    # Старая "gemini-2.5-flash-preview-native-audio-dialog" устарела в конце 2025.
-    GEMINI_MODEL: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    # Gemini AI через Vertex AI.
+    # Мы используем Vertex AI (а не Gemini Developer API), потому что сервер
+    # расположен в РФ, а Gemini Developer API блокирует российские IP.
+    # Аутентификация — через service account JSON
+    # (переменная GOOGLE_APPLICATION_CREDENTIALS).
+    GOOGLE_CLOUD_PROJECT: Optional[str] = None
+    GOOGLE_CLOUD_LOCATION: str = "us-central1"
+
+    # Vertex AI Live API model ID (GA с 12 декабря 2025).
+    # Поддержка до 12 декабря 2026.
+    GEMINI_MODEL: str = "gemini-live-2.5-flash-native-audio"
     # Доступные голоса: Puck, Charon, Kore, Fenrir, Aoede, Zephyr
     GEMINI_VOICE: str = "Puck"
 

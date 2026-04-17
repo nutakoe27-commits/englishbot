@@ -15,6 +15,13 @@ services:
     build: ./backend
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Путь до Vertex AI service account JSON внутри контейнера.
+      # Файл монтируется через volume из /var/www/englishbot/secrets/vertex-sa.json
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
+    volumes:
+      # read-only монт JSON-ключа service account
+      - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
     ports:
       - "127.0.0.1:8082:8000"
     healthcheck:

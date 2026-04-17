@@ -1,18 +1,24 @@
 """
-gemini_live.py — обёртка над Google Gemini Live API.
+gemini_live.py — обёртка над Google Gemini Live API через Vertex AI.
 
 Функция run_gemini_session() открывает двустороннюю аудио-сессию:
-  Browser  ──(PCM 16kHz)──►  backend  ──►  Gemini Live
-  Browser  ◄─(PCM 24kHz)──  backend  ◄──  Gemini Live
+  Browser  ──(PCM 16kHz)──►  backend  ──►  Gemini Live (Vertex AI)
+  Browser  ◄─(PCM 24kHz)──  backend  ◄──  Gemini Live (Vertex AI)
 
 Аудио-форматы:
   Входящее (от браузера): PCM 16-bit 16 kHz mono, little-endian
   Исходящее (от Gemini):  PCM 16-bit 24 kHz mono, little-endian
+
+Почему Vertex AI, а не Gemini Developer API:
+  Gemini Developer API (AI Studio ключи) блокирует российские IP с ошибкой
+  1007 "User location is not supported". Vertex AI использует стандартную
+  Google Cloud авторизацию через service account и не имеет такой блокировки
+  для API-ключей. Аутентификация — по файлу JSON service account из
+  GOOGLE_APPLICATION_CREDENTIALS.
 """
 
 import asyncio
 import logging
-import os
 from typing import NoReturn
 
 from fastapi import WebSocket
@@ -23,67 +29,6 @@ from google.genai import types
 from .config import settings, SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
-
-# --- Настройка SOCKS5/HTTPS-прокси для обхода гео-блокировки Gemini ---
-#
-# Gemini API блокирует IP из РФ (ошибка 1007 "User location is not supported").
-# Обходим через US-прокси. Для обычных HTTP-запросов (httpx) достаточно
-# переменных окружения HTTPS_PROXY/HTTP_PROXY. Но google-genai для Live API
-# использует библиотеку websockets, которая НЕ читает env-переменные для
-# SOCKS5-прокси при wss://-соединениях.
-#
-# Решение — monkey-patch: подменяем `ws_connect` в модуле google.genai.live
-# на версию из библиотеки `websockets_proxy`, которая умеет ходить через
-# SOCKS5/HTTP-прокси.
-_proxy_url = (
-    os.environ.get("HTTPS_PROXY")
-    or os.environ.get("https_proxy")
-    or os.environ.get("HTTP_PROXY")
-    or os.environ.get("http_proxy")
-)
-
-if _proxy_url:
-    try:
-        from websockets_proxy import Proxy, proxy_connect
-        import google.genai.live as _genai_live
-
-        # python_socks (используется внутри websockets_proxy) не понимает схему socks5h.
-        # Нормализуем: socks5h -> socks5 (DNS на стороне прокси включён по умолчанию
-        # в python_socks для имён хостов).
-        _normalized_proxy_url = _proxy_url
-        if _normalized_proxy_url.startswith("socks5h://"):
-            _normalized_proxy_url = "socks5://" + _normalized_proxy_url[len("socks5h://"):]
-        elif _normalized_proxy_url.startswith("socks4a://"):
-            _normalized_proxy_url = "socks4://" + _normalized_proxy_url[len("socks4a://"):]
-
-        _proxy_obj = Proxy.from_url(_normalized_proxy_url)
-
-        def _patched_ws_connect(uri, **kwargs):
-            """Обёртка над proxy_connect с фиксированным proxy-объектом."""
-            return proxy_connect(uri, proxy=_proxy_obj, **kwargs)
-
-        _genai_live.ws_connect = _patched_ws_connect
-        # httpx (REST-вызовы google-genai) читает HTTPS_PROXY сам.
-        # Продублируем в нижнем регистре на всякий случай.
-        os.environ.setdefault("https_proxy", _proxy_url)
-        os.environ.setdefault("http_proxy", _proxy_url)
-
-        _masked = _proxy_url.split("@")[-1] if "@" in _proxy_url else _proxy_url
-        logger.info(
-            "Gemini Live будет ходить через прокси %s (websockets monkey-patch активен)",
-            _masked,
-        )
-    except ImportError:
-        logger.error(
-            "Переменная HTTPS_PROXY задана, но библиотека websockets_proxy "
-            "не установлена. Установите: pip install websockets_proxy"
-        )
-    except Exception as exc:
-        logger.exception("Не удалось настроить прокси для Gemini Live: %s", exc)
-else:
-    logger.warning(
-        "HTTPS_PROXY не задан. Если сервер в РФ — Gemini вернёт ошибку 1007."
-    )
 
 # MIME-тип входящего аудио, требуемый Gemini Live API
 _INPUT_MIME_TYPE = "audio/pcm;rate=16000"
@@ -216,6 +161,28 @@ async def _receive_from_gemini(
                 raise
 
 
+def _make_vertex_client() -> "genai.Client":
+    """
+    Создаёт genai.Client для Vertex AI.
+
+    Требует:
+      - GOOGLE_CLOUD_PROJECT (project_id)
+      - GOOGLE_CLOUD_LOCATION (например us-central1)
+      - GOOGLE_APPLICATION_CREDENTIALS (путь к JSON service account)
+        ЛИБО credentials уже в окружении контейнера (Workload Identity и т.п.)
+    """
+    if not settings.GOOGLE_CLOUD_PROJECT:
+        raise RuntimeError(
+            "GOOGLE_CLOUD_PROJECT не задан в .env — невозможно создать Vertex AI клиент"
+        )
+
+    return genai.Client(
+        vertexai=True,
+        project=settings.GOOGLE_CLOUD_PROJECT,
+        location=settings.GOOGLE_CLOUD_LOCATION,
+    )
+
+
 async def run_gemini_session(client_ws: WebSocket) -> None:
     """
     Запускает двустороннюю аудио-сессию Gemini Live для одного WebSocket-соединения.
@@ -226,20 +193,19 @@ async def run_gemini_session(client_ws: WebSocket) -> None:
     Исключения перехватываются внутри; после завершения (разрыв со стороны
     клиента или Gemini) функция возвращает управление.
     """
-    api_key = settings.GEMINI_API_KEY
-    if not api_key:
-        logger.error("GEMINI_API_KEY не задан — невозможно открыть Live-сессию")
+    try:
+        client = _make_vertex_client()
+    except Exception as exc:
+        logger.error("Не удалось создать Vertex AI клиент: %s", exc)
         await client_ws.close(code=1011, reason="Server misconfiguration")
         return
 
-    client = genai.Client(
-        api_key=api_key,
-        http_options={"api_version": "v1beta"},
-    )
     config = _build_live_config()
 
     logger.info(
-        "Открываем Gemini Live сессию: model=%s voice=%s",
+        "Открываем Vertex AI Live сессию: project=%s location=%s model=%s voice=%s",
+        settings.GOOGLE_CLOUD_PROJECT,
+        settings.GOOGLE_CLOUD_LOCATION,
         settings.GEMINI_MODEL,
         settings.GEMINI_VOICE,
     )
