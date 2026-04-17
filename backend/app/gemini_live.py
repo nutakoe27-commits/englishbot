@@ -47,7 +47,16 @@ if _proxy_url:
         from websockets_proxy import Proxy, proxy_connect
         import google.genai.live as _genai_live
 
-        _proxy_obj = Proxy.from_url(_proxy_url)
+        # python_socks (используется внутри websockets_proxy) не понимает схему socks5h.
+        # Нормализуем: socks5h -> socks5 (DNS на стороне прокси включён по умолчанию
+        # в python_socks для имён хостов).
+        _normalized_proxy_url = _proxy_url
+        if _normalized_proxy_url.startswith("socks5h://"):
+            _normalized_proxy_url = "socks5://" + _normalized_proxy_url[len("socks5h://"):]
+        elif _normalized_proxy_url.startswith("socks4a://"):
+            _normalized_proxy_url = "socks4://" + _normalized_proxy_url[len("socks4a://"):]
+
+        _proxy_obj = Proxy.from_url(_normalized_proxy_url)
 
         def _patched_ws_connect(uri, **kwargs):
             """Обёртка над proxy_connect с фиксированным proxy-объектом."""
