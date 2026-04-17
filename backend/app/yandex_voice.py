@@ -222,23 +222,21 @@ async def _tts_stream(
     Возвращает PCM 24kHz 16-bit LE chunks для отправки в браузер.
     """
 
-    async def request_iterator():
-        # Первое сообщение — опции.
-        # model="general" — крутой дефолт для v3 (можно уточнить позже).
-        yield tts_pb2.StreamSynthesisRequest(
-            options=tts_pb2.SynthesisOptions(
-                model="general",
-                voice=voice,
-                output_audio_spec=tts_pb2.AudioFormatOptions(
-                    raw_audio=tts_pb2.RawAudio(
-                        audio_encoding=tts_pb2.RawAudio.LINEAR16_PCM,
-                        sample_rate_hertz=OUTPUT_SAMPLE_RATE,
-                    )
-                ),
-                loudness_normalization_type=tts_pb2.SynthesisOptions.LUFS,
+    # Конфигурация по образцу оф. примера (aistudio.yandex.ru/docs/en/speechkit/tts/api/tts-streaming).
+    # Не задаём model / role / loudness_normalization_type / x-folder-id — оно не требуется
+    # и у ряда голосов вешает стрим.
+    synthesis_options = tts_pb2.SynthesisOptions(
+        voice=voice,
+        output_audio_spec=tts_pb2.AudioFormatOptions(
+            raw_audio=tts_pb2.RawAudio(
+                audio_encoding=tts_pb2.RawAudio.LINEAR16_PCM,
+                sample_rate_hertz=OUTPUT_SAMPLE_RATE,
             )
-        )
-        # Второе — текст для синтеза
+        ),
+    )
+
+    async def request_iterator():
+        yield tts_pb2.StreamSynthesisRequest(options=synthesis_options)
         yield tts_pb2.StreamSynthesisRequest(
             synthesis_input=tts_pb2.SynthesisInput(text=text)
         )
@@ -246,22 +244,40 @@ async def _tts_stream(
     credentials = grpc.ssl_channel_credentials()
     async with grpc.aio.secure_channel(TTS_ENDPOINT, credentials) as channel:
         stub = tts_service_pb2_grpc.SynthesizerStub(channel)
-        # Некоторым endpoint'ам Yandex нужен x-folder-id в дополнение к Api-Key.
         metadata = (
             ("authorization", f"Api-Key {api_key}"),
-            ("x-folder-id", folder_id),
         )
         stream = stub.StreamSynthesis(request_iterator(), metadata=metadata)
 
         logger.warning("[TTS] gRPC стрим открыт, ждём чанки…")
+        chunks_sent = 0
+        first_chunk = True
         try:
-            async for response in stream:
+            while True:
+                try:
+                    # Жёсткий таймаут на первый ответ сервера, чтобы не висеть.
+                    response = await asyncio.wait_for(
+                        stream.read(), timeout=10.0 if first_chunk else 30.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "[TTS] таймаут ожидания чанка (%s). Закрываем стрим.",
+                        "первый" if first_chunk else "очередной",
+                    )
+                    stream.cancel()
+                    return
+                if response == grpc.aio.EOF:
+                    break
+                first_chunk = False
                 if response.audio_chunk.data:
+                    chunks_sent += 1
                     yield response.audio_chunk.data
-            logger.warning("[TTS] gRPC стрим закрылся штатно")
+            logger.warning("[TTS] gRPC стрим закрылся штатно, чанков: %d", chunks_sent)
         except grpc.aio.AioRpcError as exc:
-            logger.error("[TTS] gRPC ошибка: code=%s details=%s",
-                exc.code(), exc.details())
+            logger.error(
+                "[TTS] gRPC ошибка: code=%s details=%s",
+                exc.code(), exc.details(),
+            )
             raise
         except Exception as exc:
             logger.error("[TTS] неизвестная ошибка: %s", exc, exc_info=True)
