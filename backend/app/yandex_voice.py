@@ -215,6 +215,7 @@ async def _tts_stream(
     text: str,
     api_key: str,
     voice: str,
+    folder_id: str,
 ) -> AsyncIterator[bytes]:
     """
     Синтезирует текст через Yandex TTS v3 StreamSynthesis.
@@ -222,9 +223,11 @@ async def _tts_stream(
     """
 
     async def request_iterator():
-        # Первое сообщение — опции
+        # Первое сообщение — опции.
+        # model="general" — крутой дефолт для v3 (можно уточнить позже).
         yield tts_pb2.StreamSynthesisRequest(
             options=tts_pb2.SynthesisOptions(
+                model="general",
                 voice=voice,
                 output_audio_spec=tts_pb2.AudioFormatOptions(
                     raw_audio=tts_pb2.RawAudio(
@@ -243,29 +246,39 @@ async def _tts_stream(
     credentials = grpc.ssl_channel_credentials()
     async with grpc.aio.secure_channel(TTS_ENDPOINT, credentials) as channel:
         stub = tts_service_pb2_grpc.SynthesizerStub(channel)
-        metadata = (("authorization", f"Api-Key {api_key}"),)
+        # Некоторым endpoint'ам Yandex нужен x-folder-id в дополнение к Api-Key.
+        metadata = (
+            ("authorization", f"Api-Key {api_key}"),
+            ("x-folder-id", folder_id),
+        )
         stream = stub.StreamSynthesis(request_iterator(), metadata=metadata)
 
+        logger.warning("[TTS] gRPC стрим открыт, ждём чанки…")
         try:
             async for response in stream:
                 if response.audio_chunk.data:
                     yield response.audio_chunk.data
+            logger.warning("[TTS] gRPC стрим закрылся штатно")
         except grpc.aio.AioRpcError as exc:
-            logger.error("TTS gRPC ошибка: %s — %s", exc.code(), exc.details())
+            logger.error("[TTS] gRPC ошибка: code=%s details=%s",
+                exc.code(), exc.details())
+            raise
+        except Exception as exc:
+            logger.error("[TTS] неизвестная ошибка: %s", exc, exc_info=True)
             raise
 
 
 # ─── Хелпер: синтез + отправка в WebSocket ───────────────────────────
 
 async def _send_tts_to_ws(
-    websocket: WebSocket, text: str, api_key: str, voice: str
+    websocket: WebSocket, text: str, api_key: str, voice: str, folder_id: str
 ) -> None:
     """Синтезирует текст и стримит PCM-чанки в WebSocket."""
     chunks_sent = 0
     bytes_sent = 0
     logger.warning("[TTS] старт синтеза: voice=%s text=%r", voice, text[:80])
     try:
-        async for pcm_chunk in _tts_stream(text, api_key, voice):
+        async for pcm_chunk in _tts_stream(text, api_key, voice, folder_id):
             if websocket.client_state != WebSocketState.CONNECTED:
                 logger.warning("[TTS] WS не в CONNECTED (сост. %s), прерываем отправку",
                     websocket.client_state)
@@ -319,7 +332,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
                 "text": greeting,
             })
             # Озвучиваем приветствие в фоне — не блокируем STT-пайплайн
-            asyncio.create_task(_send_tts_to_ws(websocket, greeting, api_key, voice))
+            asyncio.create_task(_send_tts_to_ws(websocket, greeting, api_key, voice, folder_id))
             # Добавляем приветствие в историю, чтобы GPT видел контекст
             history.append({"role": "assistant", "text": greeting})
     except Exception as exc:
@@ -364,7 +377,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
 
     async def send_tts(text: str) -> None:
         """Синтезирует текст и отправляет PCM в WebSocket."""
-        await _send_tts_to_ws(websocket, text, api_key, voice)
+        await _send_tts_to_ws(websocket, text, api_key, voice, folder_id)
 
     async def handle_user_utterance(text: str) -> None:
         """Для готовой реплики пользователя: GPT в ответ и озвучка."""
