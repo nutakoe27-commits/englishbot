@@ -136,6 +136,7 @@ async def _stt_stream(
         stub = stt_service_pb2_grpc.RecognizerStub(channel)
         metadata = (("authorization", f"Api-Key {api_key}"),)
         stream = stub.RecognizeStreaming(request_iterator(), metadata=metadata)
+        logger.warning("[STT] gRPC стрим открыт, ждём события…")
 
         try:
             async for response in stream:
@@ -331,7 +332,9 @@ async def run_yandex_session(websocket: WebSocket) -> None:
 
     # Общая очередь событий для STT: audio-чанки + eou-маркеры от клиента.
     # Порядок важен: eou должен прийти после всех audio-чанков текущей фразы.
-    stt_queue: asyncio.Queue[Optional[dict]] = asyncio.Queue(maxsize=512)
+    # Каждый чанк = 20мс PCM @ 16kHz (= 50 чанков/сек). 4096 ≈ 80 сек запаса.
+    stt_queue: asyncio.Queue[Optional[dict]] = asyncio.Queue(maxsize=4096)
+    stt_dropped_audio = 0  # счётчик дропнутых аудио-чанков (диагностика)
     history: list[dict] = []
     # Буфер финалов, пришедших между EOU — соберём их в одну реплику.
     pending_finals: list[str] = []
@@ -366,13 +369,31 @@ async def run_yandex_session(websocket: WebSocket) -> None:
                 if msg.get("type") == "websocket.disconnect":
                     break
                 if "bytes" in msg and msg["bytes"]:
+                    nonlocal stt_dropped_audio
+                    audio_event = {"kind": "audio", "data": msg["bytes"]}
                     try:
-                        await asyncio.wait_for(
-                            stt_queue.put({"kind": "audio", "data": msg["bytes"]}),
-                            timeout=2.0,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning("Очередь STT переполнена — дропаем чанк")
+                        stt_queue.put_nowait(audio_event)
+                    except asyncio.QueueFull:
+                        # Drop-oldest: освобождаем место сбрасывая самый старый audio-чанк.
+                        # EOU/None класть в очередь может только эта же корутина — и только
+                        # после audio. Значит на голове очереди всегда audio, безопасно.
+                        try:
+                            dropped = stt_queue.get_nowait()
+                            if dropped is None or dropped.get("kind") != "audio":
+                                # Защита от гонок: если наверху всё-таки не audio — вернём.
+                                await stt_queue.put(dropped)
+                            else:
+                                stt_dropped_audio += 1
+                                stt_queue.put_nowait(audio_event)
+                        except asyncio.QueueEmpty:
+                            pass
+                        if stt_dropped_audio and stt_dropped_audio % 50 == 1:
+                            logger.warning(
+                                "[STT] дропнуто audio-чанков: %d (queue=%d/%d)",
+                                stt_dropped_audio,
+                                stt_queue.qsize(),
+                                stt_queue.maxsize,
+                            )
                 elif "text" in msg and msg["text"]:
                     # Контрольный JSON-фрейм от клиента
                     try:
