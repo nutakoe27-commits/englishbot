@@ -74,6 +74,12 @@ export default function App() {
   const wsClosingRef = useRef<boolean>(false);
   // Флаг — идёт ли сейчас запись (ref для доступа из замыканий без stale closure)
   const isRecordingRef = useRef<boolean>(false);
+  // Флаг — палец сейчас зажат на кнопке (критично для синхронизации с async WS)
+  const isPressedRef = useRef<boolean>(false);
+  // Время начала записи — для отсечения случайных коротких тапов
+  const recordingStartedAtRef = useRef<number>(0);
+  // ID конкретного pointer'а, который начал запись (чтобы игнорировать другие касания)
+  const activePointerIdRef = useRef<number | null>(null);
   // Контейнер лога — для auto-scroll вниз при новой реплике
   const logRef = useRef<HTMLDivElement | null>(null);
 
@@ -202,18 +208,25 @@ export default function App() {
     }
   }, []);
 
-  // При монтировании компонента — запрашиваем микрофон
+  // При монтировании компонента: запрашиваем микрофон, затем сразу открываем WS.
+  // Так к моменту первого нажатия кнопки WS уже в OPEN — нет гонки pointerdown/pointerup.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const ok = await initMicrophone();
       if (cancelled) return;
-      if (ok) {
-        setAppState("idle");
-        setStatusText("Ready to talk");
-      } else {
+      if (!ok) {
         setAppState("mic-denied");
         setStatusText("Microphone is needed");
+        return;
+      }
+      setAppState("idle");
+      setStatusText("Ready to talk");
+      // Сразу открываем WS — к первому нажатию он будет готов
+      try {
+        await openConnection();
+      } catch (err) {
+        console.warn("Initial WS open failed:", err);
       }
     })();
     return () => {
@@ -304,51 +317,39 @@ export default function App() {
   }, [addLogEntry, enqueueAudio]);
 
   // ── Начало записи (unmute уже открытого микрофона) ────────────────────────
-  const startRecording = useCallback(async () => {
-    if (appState === "idle") {
-      await openConnection();
-    }
+  // Минимальная длительность записи: короче — считаем случайным тапом, EOU не шлём
+  const MIN_RECORDING_MS = 250;
 
-    // Ждём соединения
-    let attempts = 0;
-    while (
-      wsRef.current?.readyState !== WebSocket.OPEN &&
-      attempts < 30
-    ) {
-      await new Promise((r) => setTimeout(r, 100));
-      attempts++;
+  const startRecording = useCallback(() => {
+    // Строго синхронный: никаких await. WS должен быть открыт заранее
+    // (через useEffect после initMicrophone). Если вдруг не открыт — откроем
+    // и возвращаем false, пользователь повторит нажатие когда WS готов.
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      void openConnection();
+      return false;
     }
-
-    if (wsRef.current?.readyState !== WebSocket.OPEN) {
-      setAppState("error");
-      setErrorMsg("Could not connect. Check your network.");
-      return;
-    }
-
-    // Микрофон уже получен при старте приложения — просто размьютим.
     if (!mediaStreamRef.current) {
-      // Резервный путь: если initMicrophone не отработал (например,
-      // пользователь переключился с mic-denied на retry).
-      const ok = await initMicrophone();
-      if (!ok) {
-        setAppState("mic-denied");
-        setStatusText("Microphone is needed");
-        return;
-      }
+      setAppState("mic-denied");
+      setStatusText("Microphone is needed");
+      return false;
     }
 
-    setAppState("recording");
     isRecordingRef.current = true;
+    recordingStartedAtRef.current = Date.now();
+    setAppState("recording");
     setStatusText("Listening…");
 
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = true));
-    }
-  }, [appState, openConnection, initMicrophone]);
+    mediaStreamRef.current
+      .getAudioTracks()
+      .forEach((t) => (t.enabled = true));
+    return true;
+  }, [openConnection]);
 
   // ── Остановка записи (mute, но микрофон не релизим) ───────────────────────
   const stopRecording = useCallback(() => {
     if (!isRecordingRef.current) return;
+    const durationMs = Date.now() - recordingStartedAtRef.current;
     isRecordingRef.current = false;
 
     // Мьютим трек — браузер перестаёт давать семплы, но разрешение остаётся
@@ -356,18 +357,21 @@ export default function App() {
       mediaStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = false));
     }
 
-    // Явный EOU-маркер — STT-сервер ждёт его для финализации фразы.
     const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    // Если палец был зажат меньше MIN_RECORDING_MS — считаем случайным тапом,
+    // EOU не шлём (чтобы бэк не получал пустые фразы).
+    if (durationMs >= MIN_RECORDING_MS && ws && ws.readyState === WebSocket.OPEN) {
       try {
         ws.send(JSON.stringify({ type: "eou" }));
       } catch (err) {
         console.warn("Failed to send eou marker:", err);
       }
+      setAppState("connected");
+      setStatusText("Thinking…");
+    } else {
+      setAppState("connected");
+      setStatusText("Hold to talk");
     }
-
-    setAppState("connected");
-    setStatusText("Thinking…");
   }, []);
 
   // ── Полный релиз микрофона и аудио — только при End Session ──────────────
@@ -414,40 +418,88 @@ export default function App() {
     };
   }, [releaseMicrophone]);
 
-  // ── Обработчики кнопки (pointer events — работают и на mobile, и на desktop)
+  // ── Обработчики кнопки (pointer events — работают и на mobile, и на desktop) ──────────
+  // Логика: ключевой стайт истины — isPressedRef (палец зажат), а не appState.
+  // appState меняется асинхронно (через setState), поэтому проверять его в обработчиках
+  // ненадёжно — как раз отсюда идёт баг «кнопка мигает».
   const handlePointerDown = useCallback(
-    (e: React.PointerEvent) => {
+    (e: React.PointerEvent<HTMLButtonElement>) => {
       e.preventDefault();
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
-      if (appState === "idle" || appState === "connected") {
-        startRecording();
+      // Игнорируем второй палец / правую кнопку мыши
+      if (e.button !== undefined && e.button !== 0) return;
+      if (isPressedRef.current) return;
+      if (activePointerIdRef.current !== null) return;
+      // Не начинаем запись пока идёт TTS / подключение
+      if (
+        appState === "speaking" ||
+        appState === "connecting" ||
+        appState === "initializing" ||
+        appState === "mic-denied" ||
+        appState === "error"
+      ) {
+        return;
       }
+
+      isPressedRef.current = true;
+      activePointerIdRef.current = e.pointerId;
+
+      // Capture на самой кнопке (currentTarget), а не на вложенном svg
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // в некоторых браузерах capture может бросать — игнорируем
+      }
+
+      startRecording();
     },
     [appState, startRecording]
   );
 
   const handlePointerUp = useCallback(
-    (e: React.PointerEvent) => {
+    (e: React.PointerEvent<HTMLButtonElement>) => {
       e.preventDefault();
-      if (appState === "recording") {
+      // Принимаем up только от того же pointer'а, что начал запись
+      if (
+        activePointerIdRef.current !== null &&
+        e.pointerId !== activePointerIdRef.current
+      ) {
+        return;
+      }
+      if (!isPressedRef.current) return;
+
+      isPressedRef.current = false;
+      activePointerIdRef.current = null;
+
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+
+      if (isRecordingRef.current) {
         stopRecording();
       }
     },
-    [appState, stopRecording]
+    [stopRecording]
   );
 
   const handleRetryMicrophone = useCallback(async () => {
     setAppState("initializing");
     setStatusText("Getting ready…");
     const ok = await initMicrophone();
-    if (ok) {
-      setAppState("idle");
-      setStatusText("Ready to talk");
-    } else {
+    if (!ok) {
       setAppState("mic-denied");
       setStatusText("Microphone is needed");
+      return;
     }
-  }, [initMicrophone]);
+    setAppState("idle");
+    setStatusText("Ready to talk");
+    try {
+      await openConnection();
+    } catch (err) {
+      console.warn("WS open after retry failed:", err);
+    }
+  }, [initMicrophone, openConnection]);
 
   // ── Определение свойств кнопки по состоянию ──────────────────────────────
   const isInitializing = appState === "initializing";
