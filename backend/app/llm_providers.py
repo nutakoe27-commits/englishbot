@@ -12,6 +12,7 @@ llm_providers.py — абстракция над провайдерами LLM.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Protocol
 
 import httpx
@@ -76,6 +77,27 @@ class YandexGPTProvider:
 
 # ─── vLLM (OpenAI-совместимый) ───────────────────────────────────────────────
 
+# Qwen3 — reasoning-модель. Без подавления она выдаёт CoT в content
+# ("Thinking Process:...", <think>...</think>). Для голосового бота это
+# катастрофа: TTS озвучит размышления. Подавляем двумя методами:
+#   1) префикс "/no_think\n" в user-реплике — Qwen3 tokenizer отключает thinking;
+#   2) защитный strip <think>...</think> и префиксов типа "Thinking Process:"
+#      в ответе — если первый метод не сработал.
+
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+_THINK_PREFIX_RE = re.compile(
+    r"^\s*(Thinking Process|Let me think|Okay, so|Alright,)\b.*?\n\n",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _strip_reasoning(text: str) -> str:
+    """Вырезает reasoning-мусор, если он просочился в ответ."""
+    cleaned = _THINK_TAG_RE.sub("", text)
+    cleaned = _THINK_PREFIX_RE.sub("", cleaned)
+    return cleaned.strip()
+
+
 class VLLMProvider:
     """
     vLLM через OpenAI Chat Completions API.
@@ -98,15 +120,19 @@ class VLLMProvider:
         return out
 
     async def complete(self, user_text: str, history: list[dict]) -> str:
+        # /no_think подавляет reasoning Qwen3 на токенизерном уровне.
+        # Ставится в user-реплику (в system не работает).
         messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages.extend(self._to_openai(history))
-        messages.append({"role": "user", "content": user_text})
+        messages.append({"role": "user", "content": f"/no_think\n{user_text}"})
 
         payload = {
             "model": self.model_name,
             "messages": messages,
             "temperature": 0.6,
-            "max_tokens": 200,
+            # Повышенный лимит на случай, если модель всё же потратит несколько
+            # токенов на <think></think> — чистый ответ влезет с запасом.
+            "max_tokens": 400,
             "stream": False,
         }
         headers = {
@@ -123,10 +149,16 @@ class VLLMProvider:
             data = resp.json()
 
         try:
-            return data["choices"][0]["message"]["content"].strip()
+            raw = data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError) as exc:
             logger.error("Неожиданный формат ответа vLLM: %s — %s", data, exc)
             return "Sorry, I didn't catch that. Could you say it again?"
+
+        cleaned = _strip_reasoning(raw)
+        if not cleaned:
+            logger.warning("vLLM вернул пустой ответ после зачистки reasoning. raw=%r", raw[:200])
+            return "Sorry, could you say that again?"
+        return cleaned
 
 
 # ─── Фабрика ─────────────────────────────────────────────────────────────────
