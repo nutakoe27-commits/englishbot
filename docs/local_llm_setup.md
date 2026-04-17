@@ -18,25 +18,30 @@ Browser → VPS (FastAPI) → Yandex STT (audio→text)
 
 ## Шаг 1. На V100 — подтвердить, что vLLM отвечает по OpenAI API
 
-1Cat-vLLM поднимает OpenAI-совместимый сервер, обычно на `:8000`.
-На самом сервере V100 выполните:
+1Cat-vLLM в нашей установке слушает на порту **23333** (не 8000).
+Модель: **`QuantTrio/Qwen3.5-35B-A3B-AWQ`**, контекст до 262 144 токенов,
+авторизация не требуется.
 
 ```bash
-# Список моделей
-curl http://localhost:8000/v1/models
+# Список моделей (подтверждаем, что сервер жив)
+curl http://localhost:23333/v1/models
 
-# Тест chat completions
-curl http://localhost:8000/v1/chat/completions \
+# Тест chat completions — должен вернуть короткий ответ ассистента
+curl http://localhost:23333/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "Qwen3.5-35B-A3B-AWQ",
-    "messages": [{"role": "user", "content": "Say hi"}],
-    "max_tokens": 20
+    "model": "QuantTrio/Qwen3.5-35B-A3B-AWQ",
+    "messages": [
+      {"role": "system", "content": "You are a friendly English conversation partner. Reply in one short sentence."},
+      {"role": "user", "content": "Say hi."}
+    ],
+    "max_tokens": 40,
+    "temperature": 0.6
   }'
 ```
 
-Из `/v1/models` возьмите точное значение поля `id` — это будет
-`VLLM_MODEL_NAME`. Если в 1Cat-vLLM стоит нестандартный порт — запомните его.
+Если второй запрос вернул осмысленный ответ ассистента — значит
+1Cat-vLLM готов обслуживать наш бот.
 
 ---
 
@@ -73,15 +78,17 @@ cloudflared tunnel create englishbot-llm
 
 ### 2.4. Создать конфиг туннеля
 
-Создайте `~/.cloudflared/config.yml`:
+Создайте `~/.cloudflared/config.yml` (пути зависят от того, под каким
+пользователем вы делали `cloudflared tunnel login` — скорее всего `user`,
+так что `/home/user/.cloudflared/...`):
 
 ```yaml
 tunnel: englishbot-llm
-credentials-file: /root/.cloudflared/<ID>.json   # замените <ID>
+credentials-file: /home/user/.cloudflared/<ID>.json   # замените <ID>
 
 ingress:
-  - hostname: <ID>.cfargotunnel.com              # замените <ID>
-    service: http://localhost:8000               # порт 1Cat-vLLM
+  - hostname: <ID>.cfargotunnel.com                   # замените <ID>
+    service: http://localhost:23333                   # порт 1Cat-vLLM
   - service: http_status:404
 ```
 
@@ -118,12 +125,14 @@ curl https://<TUNNEL_ID>.cfargotunnel.com/v1/models
 ```bash
 LLM_PROVIDER=vllm
 VLLM_BASE_URL=https://<TUNNEL_ID>.cfargotunnel.com/v1
-VLLM_MODEL_NAME=Qwen3.5-35B-A3B-AWQ
-# VLLM_API_KEY=not-needed   # раскомментируйте и поставьте токен, если в 1Cat включена авторизация
+VLLM_MODEL_NAME=QuantTrio/Qwen3.5-35B-A3B-AWQ
+# VLLM_API_KEY=not-needed   # 1Cat-vLLM не требует ключа — оставьте закомментированным
 ```
 
-Важно: в `VLLM_BASE_URL` обязательно добавить `/v1` в конце.
-`VLLM_MODEL_NAME` — точно такое же значение, как в `/v1/models` (см. шаг 1).
+Важно:
+- в `VLLM_BASE_URL` обязательно добавьте `/v1` в конце;
+- `VLLM_MODEL_NAME` — точно такое же значение, как в `/v1/models` на V100
+  (в нашем случае `QuantTrio/Qwen3.5-35B-A3B-AWQ` со слэшем).
 
 ### 3.2. Задеплоить свежий код
 
