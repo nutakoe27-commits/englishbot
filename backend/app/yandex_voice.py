@@ -1,23 +1,23 @@
 """
-yandex_voice.py — голосовой диалог через Yandex SpeechKit + YandexGPT.
+yandex_voice.py — оркестратор голосового диалога.
 
 Архитектура:
     Browser (PCM 16kHz 16-bit LE mono)
       → WebSocket /ws/voice
-      → Yandex STT v3 streaming (gRPC, ExternalEouClassifier) → финалы пользователя
-      → YandexGPT (HTTP) → текст ответа репетитора
+      → STTProvider (yandex | whisper) → финалы пользователя
+      → LLMProvider (yandex | vllm) → текст ответа репетитора
       → Yandex TTS v3 streaming (gRPC, LINEAR16_PCM 24kHz) → PCM в браузер
       → Browser
 
 End-of-utterance (EOU) управляется клиентом:
     Когда пользователь отжимает кнопку записи, фронт шлёт JSON {"type":"eou"}.
-    Сервер шлёт в STT Eou-маркер. Только после этого аккумулированные финалы
-    собираются в одну реплику пользователя и уходят в YandexGPT → TTS.
+    STT-провайдер прокидывает маркер на свой бэкенд. По финалу фраза собирается
+    и уходит в LLM → TTS.
 
-Почему Yandex, а не Gemini/Vertex:
-    Gemini Developer API блокирует IP РФ (ошибка 1007).
-    Vertex AI требует активного billing, который недоступен без зарубежной карты.
-    Yandex работает с РФ без прокси и поддерживает API-Key аутентификацию.
+Историческая справка:
+    Изначально всё шло через Yandex Cloud (сервер в РФ, Gemini/Vertex недоступны).
+    Сейчас STT и LLM переехали на собственный V100 через SSH-reverse-tunnel;
+    TTS пока остаётся Yandex.
 """
 
 import asyncio
@@ -30,19 +30,18 @@ import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
-# Yandex Cloud API — сгенерированные protobuf stubs (пакет yandexcloud)
-import yandex.cloud.ai.stt.v3.stt_pb2 as stt_pb2
-import yandex.cloud.ai.stt.v3.stt_service_pb2_grpc as stt_service_pb2_grpc
+# Yandex Cloud API — сгенерированные protobuf stubs (пакет yandexcloud).
+# STT-stubs теперь живут в stt_providers.py, здесь нужны только TTS.
 import yandex.cloud.ai.tts.v3.tts_pb2 as tts_pb2
 import yandex.cloud.ai.tts.v3.tts_service_pb2_grpc as tts_service_pb2_grpc
 
 from .config import SYSTEM_PROMPT, settings
 from .llm_providers import get_llm_provider
+from .stt_providers import get_stt_provider
 
 logger = logging.getLogger(__name__)
 
 # ─── Константы ────────────────────────────────────────────────────────────────
-STT_ENDPOINT = "stt.api.cloud.yandex.net:443"
 TTS_ENDPOINT = "tts.api.cloud.yandex.net:443"
 
 # Аудио-параметры. Браузер шлёт 16kHz, воспроизводит 24kHz.
@@ -53,182 +52,9 @@ OUTPUT_SAMPLE_RATE = 24000
 MAX_HISTORY_TURNS = 6
 
 
-# ─── STT: потоковое распознавание с внешним EOU ──────────────────────────────
-
-# Типы событий в очереди stt:
-#   {"kind": "audio", "data": bytes}  — PCM-чанк
-#   {"kind": "eou"}                    — клиент отпустил кнопку, пора финализировать
-#   None                                — закрыть стрим (session end)
-#
-# STT отдаёт события наверх:
-#   ("final", text)            — финальная гипотеза от Yandex
-#   ("refine", text)           — уточнение final_refinement (точнее, приходит позже)
-#   ("eou", "")                — сервер подтвердил end-of-utterance
-#
-# ВАЖНО: gRPC-стрим Yandex STT закрывается после Eou. Для диалога push-to-talk
-# из нескольких фраз нужно переоткрывать STT-сессию на каждую реплику.
-# Этот генератор покрывает одну фразу (от начала аудио до Eou), вызывать
-# его нужно заново на каждое новое нажатие кнопки.
-
-
-async def _stt_stream(
-    stt_queue: "asyncio.Queue[Optional[dict]]",
-    api_key: str,
-) -> AsyncIterator[tuple[str, str]]:
-    """
-    Принимает события (audio/eou) из общей очереди, шлёт их в Yandex STT v3.
-    Использует ExternalEouClassifier — сервер не авто-закрывает фразу на паузах,
-    финализирует только по явному Eou-маркеру от клиента.
-    """
-
-    def options_request() -> stt_pb2.StreamingRequest:
-        return stt_pb2.StreamingRequest(
-            session_options=stt_pb2.StreamingOptions(
-                recognition_model=stt_pb2.RecognitionModelOptions(
-                    audio_format=stt_pb2.AudioFormatOptions(
-                        raw_audio=stt_pb2.RawAudio(
-                            audio_encoding=stt_pb2.RawAudio.LINEAR16_PCM,
-                            sample_rate_hertz=INPUT_SAMPLE_RATE,
-                            audio_channel_count=1,
-                        )
-                    ),
-                    text_normalization=stt_pb2.TextNormalizationOptions(
-                        text_normalization=stt_pb2.TextNormalizationOptions.TEXT_NORMALIZATION_ENABLED,
-                        profanity_filter=False,
-                        literature_text=False,
-                    ),
-                    language_restriction=stt_pb2.LanguageRestrictionOptions(
-                        restriction_type=stt_pb2.LanguageRestrictionOptions.WHITELIST,
-                        language_code=["en-US", "ru-RU"],
-                    ),
-                    audio_processing_type=stt_pb2.RecognitionModelOptions.REAL_TIME,
-                ),
-                # ── Внешний EOU-классификатор ──────────────────────────────
-                # Выключает авто-детектор пауз на стороне Yandex.
-                # Финал будет отправлен только после получения Eou от клиента.
-                eou_classifier=stt_pb2.EouClassifierOptions(
-                    external_classifier=stt_pb2.ExternalEouClassifier()
-                ),
-            )
-        )
-
-    # Счётчики для диагностики
-    stats = {"audio_sent": 0, "audio_bytes": 0, "eou_sent": 0}
-    eou_sent_event = asyncio.Event()
-
-    async def request_iterator():
-        # Первое сообщение — опции сессии
-        yield options_request()
-        while True:
-            event = await stt_queue.get()
-            if event is None:
-                # Полный конец сессии — закрываем upstream
-                return
-            kind = event.get("kind")
-            if kind == "audio":
-                data = event["data"]
-                stats["audio_sent"] += 1
-                stats["audio_bytes"] += len(data)
-                yield stt_pb2.StreamingRequest(
-                    chunk=stt_pb2.AudioChunk(data=data)
-                )
-            elif kind == "eou":
-                # Явный EOU от клиента — просим Yandex финализировать фразу.
-                stats["eou_sent"] += 1
-                logger.warning(
-                    "[STT] → Eou() в Yandex (аудио отправлено: %d чанков, %d байт)",
-                    stats["audio_sent"], stats["audio_bytes"],
-                )
-                eou_sent_event.set()
-                yield stt_pb2.StreamingRequest(eou=stt_pb2.Eou())
-            # неизвестные kind молча игнорируем
-
-    credentials = grpc.ssl_channel_credentials()
-    async with grpc.aio.secure_channel(STT_ENDPOINT, credentials) as channel:
-        stub = stt_service_pb2_grpc.RecognizerStub(channel)
-        metadata = (("authorization", f"Api-Key {api_key}"),)
-        stream = stub.RecognizeStreaming(request_iterator(), metadata=metadata)
-        logger.warning("[STT] gRPC стрим открыт, ждём события…")
-
-        partial_count = 0
-        eou_received = False
-
-        async def reader():
-            nonlocal partial_count, eou_received
-            try:
-                async for response in stream:
-                    event_type = response.WhichOneof("Event")
-                    if event_type == "partial":
-                        alts = response.partial.alternatives
-                        txt = alts[0].text.strip() if alts else ""
-                        partial_count += 1
-                        if partial_count <= 3 or partial_count % 5 == 0:
-                            logger.warning("[STT] partial #%d: %r", partial_count, txt)
-                    elif event_type == "final":
-                        alts = response.final.alternatives
-                        txt = alts[0].text.strip() if alts else ""
-                        logger.warning("[STT] final: %r", txt)
-                        if txt:
-                            await out_queue.put(("final", txt))
-                    elif event_type == "final_refinement":
-                        alts = response.final_refinement.normalized_text.alternatives
-                        txt = alts[0].text.strip() if alts else ""
-                        if txt:
-                            logger.warning("[STT] refine: %r", txt)
-                            await out_queue.put(("refine", txt))
-                    elif event_type == "eou_update":
-                        logger.warning("[STT] eou_update от Yandex")
-                        eou_received = True
-                        await out_queue.put(("eou", ""))
-                        return
-                    elif event_type == "status_code":
-                        logger.warning(
-                            "[STT] status: code=%s msg=%s",
-                            response.status_code.code_type,
-                            response.status_code.message,
-                        )
-                    else:
-                        logger.warning("[STT] другое событие: %s", event_type)
-                logger.warning("[STT] gRPC стрим закрыт сервером")
-            except grpc.aio.AioRpcError as exc:
-                logger.error("[STT] gRPC ошибка: %s — %s", exc.code(), exc.details())
-            except Exception as exc:
-                logger.error("[STT] чтение упало: %s", exc, exc_info=True)
-            finally:
-                await out_queue.put(None)  # сигнал: чтение закончено
-
-        out_queue: asyncio.Queue = asyncio.Queue()
-        reader_task = asyncio.create_task(reader(), name="_stt_reader")
-
-        try:
-            while True:
-                # Если клиент уже отправил Eou() в Yandex, даём серверу 5с на ответ,
-                # иначе считаем фразу пустой и выходим.
-                timeout = 5.0 if eou_sent_event.is_set() else None
-                try:
-                    item = await asyncio.wait_for(out_queue.get(), timeout=timeout)
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "[STT] таймаут: Yandex не ответил на Eou() за 5с. Закрываем стрим."
-                    )
-                    break
-                if item is None:
-                    break
-                yield item
-                if item[0] == "eou":
-                    break
-        finally:
-            if not reader_task.done():
-                reader_task.cancel()
-                try:
-                    await reader_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            logger.warning(
-                "[STT] сессия завершена: audio_sent=%d (%d байт), partial=%d, eou_received=%s",
-                stats["audio_sent"], stats["audio_bytes"], partial_count, eou_received,
-            )
-
+# ─── STT: вынесено в stt_providers.py ────────────────────────────────────────
+# Вся логика потокового распознавания (Yandex SpeechKit + Whisper) теперь живёт
+# в stt_providers.py — get_stt_provider() выбирает бэкенд по settings.STT_PROVIDER.
 
 # ─── LLM: генерация ответа репетитора ─────────────────────────────────────
 # Вся логика вынесена в llm_providers.py — get_llm_provider() выбирает
@@ -364,6 +190,15 @@ async def run_yandex_session(websocket: WebSocket) -> None:
         await websocket.close(code=1011, reason="Server misconfiguration: LLM provider")
         return
 
+    # STT-провайдер — по settings.STT_PROVIDER (yandex | whisper).
+    # Тоже лёгкий объект: URL + язык или API-ключ, без сетевых соединений.
+    try:
+        stt = get_stt_provider()
+    except Exception as exc:
+        logger.error("Не удалось создать STT-провайдера: %s", exc)
+        await websocket.close(code=1011, reason="Server misconfiguration: STT provider")
+        return
+
     # Общая очередь событий для STT: audio-чанки + eou-маркеры от клиента.
     # Порядок важен: eou должен прийти после всех audio-чанков текущей фразы.
     # Каждый чанк = 20мс PCM @ 16kHz (= 50 чанков/сек). 4096 ≈ 80 сек запаса.
@@ -486,7 +321,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
 
         Yandex STT закрывает gRPC-стрим после Eou, поэтому нельзя держать
         один поток на всю WS-сессию. Перекладываем события из общей очереди в
-        локальную (на одну фразу) и запускаем _stt_stream для каждой.
+        локальную (на одну фразу) и запускаем stt.stream() для каждой.
         """
         try:
             while True:
@@ -524,7 +359,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
                 pump_task = asyncio.create_task(pump_to_utter(), name="pump_to_utter")
 
                 try:
-                    async for kind, text in _stt_stream(utter_queue, api_key):
+                    async for kind, text in stt.stream(utter_queue):
                         if kind == "final" and text:
                             pending_finals.append(text)
                         elif kind == "refine" and text:
@@ -538,7 +373,7 @@ async def run_yandex_session(websocket: WebSocket) -> None:
                 except Exception as exc:
                     logger.error("[STT] stream error: %s", exc, exc_info=True)
                 finally:
-                    # Если _stt_stream закончился раньше, чем pump_task, останавливаем pump
+                    # Если stt.stream закончился раньше, чем pump_task, останавливаем pump
                     if not pump_task.done():
                         pump_task.cancel()
                         try:

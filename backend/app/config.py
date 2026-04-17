@@ -57,6 +57,23 @@ class Settings(BaseSettings):
     # Если в 1Cat-vLLM включена авторизация, подставьте реальный токен.
     VLLM_API_KEY: Optional[str] = None
 
+    # ─── STT provider ────────────────────────────────────────────────────
+    # Какой STT использовать для распознавания речи.
+    # "yandex"  — Yandex SpeechKit (gRPC, стриминг с внешним EOU).
+    # "whisper" — локальный faster-whisper (large-v3-turbo) на V100,
+    #             WebSocket JSON-протокол, один final по EOU.
+    STT_PROVIDER: str = "yandex"
+
+    # URL WebSocket-endpoint'а Whisper-сервера.
+    # В докере в проде: ws://host.docker.internal:23334/ws
+    # (через SSH-reverse-tunnel до V100).
+    WHISPER_STT_URL: Optional[str] = None
+
+    # Язык распознавания для Whisper.
+    # "en" — принудительно английский (наш сценарий: ученик говорит на англ.).
+    # None/"" — авто-детект (медленнее, риск путаницы).
+    WHISPER_STT_LANGUAGE: str = "en"
+
     @property
     def admin_url(self) -> str:
         return f"https://{self.ADMIN_HOST}"
