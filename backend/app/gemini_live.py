@@ -24,18 +24,57 @@ from .config import settings, SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
-# Если HTTPS_PROXY / HTTP_PROXY заданы в .env — google-genai (httpx) и
-# библиотека websockets автоматически их подхватывают:
-#   - httpx считывает их через trust_env=True (дефолт)
-#   - websockets 13+ читает https_proxy/wss_proxy через urllib.getproxies()
-# Нужно только убедиться, что нижний регистр переменных тоже выставлен.
-_proxy_upper = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-if _proxy_upper:
-    os.environ.setdefault("https_proxy", _proxy_upper)
-    os.environ.setdefault("http_proxy", _proxy_upper)
-    # websockets читает именно wss_proxy для wss:// по умолчанию
-    os.environ.setdefault("wss_proxy", _proxy_upper)
-    logger.info("Используем прокси для Gemini API: %s", _proxy_upper.split("@")[-1])
+# --- Настройка SOCKS5/HTTPS-прокси для обхода гео-блокировки Gemini ---
+#
+# Gemini API блокирует IP из РФ (ошибка 1007 "User location is not supported").
+# Обходим через US-прокси. Для обычных HTTP-запросов (httpx) достаточно
+# переменных окружения HTTPS_PROXY/HTTP_PROXY. Но google-genai для Live API
+# использует библиотеку websockets, которая НЕ читает env-переменные для
+# SOCKS5-прокси при wss://-соединениях.
+#
+# Решение — monkey-patch: подменяем `ws_connect` в модуле google.genai.live
+# на версию из библиотеки `websockets_proxy`, которая умеет ходить через
+# SOCKS5/HTTP-прокси.
+_proxy_url = (
+    os.environ.get("HTTPS_PROXY")
+    or os.environ.get("https_proxy")
+    or os.environ.get("HTTP_PROXY")
+    or os.environ.get("http_proxy")
+)
+
+if _proxy_url:
+    try:
+        from websockets_proxy import Proxy, proxy_connect
+        import google.genai.live as _genai_live
+
+        _proxy_obj = Proxy.from_url(_proxy_url)
+
+        def _patched_ws_connect(uri, **kwargs):
+            """Обёртка над proxy_connect с фиксированным proxy-объектом."""
+            return proxy_connect(uri, proxy=_proxy_obj, **kwargs)
+
+        _genai_live.ws_connect = _patched_ws_connect
+        # httpx (REST-вызовы google-genai) читает HTTPS_PROXY сам.
+        # Продублируем в нижнем регистре на всякий случай.
+        os.environ.setdefault("https_proxy", _proxy_url)
+        os.environ.setdefault("http_proxy", _proxy_url)
+
+        _masked = _proxy_url.split("@")[-1] if "@" in _proxy_url else _proxy_url
+        logger.info(
+            "Gemini Live будет ходить через прокси %s (websockets monkey-patch активен)",
+            _masked,
+        )
+    except ImportError:
+        logger.error(
+            "Переменная HTTPS_PROXY задана, но библиотека websockets_proxy "
+            "не установлена. Установите: pip install websockets_proxy"
+        )
+    except Exception as exc:
+        logger.exception("Не удалось настроить прокси для Gemini Live: %s", exc)
+else:
+    logger.warning(
+        "HTTPS_PROXY не задан. Если сервер в РФ — Gemini вернёт ошибку 1007."
+    )
 
 # MIME-тип входящего аудио, требуемый Gemini Live API
 _INPUT_MIME_TYPE = "audio/pcm;rate=16000"
