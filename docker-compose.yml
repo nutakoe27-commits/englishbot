@@ -3,56 +3,20 @@ networks:
   englishbot_net:
     driver: bridge
 
-# ─── Тома ────────────────────────────────────────────────────────────────────
-volumes:
-  letsencrypt_data:
-  nginx_www:
-
 # ─── Сервисы ─────────────────────────────────────────────────────────────────
+# ВАЖНО: на VPS уже запущен системный Nginx (для DocBot), который слушает 80/443.
+# Поэтому Docker-nginx и Docker-certbot ОТКЛЮЧЕНЫ.
+# Мы пробрасываем порты контейнеров на 127.0.0.1 VPS, а системный Nginx проксирует трафик.
+
 services:
-
-  # ── Nginx — обратный прокси ───────────────────────────────────────────────
-  nginx:
-    image: nginx:alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - letsencrypt_data:/etc/letsencrypt:ro
-      - nginx_www:/var/www/certbot
-    depends_on:
-      - backend
-      - miniapp
-      - admin
-    networks:
-      - englishbot_net
-
-  # ── Certbot — автопродление Let's Encrypt сертификатов ───────────────────
-  certbot:
-    image: certbot/certbot
-    restart: unless-stopped
-    volumes:
-      - letsencrypt_data:/etc/letsencrypt
-      - nginx_www:/var/www/certbot
-    # Проверяет обновление каждые 12 часов; сертификаты обновляются за 30 дней до истечения
-    entrypoint: >
-      /bin/sh -c "trap exit TERM;
-      while :; do
-        certbot renew --webroot -w /var/www/certbot --quiet;
-        sleep 12h & wait $${!};
-      done"
-    networks:
-      - englishbot_net
 
   # ── Backend — FastAPI ─────────────────────────────────────────────────────
   backend:
     build: ./backend
     restart: unless-stopped
     env_file: .env
-    expose:
-      - "8000"
+    ports:
+      - "127.0.0.1:8082:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -73,32 +37,28 @@ services:
     networks:
       - englishbot_net
 
-  # ── Mini App — React SPA (nginx внутри) ──────────────────────────────────
+  # ── Mini App — React SPA (nginx внутри контейнера) ────────────────────────
   miniapp:
     build: ./miniapp
     restart: unless-stopped
-    expose:
-      - "80"
+    ports:
+      - "127.0.0.1:8081:80"
     networks:
       - englishbot_net
 
-  # ── Admin Panel — React SPA (nginx внутри) ───────────────────────────────
+  # ── Admin Panel — React SPA ───────────────────────────────────────────────
   admin:
     build: ./admin
     restart: unless-stopped
-    expose:
-      - "80"
+    ports:
+      - "127.0.0.1:8083:80"
     networks:
       - englishbot_net
 
   # ── MySQL 8 — ЗАКОММЕНТИРОВАН (enable on Phase 1) ─────────────────────────
-  # Раскомментировать когда будет готова схема БД.
-  # Требует ~400MB RAM, поэтому отключён на Phase 0.
-  #
   # mysql:
   #   image: mysql:8.0
   #   restart: unless-stopped
-  #   env_file: .env
   #   environment:
   #     MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
   #     MYSQL_DATABASE: englishbot
@@ -106,23 +66,16 @@ services:
   #     MYSQL_PASSWORD: ${MYSQL_PASSWORD}
   #   volumes:
   #     - mysql_data:/var/lib/mysql
-  #   networks:
-  #     - englishbot_net
+  #   networks: [englishbot_net]
 
   # ── Redis 7 — ЗАКОММЕНТИРОВАН (enable on Phase 1) ─────────────────────────
-  # Используется для кэша сессий и rate limiting.
-  # Требует ~30MB RAM, отключён на Phase 0 для экономии ресурсов.
-  #
   # redis:
   #   image: redis:7-alpine
   #   restart: unless-stopped
   #   command: redis-server --appendonly yes
-  #   volumes:
-  #     - redis_data:/data
-  #   networks:
-  #     - englishbot_net
+  #   volumes: [redis_data:/data]
+  #   networks: [englishbot_net]
 
-# Тома для закомментированных сервисов (раскомментировать вместе с ними):
 # volumes:
 #   mysql_data:
 #   redis_data:
