@@ -39,6 +39,8 @@ html, body, #root {
   padding: 0;
   height: 100%;
   overscroll-behavior: none;
+  /* Блокируем скролл всей страницы — внутри скроллится только лог диалога */
+  overflow: hidden;
 }
 
 body {
@@ -57,16 +59,19 @@ button {
 }
 
 /* ─── Оболочка приложения — CSS Grid с фиксированной сеткой ────── */
-/* Используем dvh (dynamic viewport) — не прыгает на iOS при показе клавиатуры. */
+/* Важно: height: 100dvh (не min-height) — чтобы лог не мог растянуть сетку
+   и сдвинуть кнопку. dvh (dynamic viewport) не прыгает на iOS при показе клавиатуры. */
 .tutor-app {
   position: relative;
   width: 100%;
-  min-height: 100dvh;
+  height: 100dvh;
+  max-height: 100dvh;
   max-width: 480px;
   margin: 0 auto;
   padding: 20px 20px 24px;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  /* шапка / лог (занимает всё оставшееся) / футер с кнопкой */
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 16px;
   background:
     radial-gradient(1200px 600px at 50% -200px, rgba(124, 92, 255, 0.15), transparent 60%),
