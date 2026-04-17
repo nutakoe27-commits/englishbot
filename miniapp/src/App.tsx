@@ -309,6 +309,17 @@ export default function App() {
       mediaStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = false));
     }
 
+    // Явный EOU-маркер: на сервере у Yandex STT выключен авто-детектор пауз,
+    // финализация и ответ GPT/TTS запустятся только после этого сообщения.
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: "eou" }));
+      } catch (err) {
+        console.warn("Failed to send eou marker:", err);
+      }
+    }
+
     setAppState("connected");
     setStatusText("Thinking…");
   }, []);
