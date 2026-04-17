@@ -27,25 +27,34 @@ logger = logging.getLogger(__name__)
 _INPUT_MIME_TYPE = "audio/pcm;rate=16000"
 
 
-def _build_live_config() -> types.LiveConnectConfig:
-    """Собирает конфигурацию LiveConnectConfig из настроек приложения."""
-    return types.LiveConnectConfig(
-        response_modalities=["AUDIO"],
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=settings.GEMINI_VOICE
-                )
-            )
-        ),
-        system_instruction=types.Content(
-            parts=[types.Part(text=SYSTEM_PROMPT)],
-            role="user",
-        ),
-        # Включаем транскрипции для отображения в диалог-логе
-        input_audio_transcription=types.AudioTranscriptionConfig(),
-        output_audio_transcription=types.AudioTranscriptionConfig(),
-    )
+def _build_live_config() -> dict:
+    """
+    Собирает конфигурацию Live-сессии.
+
+    Возвращаем dict вместо types.LiveConnectConfig, потому что:
+    - в старых версиях google-genai (0.3.x) класс AudioTranscriptionConfig
+      отсутствует, а пустой dict принимается сервером как валидный конфиг
+      транскрипции (этот тип "has no fields" согласно API reference).
+    - SDK принимает config как dict или как LiveConnectConfig.
+    """
+    return {
+        "response_modalities": ["AUDIO"],
+        "speech_config": {
+            "voice_config": {
+                "prebuilt_voice_config": {
+                    "voice_name": settings.GEMINI_VOICE,
+                }
+            }
+        },
+        "system_instruction": {
+            "parts": [{"text": SYSTEM_PROMPT}],
+            "role": "user",
+        },
+        # Включаем транскрипции для отображения в диалог-логе.
+        # Пустой dict = AudioTranscriptionConfig без полей.
+        "input_audio_transcription": {},
+        "output_audio_transcription": {},
+    }
 
 
 async def _send_audio_to_gemini(
