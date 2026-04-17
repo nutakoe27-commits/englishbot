@@ -1,187 +1,287 @@
-# Подключение локального vLLM (V100) вместо YandexGPT
+# Local LLM Setup — V100 + SSH Reverse Tunnel
 
-Этот гайд описывает Этап 1 миграции: LLM уезжает на ваш домашний V100,
-STT и TTS остаются в Yandex. Переключение — через переменную окружения
-`LLM_PROVIDER` на VPS.
+End-to-end guide to switch EnglishBot from YandexGPT to a local
+Qwen3.5-35B-A3B-AWQ running on a V100 home server, connected to the
+RF VPS via an SSH reverse tunnel (no open ports on the V100 router).
 
-## Архитектура
+---
+
+## Topology
 
 ```
-Browser → VPS (FastAPI) → Yandex STT (audio→text)
-                       → [LLM_PROVIDER]:
-                            yandex → YandexGPT (как было)
-                            vllm   → https://*.cfargotunnel.com/v1 → V100 дома
-                       → Yandex TTS (text→audio) → Browser
+┌──────────────────────┐           ┌────────────────────────────┐
+│ V100 server (home)   │           │ VPS 89.111.143.45 (RF)     │
+│                      │           │                            │
+│  1Cat-vLLM           │           │  englishbot backend        │
+│  OpenAI API :23333   │◀──────────│  docker, host net          │
+│                      │   reverse │  uses http://localhost:    │
+│  autossh -R 23333    │    SSH    │        23333/v1            │
+│  ─────────────────▶  │  tunnel   │                            │
+│                      │           │  sshd :22 (user tunnel)    │
+└──────────────────────┘           └────────────────────────────┘
+```
+
+The V100 opens an outbound SSH connection to the VPS. That SSH
+connection carries a reverse port forward: `VPS:23333 → V100:23333`.
+Backend on the VPS sees the vLLM server as if it were on localhost.
+
+**Why SSH tunnel instead of Cloudflare / Caddy:**
+- No inbound ports need to be opened on the V100 router (only outbound SSH).
+- No DNS records, no TLS certificates to manage.
+- Reuses existing sshd on the VPS.
+- autossh handles reconnects automatically.
+
+---
+
+## Part 1 — VPS: create dedicated `tunnel` user
+
+Create a restricted user that can only hold the reverse tunnel — no
+shell, no other ports, no X11/agent forwarding.
+
+```bash
+# On VPS as root / sudo user
+sudo useradd -M -s /bin/bash tunnel
+sudo passwd -l tunnel   # block password login, key-only
+id tunnel               # confirm: uid=..., gid=...
+```
+
+### Install the V100 public key with restrictions
+
+```bash
+sudo mkdir -p /home/tunnel/.ssh
+sudo chmod 700 /home/tunnel/.ssh
+
+# Paste the actual public key from V100 (~/.ssh/vps_tunnel.pub)
+echo 'command="/bin/false",no-agent-forwarding,no-X11-forwarding,no-pty,permitopen="localhost:23333" ssh-ed25519 AAAA...KEY... v100-to-vps-tunnel' \
+  | sudo tee /home/tunnel/.ssh/authorized_keys
+
+sudo chmod 600 /home/tunnel/.ssh/authorized_keys
+sudo chown -R tunnel:tunnel /home/tunnel/.ssh
+```
+
+The `authorized_keys` options mean:
+- `command="/bin/false"` — no shell, only the tunnel
+- `no-pty` — no terminal
+- `permitopen="localhost:23333"` — can only forward this single port
+
+### sshd_config tweaks
+
+Add to `/etc/ssh/sshd_config`:
+
+```
+# Tunnel settings for V100
+AllowTcpForwarding yes
+ClientAliveInterval 30
+ClientAliveCountMax 3
+```
+
+Reload sshd:
+
+```bash
+sudo systemctl reload ssh
+sudo systemctl status ssh --no-pager | head -5
 ```
 
 ---
 
-## Шаг 1. На V100 — подтвердить, что vLLM отвечает по OpenAI API
+## Part 2 — V100: generate key & start tunnel
 
-1Cat-vLLM в нашей установке слушает на порту **23333** (не 8000).
-Модель: **`QuantTrio/Qwen3.5-35B-A3B-AWQ`**, контекст до 262 144 токенов,
-авторизация не требуется.
+### Generate key pair
 
 ```bash
-# Список моделей (подтверждаем, что сервер жив)
-curl http://localhost:23333/v1/models
+# On V100 as the user that runs vLLM (e.g. "user")
+ssh-keygen -t ed25519 -f ~/.ssh/vps_tunnel -N "" -C "v100-to-vps-tunnel"
+cat ~/.ssh/vps_tunnel.pub   # copy this line to the VPS step above
+```
 
-# Тест chat completions — должен вернуть короткий ответ ассистента
-curl http://localhost:23333/v1/chat/completions \
+### Manual test (interactive)
+
+```bash
+ssh -i ~/.ssh/vps_tunnel \
+    -o StrictHostKeyChecking=accept-new \
+    -N -T \
+    -R 23333:localhost:23333 \
+    tunnel@89.111.143.45
+```
+
+The command hangs — that is correct, the tunnel is alive. In a
+separate VPS shell:
+
+```bash
+curl -s http://localhost:23333/v1/models | python3 -m json.tool
+```
+
+Expected: JSON with `QuantTrio/Qwen3.5-35B-A3B-AWQ` and `max_model_len: 262144`.
+
+Close the manual tunnel with Ctrl+C before continuing.
+
+### Permanent tunnel via systemd + autossh
+
+```bash
+sudo apt update && sudo apt install -y autossh
+
+sudo tee /etc/systemd/system/vllm-tunnel.service > /dev/null <<'EOF'
+[Unit]
+Description=Reverse SSH tunnel V100 -> VPS (vLLM :23333)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user
+Environment="AUTOSSH_GATETIME=0"
+Environment="AUTOSSH_PORT=0"
+ExecStart=/usr/bin/autossh -M 0 -N -T \
+  -o "ServerAliveInterval=30" \
+  -o "ServerAliveCountMax=3" \
+  -o "ExitOnForwardFailure=yes" \
+  -o "StrictHostKeyChecking=accept-new" \
+  -o "TCPKeepAlive=yes" \
+  -i /home/user/.ssh/vps_tunnel \
+  -R 23333:localhost:23333 \
+  tunnel@89.111.143.45
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now vllm-tunnel.service
+sudo systemctl status vllm-tunnel.service --no-pager
+```
+
+Key flags:
+- `AUTOSSH_GATETIME=0` — connect immediately on start
+- `AUTOSSH_PORT=0` — use built-in `ServerAliveInterval` heartbeat
+- `ExitOnForwardFailure=yes` — die loudly if VPS port is busy (systemd restarts)
+
+Logs:
+```bash
+sudo journalctl -u vllm-tunnel.service -f
+```
+
+---
+
+## Part 3 — vLLM on V100 (reference)
+
+The existing 1Cat-vLLM launch command that works with this model:
+
+```bash
+python -m vllm.entrypoints.openai.api_server \
+  --model QuantTrio/Qwen3.5-35B-A3B-AWQ \
+  --quantization awq --dtype float16 \
+  --gpu-memory-utilization 0.90 \
+  --max-model-len 262144 \
+  --tensor-parallel-size 4 \
+  --max-num-seqs 8 --max-num-batched-tokens 65536 \
+  --attention-backend TRITON_ATTN \
+  --skip-mm-profiling \
+  --limit-mm-per-prompt '{"image":0,"video":0}' \
+  --disable-custom-all-reduce \
+  --host 0.0.0.0 --port 23333
+```
+
+For a systemd unit that auto-starts vLLM itself, see
+[`v100_vllm_systemd.md`](v100_vllm_systemd.md).
+
+### Reasoning suppression
+
+Qwen3.5-35B-A3B is a reasoning model. Without suppression it emits
+chain-of-thought into `content` (`Thinking Process:...` /
+`<think>...</think>`), which is fatal for a voice bot (TTS would
+vocalize the thinking).
+
+The quantized QuantTrio build **ignores the `/no_think` soft switch**.
+The working solution is the strict switch via request payload:
+
+```json
+{
+  "chat_template_kwargs": {"enable_thinking": false}
+}
+```
+
+The `VLLMProvider` in `backend/app/llm_providers.py` sends this on
+every request. As defence-in-depth it also injects `/no_think` and
+strips `<think>...</think>` tags from the response.
+
+---
+
+## Part 4 — VPS: switch backend to vLLM
+
+Edit `/var/www/englishbot/.env` and append:
+
+```bash
+# Local LLM via SSH reverse tunnel from V100
+LLM_PROVIDER=vllm
+VLLM_BASE_URL=http://localhost:23333/v1
+VLLM_MODEL_NAME=QuantTrio/Qwen3.5-35B-A3B-AWQ
+```
+
+Note: plain `http://` is fine — the tunnel wraps everything in SSH.
+
+Sanity check before restart:
+```bash
+curl -s http://localhost:23333/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "QuantTrio/Qwen3.5-35B-A3B-AWQ",
     "messages": [
-      {"role": "system", "content": "You are a friendly English conversation partner. Reply in one short sentence."},
-      {"role": "user", "content": "Say hi."}
+      {"role": "system", "content": "You are a friendly English tutor. Reply briefly."},
+      {"role": "user", "content": "Yesterday I goed to the shop and buyed some apples."}
     ],
-    "max_tokens": 40,
-    "temperature": 0.6
-  }'
+    "max_tokens": 200,
+    "temperature": 0.6,
+    "chat_template_kwargs": {"enable_thinking": false}
+  }' | python3 -m json.tool
 ```
 
-Если второй запрос вернул осмысленный ответ ассистента — значит
-1Cat-vLLM готов обслуживать наш бот.
+Expected: clean tutor correction, `finish_reason: stop`, no
+`Thinking Process` prefix in content.
 
----
-
-## Шаг 2. На V100 — установить cloudflared и создать туннель
-
-### 2.1. Установка
-
-```bash
-# Ubuntu (универсально для 20.04/22.04/24.04)
-wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-sudo dpkg -i cloudflared-linux-amd64.deb
-cloudflared --version
-```
-
-### 2.2. Регистрация (один раз)
-
-```bash
-cloudflared tunnel login
-```
-
-Команда откроет ссылку — откройте её в браузере, войдите в Cloudflare
-(зарегистрируйтесь, если аккаунта нет — бесплатно, без карты).
-Подтвердите доступ любому домену (даже если у вас нет домена — просто нажмите
-кнопку, это не привязывает доменную зону).
-
-### 2.3. Создать туннель
-
-```bash
-cloudflared tunnel create englishbot-llm
-```
-
-Команда выведет `Tunnel ID` вида `abc12345-6789-...` и путь к файлу credentials
-(`~/.cloudflared/<ID>.json`). Запомните оба.
-
-### 2.4. Создать конфиг туннеля
-
-Создайте `~/.cloudflared/config.yml` (пути зависят от того, под каким
-пользователем вы делали `cloudflared tunnel login` — скорее всего `user`,
-так что `/home/user/.cloudflared/...`):
-
-```yaml
-tunnel: englishbot-llm
-credentials-file: /home/user/.cloudflared/<ID>.json   # замените <ID>
-
-ingress:
-  - hostname: <ID>.cfargotunnel.com                   # замените <ID>
-    service: http://localhost:23333                   # порт 1Cat-vLLM
-  - service: http_status:404
-```
-
-Примечание: `<ID>.cfargotunnel.com` — это служебный адрес Cloudflare для
-туннеля без привязки к домену. Подставьте сюда свой `Tunnel ID` из шага 2.3.
-
-### 2.5. Запустить как systemd-сервис
-
-```bash
-sudo cloudflared service install
-sudo systemctl start cloudflared
-sudo systemctl enable cloudflared
-sudo systemctl status cloudflared
-```
-
-### 2.6. Проверка снаружи
-
-С любого компьютера (не с V100):
-
-```bash
-curl https://<TUNNEL_ID>.cfargotunnel.com/v1/models
-```
-
-Должен вернуться тот же JSON, что в шаге 1.
-
----
-
-## Шаг 3. На VPS — переключить backend на vLLM
-
-### 3.1. Обновить `.env` (файл `/var/www/englishbot/backend/.env`)
-
-Добавьте три новые строки, остальное не трогайте:
-
-```bash
-LLM_PROVIDER=vllm
-VLLM_BASE_URL=https://<TUNNEL_ID>.cfargotunnel.com/v1
-VLLM_MODEL_NAME=QuantTrio/Qwen3.5-35B-A3B-AWQ
-# VLLM_API_KEY=not-needed   # 1Cat-vLLM не требует ключа — оставьте закомментированным
-```
-
-Важно:
-- в `VLLM_BASE_URL` обязательно добавьте `/v1` в конце;
-- `VLLM_MODEL_NAME` — точно такое же значение, как в `/v1/models` на V100
-  (в нашем случае `QuantTrio/Qwen3.5-35B-A3B-AWQ` со слэшем).
-
-### 3.2. Задеплоить свежий код
-
+Restart backend:
 ```bash
 cd /var/www/englishbot
-git pull
-cd backend
-docker compose build backend
 docker compose up -d backend
-docker compose logs -f backend | head -40
+docker compose logs --tail 50 backend
 ```
 
-В логах при первом подключении клиента увидите:
-```
-[LLM] провайдер=vllm base_url=https://...cfargotunnel.com/v1 model=Qwen3.5-35B-A3B-AWQ
-```
-
-Если вдруг увидите `провайдер=yandex` — значит env-переменные не подхватились,
-проверьте `.env` и перезапустите контейнер.
-
-### 3.3. Живой тест
-
-Откройте Mini App `@kmo_ai_english_bot`, нажмите кнопку записи, скажите фразу,
-отпустите кнопку. Ответ должен прийти от Qwen, а не от YandexGPT. По стилю
-заметите разницу: Qwen обычно более многословный и креативный чем
-yandexgpt-lite.
+Live test via Telegram Mini App: open `@kmo_ai_english_bot`, record a
+sentence with grammar mistakes, verify the reply is a friendly
+correction.
 
 ---
 
-## Откат
+## Rollback
 
-В `.env` вернуть `LLM_PROVIDER=yandex`, `docker compose up -d backend` —
-и всё работает как раньше. Можно держать `VLLM_*` переменные заполненными:
-они игнорируются при `LLM_PROVIDER=yandex`.
+If anything breaks, flip the provider back — no code deploy needed:
+
+```bash
+# on VPS
+sed -i 's/^LLM_PROVIDER=vllm/LLM_PROVIDER=yandex/' /var/www/englishbot/.env
+docker compose up -d backend
+```
+
+`YANDEXGPT_API_KEY` remains in `.env` and is used immediately.
 
 ---
 
-## Частые проблемы
+## Troubleshooting
 
-1. **`cloudflared: connection refused`** — 1Cat-vLLM слушает не на
-   `localhost:8000`. Проверьте `ss -tlnp | grep 8000` на V100 и поправьте
-   `service:` в `config.yml`.
+**`curl http://localhost:23333/v1/models` on VPS returns connection refused**
+- Tunnel is down. Check `sudo systemctl status vllm-tunnel.service` on V100.
+- Check `sudo journalctl -u vllm-tunnel.service -n 50 --no-pager` for errors.
+- Confirm VPS can be reached from V100: `ssh -i ~/.ssh/vps_tunnel tunnel@89.111.143.45` (should disconnect immediately with `/bin/false`, meaning auth OK).
 
-2. **`400 Bad Request` от vLLM** — неверное `VLLM_MODEL_NAME`. Должно точно
-   совпадать с `id` из `/v1/models`.
+**`Permission denied (publickey)` from V100**
+- Public key not in `/home/tunnel/.ssh/authorized_keys` on VPS, or wrong permissions.
+- On VPS: `sudo ls -la /home/tunnel/.ssh/` — dir 700, file 600, owned by `tunnel:tunnel`.
 
-3. **Долгий отклик (>5 сек)** — проверьте, что V100 не крутит одновременно
-   другую задачу. `nvidia-smi` покажет утилизацию. Первый запрос после
-   простоя может быть медленным (прогрев модели).
+**Tunnel stays up but requests time out**
+- vLLM itself is down on V100. `ps -ef | grep vllm` on V100.
+- Check vLLM log for OOM / CUDA errors.
 
-4. **Туннель отваливается после перезагрузки V100** — `sudo systemctl enable
-   cloudflared` не выполнили (см. шаг 2.5).
+**Model returns "Thinking Process" in content**
+- Request is missing `chat_template_kwargs.enable_thinking=false`.
+- Confirm `VLLMProvider` is deployed (env `LLM_PROVIDER=vllm` active).
