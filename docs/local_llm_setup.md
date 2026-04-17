@@ -215,7 +215,10 @@ Edit `/var/www/englishbot/.env` and append:
 ```bash
 # Local LLM via SSH reverse tunnel from V100
 LLM_PROVIDER=vllm
-VLLM_BASE_URL=http://localhost:23333/v1
+# host.docker.internal resolves to the VPS host gateway from inside the
+# backend container (see extra_hosts in docker-compose.yml). The SSH
+# tunnel exposes vLLM on the VPS host at port 23333.
+VLLM_BASE_URL=http://host.docker.internal:23333/v1
 VLLM_MODEL_NAME=QuantTrio/Qwen3.5-35B-A3B-AWQ
 ```
 
@@ -269,7 +272,11 @@ docker compose up -d backend
 
 ## Troubleshooting
 
-**`curl http://localhost:23333/v1/models` on VPS returns connection refused**
+**From inside backend container `curl http://host.docker.internal:23333/v1/models` fails**
+- Docker Compose file is missing `extra_hosts: ["host.docker.internal:host-gateway"]` under the `backend` service.
+- Re-create the container: `docker compose up -d backend` (not just restart — needs recreation to apply extra_hosts).
+
+**`curl http://localhost:23333/v1/models` on VPS host returns connection refused**
 - Tunnel is down. Check `sudo systemctl status vllm-tunnel.service` on V100.
 - Check `sudo journalctl -u vllm-tunnel.service -n 50 --no-pager` for errors.
 - Confirm VPS can be reached from V100: `ssh -i ~/.ssh/vps_tunnel tunnel@89.111.143.45` (should disconnect immediately with `/bin/false`, meaning auth OK).
