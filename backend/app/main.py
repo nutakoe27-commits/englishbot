@@ -4,7 +4,7 @@ main.py — точка входа FastAPI-приложения.
 Эндпоинты:
   GET  /health          — healthcheck для Docker
   GET  /api/v1/ping     — тестовый REST-эндпоинт
-  WS   /ws/voice        — голосовой диалог через Yandex SpeechKit + YandexGPT
+  WS   /ws/voice        — голосовой диалог (Whisper STT + vLLM + Kokoro TTS)
 """
 
 import hashlib
@@ -19,7 +19,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .yandex_voice import run_yandex_session
+from .voice import run_voice_session
 
 # ─── Конфигурация логирования ──────────────────────────────────────────
 # Без этого logger.info(...) не виден в stdout docker'а — uvicorn настраивает
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # ─── Приложение ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title="AI English Tutor — Backend",
-    version="0.2.0",
+    version="0.3.0",
     description="Backend API для Telegram Mini App с AI-репетитором английского.",
 )
 
@@ -112,7 +112,7 @@ async def health() -> dict:
 @app.get("/api/v1/ping", tags=["API v1"])
 async def ping() -> dict:
     """Тестовый эндпоинт. Проверяет доступность API."""
-    return {"pong": True, "version": "0.2.0"}
+    return {"pong": True, "version": "0.3.0"}
 
 
 # ─── WebSocket — голосовой диалог ─────────────────────────────────────────────
@@ -128,15 +128,9 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
 
     Протокол:
         Входящие бинарные сообщения → PCM 16-bit 16kHz mono (от браузера).
-        Исходящие бинарные сообщения → PCM 16-bit 24kHz mono (от Yandex TTS).
+        Исходящие бинарные сообщения → PCM 16-bit 24kHz mono (от TTS).
         Исходящие JSON-сообщения → {"type": "text", "role": "user"|"tutor", "text": "..."}
     """
-    # ── Проверка конфигурации ──────────────────────────────────────────────
-    if not settings.YC_API_KEY or not settings.YC_FOLDER_ID:
-        logger.error("YC_API_KEY или YC_FOLDER_ID не заданы — отклоняем соединение")
-        await websocket.close(code=1011, reason="Server misconfiguration: missing Yandex credentials")
-        return
-
     # ── Валидация Telegram initData ────────────────────────────────────────
     user_info: Optional[dict] = None
 
@@ -182,9 +176,9 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
         user_info.get("id") if user_info else "anonymous",
     )
 
-    # ── Запуск Yandex SpeechKit + YandexGPT сессии ─────────────────────────
+    # ── Запуск голосовой сессии ─────────────────────────────────────────
     try:
-        await run_yandex_session(websocket)
+        await run_voice_session(websocket)
     except WebSocketDisconnect:
         logger.info("Клиент отключился: %s", websocket.client)
     except Exception as exc:

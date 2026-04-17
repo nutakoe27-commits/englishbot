@@ -21,68 +21,30 @@ class Settings(BaseSettings):
     # Telegram Bot token — используется для валидации initData
     BOT_TOKEN: Optional[str] = None
 
-    # ─── Yandex Cloud (SpeechKit + YandexGPT) ─────────────────────────────
-    # Мы используем Yandex, потому что сервер в РФ.
-    # Gemini/Vertex либо блокирует РФ-IP, либо требует активного billing.
-    # Yandex работает напрямую и принимает оплату в рублях.
-
-    # API-ключ сервисного аккаунта с ролями:
-    #   ai.speechkit-stt.user, ai.speechkit-tts.user, ai.languageModels.user
-    YC_API_KEY: Optional[str] = None
-
-    # ID каталога Yandex Cloud (формат b1g... или bpf...).
-    # Нужен для YandexGPT modelUri и для биллинга.
-    YC_FOLDER_ID: Optional[str] = None
-
-    # Голос для TTS.
-    # Английские голоса: john, nick, alyss (вежливые, нейтральные).
-    # Русские голоса: alena, filipp, ermil, zahar, jane, oksana.
-    # Для английского репетитора по умолчанию — john.
-    YC_TTS_VOICE: str = "john"
-
-    # ─── LLM provider ────────────────────────────────────────────────────
-    # Какой LLM использовать для генерации ответов репетитора.
-    # "yandex" — YandexGPT (HTTP), "vllm" — локальный vLLM (OpenAI API).
-    LLM_PROVIDER: str = "yandex"
-
-    # Base URL локального vLLM, должен заканчиваться на /v1.
-    # Пример через Cloudflare Tunnel: https://abcd-1234.cfargotunnel.com/v1
+    # ─── LLM (vLLM на V100) ──────────────────────────────────────────────
+    # OpenAI-совместимый endpoint. В проде host.docker.internal через
+    # SSH-reverse-tunnel до V100: http://host.docker.internal:23333/v1
     VLLM_BASE_URL: Optional[str] = None
 
-    # Имя модели, как её выставил 1Cat-vLLM (поле served-model-name).
-    # Пример: "Qwen3.5-35B-A3B-AWQ"
+    # Имя модели, как его выставил vLLM (--served-model-name).
+    # Пример: "QuantTrio/Qwen3.5-35B-A3B-AWQ"
     VLLM_MODEL_NAME: Optional[str] = None
 
-    # API-ключ vLLM. По умолчанию vLLM его не требует — ставим "not-needed".
-    # Если в 1Cat-vLLM включена авторизация, подставьте реальный токен.
+    # API-ключ vLLM. По умолчанию vLLM его не требует — используем "not-needed".
     VLLM_API_KEY: Optional[str] = None
 
-    # ─── STT provider ────────────────────────────────────────────────────
-    # Какой STT использовать для распознавания речи.
-    # "yandex"  — Yandex SpeechKit (gRPC, стриминг с внешним EOU).
-    # "whisper" — локальный faster-whisper (large-v3-turbo) на V100,
-    #             WebSocket JSON-протокол, один final по EOU.
-    STT_PROVIDER: str = "yandex"
-
-    # URL WebSocket-endpoint'а Whisper-сервера.
-    # В докере в проде: ws://host.docker.internal:23334/ws
-    # (через SSH-reverse-tunnel до V100).
+    # ─── STT (Whisper на V100) ───────────────────────────────────────────
+    # URL WebSocket-endpoint faster-whisper сервера.
+    # В проде: ws://host.docker.internal:23334/ws
     WHISPER_STT_URL: Optional[str] = None
 
-    # Язык распознавания для Whisper.
-    # "en" — принудительно английский (наш сценарий: ученик говорит на англ.).
-    # None/"" — авто-детект (медленнее, риск путаницы).
+    # Язык распознавания для Whisper. "en" — принудительно английский.
+    # None/"" — авто-детект (медленнее).
     WHISPER_STT_LANGUAGE: str = "en"
 
-    # ─── TTS provider ────────────────────────────────────────────────
-    # Какой TTS использовать для синтеза речи.
-    # "yandex" — Yandex SpeechKit TTS v3 (gRPC стрим, платно).
-    # "kokoro" — локальный Kokoro-82M на V100, WebSocket JSON-протокол.
-    TTS_PROVIDER: str = "yandex"
-
-    # URL WebSocket-endpoint'а Kokoro-сервера.
-    # В докере в проде: ws://host.docker.internal:23335/ws
-    # (через SSH-reverse-tunnel до V100).
+    # ─── TTS (Kokoro-82M на V100) ────────────────────────────────────────
+    # URL WebSocket-endpoint Kokoro-сервера.
+    # В проде: ws://host.docker.internal:23335/ws
     KOKORO_TTS_URL: Optional[str] = None
 
     # Голос Kokoro. Список и оценки качества:

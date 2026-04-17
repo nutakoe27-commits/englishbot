@@ -1,12 +1,13 @@
 """
-llm_providers.py — абстракция над провайдерами LLM.
+llm_providers.py — LLM-провайдер для ответов репетитора.
 
-Позволяет переключать LLM-бэкенд через переменную окружения LLM_PROVIDER:
-  - "yandex" — YandexGPT (HTTP, foundationModels/v1/completion)
-  - "vllm"   — OpenAI-совместимый endpoint (локальный vLLM на V100 через Cloudflare Tunnel)
+Единственный бэкенд — локальный vLLM на V100 (OpenAI-совместимый API),
+пробрасываемый на VPS через SSH-reverse-tunnel.
 
-Оба варианта возвращают одинаковую строку — готовый ответ ассистента.
-Системный промпт добавляется внутри провайдера, history приходит без system.
+Контракт:
+    async def complete(user_text: str, history: list[dict]) -> str
+
+История приходит без system-сообщения; SYSTEM_PROMPT добавляется внутри провайдера.
 """
 
 from __future__ import annotations
@@ -26,53 +27,6 @@ logger = logging.getLogger(__name__)
 
 class LLMProvider(Protocol):
     async def complete(self, user_text: str, history: list[dict]) -> str: ...
-
-
-# ─── YandexGPT ───────────────────────────────────────────────────────────────
-
-YANDEXGPT_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
-
-
-class YandexGPTProvider:
-    """YandexGPT через HTTP (формат сообщений: role + text)."""
-
-    def __init__(self, api_key: str, folder_id: str, model_uri: str = "yandexgpt-lite/latest"):
-        self.api_key = api_key
-        self.folder_id = folder_id
-        self.model_uri = f"gpt://{folder_id}/{model_uri}"
-
-    async def complete(self, user_text: str, history: list[dict]) -> str:
-        messages = [{"role": "system", "text": SYSTEM_PROMPT}]
-        messages.extend(history)
-        messages.append({"role": "user", "text": user_text})
-
-        payload = {
-            "modelUri": self.model_uri,
-            "completionOptions": {
-                "stream": False,
-                "temperature": 0.6,
-                "maxTokens": 200,
-            },
-            "messages": messages,
-        }
-        headers = {
-            "Authorization": f"Api-Key {self.api_key}",
-            "x-folder-id": self.folder_id,
-            "Content-Type": "application/json",
-        }
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(YANDEXGPT_URL, json=payload, headers=headers)
-            if resp.status_code != 200:
-                logger.error("YandexGPT HTTP %s: %s", resp.status_code, resp.text)
-                resp.raise_for_status()
-            data = resp.json()
-
-        try:
-            return data["result"]["alternatives"][0]["message"]["text"].strip()
-        except (KeyError, IndexError) as exc:
-            logger.error("Неожиданный формат ответа YandexGPT: %s — %s", data, exc)
-            return "Sorry, I didn't catch that. Could you say it again?"
 
 
 # ─── vLLM (OpenAI-совместимый) ───────────────────────────────────────────────
@@ -101,7 +55,8 @@ def _strip_reasoning(text: str) -> str:
 class VLLMProvider:
     """
     vLLM через OpenAI Chat Completions API.
-    base_url должен оканчиваться на /v1 (например, https://abc.cfargotunnel.com/v1).
+    base_url должен оканчиваться на /v1
+    (например, http://host.docker.internal:23333/v1).
     """
 
     def __init__(self, base_url: str, model_name: str, api_key: str = "not-needed"):
@@ -111,7 +66,7 @@ class VLLMProvider:
 
     @staticmethod
     def _to_openai(history: list[dict]) -> list[dict]:
-        """YandexGPT формат {role, text} → OpenAI {role, content}."""
+        """Формат {role, text} → OpenAI {role, content}."""
         out = []
         for msg in history:
             role = msg.get("role", "user")
@@ -168,36 +123,17 @@ class VLLMProvider:
 # ─── Фабрика ─────────────────────────────────────────────────────────────────
 
 def get_llm_provider() -> LLMProvider:
-    """
-    Возвращает провайдера согласно settings.LLM_PROVIDER.
-    Значения: "yandex" (по умолчанию) или "vllm".
-    """
-    provider = (settings.LLM_PROVIDER or "yandex").lower()
-
-    if provider == "vllm":
-        if not settings.VLLM_BASE_URL or not settings.VLLM_MODEL_NAME:
-            logger.error(
-                "LLM_PROVIDER=vllm, но VLLM_BASE_URL / VLLM_MODEL_NAME не заданы. "
-                "Откат на YandexGPT."
-            )
-        else:
-            logger.warning(
-                "[LLM] провайдер=vllm base_url=%s model=%s",
-                settings.VLLM_BASE_URL, settings.VLLM_MODEL_NAME,
-            )
-            return VLLMProvider(
-                base_url=settings.VLLM_BASE_URL,
-                model_name=settings.VLLM_MODEL_NAME,
-                api_key=settings.VLLM_API_KEY or "not-needed",
-            )
-
-    # fallback: YandexGPT
-    if not settings.YC_API_KEY or not settings.YC_FOLDER_ID:
+    """Создаёт VLLMProvider из настроек. Требует VLLM_BASE_URL и VLLM_MODEL_NAME."""
+    if not settings.VLLM_BASE_URL or not settings.VLLM_MODEL_NAME:
         raise RuntimeError(
-            "YandexGPT выбран провайдером, но YC_API_KEY / YC_FOLDER_ID не заданы"
+            "LLM не сконфигурирован: задайте VLLM_BASE_URL и VLLM_MODEL_NAME в .env"
         )
-    logger.warning("[LLM] провайдер=yandex модель=yandexgpt-lite")
-    return YandexGPTProvider(
-        api_key=settings.YC_API_KEY,
-        folder_id=settings.YC_FOLDER_ID,
+    logger.warning(
+        "[LLM] base_url=%s model=%s",
+        settings.VLLM_BASE_URL, settings.VLLM_MODEL_NAME,
+    )
+    return VLLMProvider(
+        base_url=settings.VLLM_BASE_URL,
+        model_name=settings.VLLM_MODEL_NAME,
+        api_key=settings.VLLM_API_KEY or "not-needed",
     )

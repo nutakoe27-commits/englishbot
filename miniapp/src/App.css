@@ -1,0 +1,476 @@
+/* ─── Дизайн-токены ─────────────────────────────────────────────── */
+:root {
+  --bg-0: #0b0d12;
+  --bg-1: #12151c;
+  --bg-2: #181c25;
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.1);
+  --text: #e8eaf0;
+  --text-dim: #8a91a0;
+  --text-faint: #545b6b;
+
+  --accent: #7c5cff;          /* фиолетовый акцент */
+  --accent-soft: #a18aff;
+  --accent-glow: rgba(124, 92, 255, 0.35);
+
+  --record: #ff5470;          /* алый для записи */
+  --record-glow: rgba(255, 84, 112, 0.4);
+
+  --speak: #33d9a6;           /* мятный для озвучки */
+  --speak-glow: rgba(51, 217, 166, 0.35);
+
+  --warn: #ffb13d;
+  --error: #ff6565;
+
+  --radius-lg: 22px;
+  --radius-md: 16px;
+  --radius-sm: 10px;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* ─── Базовый сброс ──────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  background: var(--bg-0);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button {
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ─── Оболочка приложения — CSS Grid с фиксированной сеткой ────── */
+/* Используем dvh (dynamic viewport) — не прыгает на iOS при показе клавиатуры. */
+.tutor-app {
+  position: relative;
+  width: 100%;
+  min-height: 100dvh;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 20px 20px 24px;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 16px;
+  background:
+    radial-gradient(1200px 600px at 50% -200px, rgba(124, 92, 255, 0.15), transparent 60%),
+    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
+    var(--bg-0);
+  overflow: hidden;
+}
+
+/* Декоративные статичные «орбы» — не анимируются, не сдвигаются */
+.bg-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 0;
+}
+.bg-orb--one {
+  width: 280px;
+  height: 280px;
+  top: -80px;
+  left: -60px;
+  background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+}
+.bg-orb--two {
+  width: 240px;
+  height: 240px;
+  bottom: 80px;
+  right: -80px;
+  background: radial-gradient(circle, var(--speak) 0%, transparent 70%);
+}
+
+/* ─── Шапка ──────────────────────────────────────────────────────── */
+.tutor-header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 2px;
+}
+.tutor-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tutor-brand__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.tutor-brand__name {
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: -0.2px;
+}
+.tutor-hello {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+/* ─── Лог диалога — фиксированная область со внутренним скроллом ── */
+.tutor-log {
+  position: relative;
+  z-index: 1;
+  min-height: 0;            /* критично для grid 1fr + overflow */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  scroll-behavior: smooth;
+}
+.tutor-log::-webkit-scrollbar {
+  width: 6px;
+}
+.tutor-log::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+/* Пустой placeholder — центрирован, не влияет на размер контейнера */
+.tutor-log__empty {
+  margin: auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--text-dim);
+}
+.tutor-log__empty-icon {
+  font-size: 36px;
+  line-height: 1;
+  opacity: 0.8;
+}
+.tutor-log__empty-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.tutor-log__empty-hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  max-width: 280px;
+}
+
+/* ─── Реплики ─────────────────────────────────────────────────────── */
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  max-width: 86%;
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+  animation: msg-in 240ms var(--ease);
+}
+
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msg__role {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  opacity: 0.65;
+}
+.msg__text {
+  color: var(--text);
+}
+
+.msg--user {
+  align-self: flex-end;
+  background: linear-gradient(135deg, rgba(124, 92, 255, 0.22), rgba(124, 92, 255, 0.1));
+  border: 1px solid rgba(124, 92, 255, 0.3);
+}
+.msg--user .msg__role {
+  color: var(--accent-soft);
+}
+.msg--tutor {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-strong);
+}
+.msg--tutor .msg__role {
+  color: var(--speak);
+}
+
+/* ─── Нижний блок с кнопкой ────────────────────────────────────── */
+/* Фиксированная сетка: статус (20px) · кнопка (156px) · подпись (18px) · нижняя строка (32px) */
+.tutor-controls {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: 20px 156px 18px 32px;
+  justify-items: center;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 4px;
+}
+
+/* ─── Статус ──────────────────────────────────────────────────── */
+.tutor-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+  transition: color 180ms var(--ease);
+}
+.tutor-status__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition: background 180ms var(--ease), box-shadow 180ms var(--ease);
+}
+.tutor-status__text {
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.tutor-status[data-variant="idle"] .tutor-status__dot,
+.tutor-status[data-variant="connected"] .tutor-status__dot {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+.tutor-status[data-variant="recording"] .tutor-status__dot {
+  background: var(--record);
+  box-shadow: 0 0 10px var(--record-glow);
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+.tutor-status[data-variant="speaking"] .tutor-status__dot {
+  background: var(--speak);
+  box-shadow: 0 0 10px var(--speak-glow);
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+.tutor-status[data-variant="connecting"] .tutor-status__dot,
+.tutor-status[data-variant="initializing"] .tutor-status__dot {
+  background: var(--warn);
+  animation: dot-pulse 1s ease-in-out infinite;
+}
+.tutor-status[data-variant="denied"] .tutor-status__dot,
+.tutor-status[data-variant="error"] .tutor-status__dot {
+  background: var(--error);
+}
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+/* ─── Кнопка Hold-to-Talk ────────────────────────────────────── */
+.talk-button {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, #1d2130, #14171f);
+  color: var(--accent-soft);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  touch-action: none;
+  outline: none;
+  transition:
+    transform 180ms var(--ease),
+    color 180ms var(--ease),
+    background 220ms var(--ease),
+    box-shadow 220ms var(--ease);
+  box-shadow:
+    0 18px 40px -12px rgba(0, 0, 0, 0.7),
+    0 0 0 1px var(--border-strong) inset,
+    0 30px 60px -20px var(--accent-glow);
+}
+.talk-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.talk-button:disabled {
+  cursor: not-allowed;
+}
+
+/* Кольцо вокруг кнопки — даёт визуальный "пульс" без смещения layout */
+.talk-button__ring {
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  pointer-events: none;
+  transition: border-color 220ms var(--ease), opacity 220ms var(--ease);
+  opacity: 0;
+}
+
+.talk-button__icon {
+  display: grid;
+  place-items: center;
+  color: inherit;
+  transition: color 180ms var(--ease), transform 180ms var(--ease);
+}
+
+/* ── Вариант: idle / connected — готов к записи ── */
+.talk-button[data-variant="idle"],
+.talk-button[data-variant="connected"] {
+  color: var(--accent-soft);
+}
+.talk-button[data-variant="idle"] .talk-button__ring,
+.talk-button[data-variant="connected"] .talk-button__ring {
+  border-color: var(--accent);
+  opacity: 0.5;
+}
+
+/* ── Вариант: recording — пульсирующий красный ── */
+.talk-button[data-variant="recording"] {
+  color: var(--record);
+  background: linear-gradient(135deg, #2a1820, #1a1013);
+  box-shadow:
+    0 18px 40px -12px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(255, 84, 112, 0.3) inset,
+    0 0 80px var(--record-glow);
+}
+.talk-button[data-variant="recording"] .talk-button__ring {
+  border-color: var(--record);
+  opacity: 1;
+  animation: ring-pulse 1.4s var(--ease) infinite;
+}
+
+/* ── Вариант: speaking — мятный спокойный пульс ── */
+.talk-button[data-variant="speaking"] {
+  color: var(--speak);
+  background: linear-gradient(135deg, #152520, #101814);
+}
+.talk-button[data-variant="speaking"] .talk-button__ring {
+  border-color: var(--speak);
+  opacity: 1;
+  animation: ring-pulse 1.6s var(--ease) infinite;
+}
+
+/* ── Вариант: connecting / initializing — медленный warm pulse ── */
+.talk-button[data-variant="connecting"],
+.talk-button[data-variant="initializing"] {
+  color: var(--warn);
+}
+.talk-button[data-variant="connecting"] .talk-button__ring,
+.talk-button[data-variant="initializing"] .talk-button__ring {
+  border-color: var(--warn);
+  opacity: 0.7;
+  animation: ring-pulse 1.8s var(--ease) infinite;
+}
+
+/* ── Вариант: mic-denied / error — тёмно-серая, погашенная ── */
+.talk-button[data-variant="denied"],
+.talk-button[data-variant="error"] {
+  color: var(--text-faint);
+  background: linear-gradient(135deg, #171a22, #10131a);
+  box-shadow:
+    0 18px 40px -12px rgba(0, 0, 0, 0.7),
+    0 0 0 1px var(--border-strong) inset;
+}
+.talk-button[data-variant="denied"] .talk-button__ring,
+.talk-button[data-variant="error"] .talk-button__ring {
+  border-color: var(--text-faint);
+  opacity: 0.3;
+}
+
+@keyframes ring-pulse {
+  0%   { transform: scale(1);    opacity: 1;   }
+  70%  { transform: scale(1.18); opacity: 0;   }
+  100% { transform: scale(1.18); opacity: 0;   }
+}
+
+/* ─── Подпись под кнопкой ──────────────────────────────────────── */
+.talk-button__label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 18px;
+  height: 18px;
+  transition: color 180ms var(--ease);
+}
+
+/* ─── Нижняя строка — всегда занимает 32px ────────────────────── */
+.tutor-bottom-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+}
+
+.link-button {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 160ms var(--ease), border-color 160ms var(--ease), background 160ms var(--ease);
+  white-space: nowrap;
+}
+.link-button:hover,
+.link-button:active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(124, 92, 255, 0.08);
+}
+
+/* ─── Маленькие экраны ────────────────────────────────────────── */
+@media (max-height: 640px) {
+  .tutor-app {
+    padding: 12px 16px 16px;
+    gap: 12px;
+  }
+  .tutor-controls {
+    grid-template-rows: 20px 120px 18px 32px;
+    gap: 8px;
+  }
+  .talk-button {
+    width: 108px;
+    height: 108px;
+  }
+  .bg-orb--two {
+    bottom: 40px;
+  }
+}

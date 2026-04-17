@@ -2,24 +2,30 @@
  * App.tsx — голосовой AI-репетитор английского языка.
  *
  * Архитектура:
- *   1. Push-to-talk: удерживай кнопку → запись идёт, отпусти → ждём ответ
- *   2. Аудио захватывается через getUserMedia → AudioWorklet (PCM 16kHz 16bit)
- *   3. PCM-фреймы отправляются по WebSocket на backend → Yandex SpeechKit
- *   4. Ответный PCM 24kHz воспроизводится через AudioContext / AudioBuffer
- *   5. Транскрипции отображаются в лог диалога
+ *   1. При монтировании компонента сразу запрашиваем микрофон (getUserMedia).
+ *      Это фиксирует permission-prompt в момент, когда пользователь только что
+ *      осознанно открыл Mini App — лучше UX, чем ждать первого нажатия на кнопку.
+ *   2. Push-to-talk: удерживай кнопку → запись идёт, отпусти → ждём ответ
+ *   3. Аудио захватывается через AudioWorklet (PCM 16kHz 16bit)
+ *   4. PCM-фреймы отправляются по WebSocket на backend (Whisper STT)
+ *   5. Ответный PCM 24kHz воспроизводится через AudioContext / AudioBuffer
+ *   6. Транскрипции отображаются в логе диалога
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import WebApp from "@twa-dev/sdk";
+import "./App.css";
 
 // ─── Типы ─────────────────────────────────────────────────────────────────────
 
 type AppState =
-  | "idle"
+  | "initializing" // запрашиваем микрофон при старте
+  | "idle"          // микрофон получен, WS ещё не открыт
   | "connecting"
   | "connected"
   | "recording"
   | "speaking"
+  | "mic-denied"    // пользователь отказал в доступе к микрофону
   | "error";
 
 interface DialogEntry {
@@ -31,8 +37,8 @@ interface DialogEntry {
 // ─── Константы ────────────────────────────────────────────────────────────────
 
 const WS_URL = "wss://api-english.krichigindocs.ru/ws/voice";
-const OUTPUT_SAMPLE_RATE = 24000; // Yandex TTS отдаёт 24 kHz PCM
-const MAX_LOG_ENTRIES = 6;
+const OUTPUT_SAMPLE_RATE = 24000; // TTS отдаёт 24 kHz PCM
+const MAX_LOG_ENTRIES = 20;
 
 // ─── Утилиты ──────────────────────────────────────────────────────────────────
 
@@ -50,9 +56,9 @@ function pcm16ToFloat32(buffer: ArrayBuffer): Float32Array {
 
 export default function App() {
   const [userName, setUserName] = useState<string>("there");
-  const [appState, setAppState] = useState<AppState>("idle");
+  const [appState, setAppState] = useState<AppState>("initializing");
   const [dialogLog, setDialogLog] = useState<DialogEntry[]>([]);
-  const [statusText, setStatusText] = useState<string>("Ready to talk");
+  const [statusText, setStatusText] = useState<string>("Getting ready…");
   const [errorMsg, setErrorMsg] = useState<string>("");
 
   // Рефы для аудио/WS объектов (не вызывают ре-рендер)
@@ -68,17 +74,34 @@ export default function App() {
   const wsClosingRef = useRef<boolean>(false);
   // Флаг — идёт ли сейчас запись (ref для доступа из замыканий без stale closure)
   const isRecordingRef = useRef<boolean>(false);
+  // Контейнер лога — для auto-scroll вниз при новой реплике
+  const logRef = useRef<HTMLDivElement | null>(null);
 
   // ── Инициализация Telegram WebApp ─────────────────────────────────────────
   useEffect(() => {
     WebApp.ready();
     WebApp.expand();
+    // Отключаем вертикальные свайпы, чтобы не закрывать Mini App случайно
+    // во время push-to-talk.
+    try {
+      WebApp.disableVerticalSwipes?.();
+    } catch {
+      // старые версии Telegram — не критично
+    }
 
     const user = WebApp.initDataUnsafe?.user;
     if (user?.first_name) {
       setUserName(user.first_name);
     }
   }, []);
+
+  // ── Авто-скролл лога вниз при новой реплике ──────────────────────────────
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [dialogLog]);
 
   // ── Добавление реплики в лог ──────────────────────────────────────────────
   const addLogEntry = useCallback((role: "user" | "tutor", text: string) => {
@@ -97,33 +120,16 @@ export default function App() {
   const enqueueAudio = useCallback((data: ArrayBuffer) => {
     const ctx = audioCtxRef.current;
     if (!ctx) {
-      console.warn("[audio] enqueueAudio: AudioContext ещё не создан, chunk dropped",
-        { bytes: data.byteLength });
+      console.warn("[audio] enqueueAudio: AudioContext ещё не создан");
       return;
     }
 
-    // В мобильных WebView (Telegram) AudioContext часто остаётся suspended
-    // дольше, чем ожидаемся. Если он suspended — пытаемся resume и всё равно
-    // планируем воспроизведение — оно стартует, как только ctx станет running.
     if (ctx.state === "suspended") {
-      console.warn("[audio] AudioContext suspended, пытаемся resume");
       ctx.resume().catch((err) => console.warn("[audio] resume failed:", err));
     }
 
     const float32 = pcm16ToFloat32(data);
     const numSamples = float32.length;
-
-    // ВАЖНО: буфер должен быть с sampleRate = ctx.sampleRate.
-    // Если ctx создался без явного sampleRate (напр., остался 48000 после записи),
-    // а мы создаём буфер с 24000 — браузер сделает resample (должно играться нормально,
-    // но логируем).
-    if (ctx.sampleRate !== OUTPUT_SAMPLE_RATE) {
-      console.warn(
-        "[audio] ctx.sampleRate (%d) ≠ OUTPUT_SAMPLE_RATE (%d) — будет resample",
-        ctx.sampleRate,
-        OUTPUT_SAMPLE_RATE
-      );
-    }
 
     const audioBuffer = ctx.createBuffer(1, numSamples, OUTPUT_SAMPLE_RATE);
     audioBuffer.copyToChannel(float32, 0);
@@ -132,25 +138,94 @@ export default function App() {
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
 
-    // Ставим в очередь: играем сразу после предыдущего фрагмента
     const startTime = Math.max(ctx.currentTime, playbackTimeRef.current);
     source.start(startTime);
     playbackTimeRef.current = startTime + audioBuffer.duration;
-
-    console.log(
-      "[audio] chunk %d байт → %d сэмплов @ %dHz, state=%s, startAt=%f",
-      data.byteLength,
-      numSamples,
-      OUTPUT_SAMPLE_RATE,
-      ctx.state,
-      startTime
-    );
   }, []);
 
-  // ── Открытие WebSocket + AudioContext ────────────────────────────────────
+  // ── Запрос микрофона при старте приложения ────────────────────────────────
+  // Делаем это в useEffect сразу после mount — пользователь ещё ничего не нажимал,
+  // но уже понимает, что открыл голосовое приложение.
+  const initMicrophone = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      mediaStreamRef.current = stream;
+      // Сразу мьютим — поток получен, но пока пользователь не нажал — не шлём
+      stream.getAudioTracks().forEach((t) => (t.enabled = false));
+
+      // Создаём AudioContext для записи и воспроизведения (shared)
+      const ctx = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
+      audioCtxRef.current = ctx;
+      if (ctx.state === "suspended") {
+        try {
+          await ctx.resume();
+        } catch {
+          // на iOS без user-gesture не запустится — дорезюмим при первом клике
+        }
+      }
+
+      try {
+        await ctx.audioWorklet.addModule("/pcm-recorder-worklet.js");
+      } catch {
+        // уже загружен
+      }
+
+      const workletNode = new AudioWorkletNode(ctx, "pcm-recorder-processor");
+      workletNodeRef.current = workletNode;
+
+      workletNode.port.onmessage = (e: MessageEvent<Int16Array>) => {
+        if (
+          wsRef.current?.readyState === WebSocket.OPEN &&
+          isRecordingRef.current
+        ) {
+          wsRef.current.send(e.data.buffer);
+        }
+      };
+
+      const source = ctx.createMediaStreamSource(stream);
+      sourceNodeRef.current = source;
+      source.connect(workletNode);
+      // Не подключаем к destination — чтобы не было эха
+
+      return true;
+    } catch (err) {
+      console.error("Ошибка захвата микрофона:", err);
+      return false;
+    }
+  }, []);
+
+  // При монтировании компонента — запрашиваем микрофон
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ok = await initMicrophone();
+      if (cancelled) return;
+      if (ok) {
+        setAppState("idle");
+        setStatusText("Ready to talk");
+      } else {
+        setAppState("mic-denied");
+        setStatusText("Microphone is needed");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Открытие WebSocket ────────────────────────────────────────────────────
   const openConnection = useCallback(async () => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      return; // уже открыт
+      return;
     }
 
     setAppState("connecting");
@@ -158,16 +233,17 @@ export default function App() {
     setErrorMsg("");
     wsClosingRef.current = false;
 
-    // Создаём AudioContext для воспроизведения
-    if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
-      audioCtxRef.current = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
-    } else if (audioCtxRef.current.state === "suspended") {
-      await audioCtxRef.current.resume();
+    // Резюмим AudioContext в user-gesture, если вдруг остался suspended
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state === "suspended") {
+      try {
+        await ctx.resume();
+      } catch {
+        // ничего страшного
+      }
     }
-    // Сброс очереди воспроизведения
     playbackTimeRef.current = 0;
 
-    // Формируем URL с initData
     const initData = WebApp.initData;
     const wsUrl = initData
       ? `${WS_URL}?init_data=${encodeURIComponent(initData)}`
@@ -184,22 +260,20 @@ export default function App() {
 
     ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) {
-        // Бинарные данные → PCM 24 kHz аудио от Gemini
+        // Бинарные данные → PCM 24 kHz аудио
         setAppState("speaking");
         setStatusText("Speaking…");
         enqueueAudio(event.data);
 
-        // После ожидаемого завершения воспроизведения — возвращаемся в connected
         const ctx = audioCtxRef.current;
         if (ctx) {
           const remaining = Math.max(0, playbackTimeRef.current - ctx.currentTime);
           setTimeout(() => {
             setAppState((prev) => (prev === "speaking" ? "connected" : prev));
-            setStatusText((prev) => (prev === "Speaking…" ? "Ready to talk" : prev));
+            setStatusText((prev) => (prev === "Speaking…" ? "Your turn" : prev));
           }, remaining * 1000 + 200);
         }
       } else if (typeof event.data === "string") {
-        // JSON-сообщение с транскрипцией
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === "text" && msg.text) {
@@ -220,7 +294,7 @@ export default function App() {
       }
     };
 
-    ws.onclose = (event) => {
+    ws.onclose = () => {
       if (!wsClosingRef.current) {
         setAppState("idle");
         setStatusText("Ready to talk");
@@ -228,73 +302,6 @@ export default function App() {
       wsRef.current = null;
     };
   }, [addLogEntry, enqueueAudio]);
-
-  // ── Инициализация микрофона (один раз за сессию) ──────────────────────────
-  // Запрашиваем getUserMedia только при первом push-to-talk в сессии.
-  // Дальше push-to-talk только mute/unmute трека — браузер не спрашивает повторно.
-  const ensureMicrophone = useCallback(async () => {
-    if (mediaStreamRef.current && workletNodeRef.current) {
-      // Уже инициализирован
-      return true;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      mediaStreamRef.current = stream;
-      // Сразу мьютим — иначе фрейма уйдут пока пользователь ещё не нажал кнопку
-      stream.getAudioTracks().forEach((t) => (t.enabled = false));
-
-      let captureCtx = audioCtxRef.current;
-      if (!captureCtx || captureCtx.state === "closed") {
-        captureCtx = new AudioContext();
-        audioCtxRef.current = captureCtx;
-      }
-      if (captureCtx.state === "suspended") {
-        await captureCtx.resume();
-      }
-
-      try {
-        await captureCtx.audioWorklet.addModule("/pcm-recorder-worklet.js");
-      } catch {
-        // уже загружен
-      }
-
-      const workletNode = new AudioWorkletNode(
-        captureCtx,
-        "pcm-recorder-processor"
-      );
-      workletNodeRef.current = workletNode;
-
-      workletNode.port.onmessage = (e: MessageEvent<Int16Array>) => {
-        if (
-          wsRef.current?.readyState === WebSocket.OPEN &&
-          isRecordingRef.current
-        ) {
-          wsRef.current.send(e.data.buffer);
-        }
-      };
-
-      const source = captureCtx.createMediaStreamSource(stream);
-      sourceNodeRef.current = source;
-      source.connect(workletNode);
-      // Не подключаем к destination — чтобы не было эха
-      return true;
-    } catch (err) {
-      console.error("Ошибка захвата микрофона:", err);
-      setAppState("error");
-      setErrorMsg("Microphone access denied or unavailable.");
-      setStatusText("Error");
-      return false;
-    }
-  }, []);
 
   // ── Начало записи (unmute уже открытого микрофона) ────────────────────────
   const startRecording = useCallback(async () => {
@@ -318,19 +325,26 @@ export default function App() {
       return;
     }
 
-    // Первый раз — запрашиваем микрофон. Дальше — только unmute.
-    const micOk = await ensureMicrophone();
-    if (!micOk) return;
+    // Микрофон уже получен при старте приложения — просто размьютим.
+    if (!mediaStreamRef.current) {
+      // Резервный путь: если initMicrophone не отработал (например,
+      // пользователь переключился с mic-denied на retry).
+      const ok = await initMicrophone();
+      if (!ok) {
+        setAppState("mic-denied");
+        setStatusText("Microphone is needed");
+        return;
+      }
+    }
 
     setAppState("recording");
     isRecordingRef.current = true;
     setStatusText("Listening…");
 
-    // Размьютим трек — пошли фреймы из worklet'а в WS
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = true));
     }
-  }, [appState, openConnection, ensureMicrophone]);
+  }, [appState, openConnection, initMicrophone]);
 
   // ── Остановка записи (mute, но микрофон не релизим) ───────────────────────
   const stopRecording = useCallback(() => {
@@ -342,8 +356,7 @@ export default function App() {
       mediaStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = false));
     }
 
-    // Явный EOU-маркер: на сервере у Yandex STT выключен авто-детектор пауз,
-    // финализация и ответ GPT/TTS запустятся только после этого сообщения.
+    // Явный EOU-маркер — STT-сервер ждёт его для финализации фразы.
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       try {
@@ -376,7 +389,6 @@ export default function App() {
   // ── Разрыв соединения ─────────────────────────────────────────────────────
   const closeConnection = useCallback(() => {
     stopRecording();
-    releaseMicrophone();
     wsClosingRef.current = true;
     if (wsRef.current) {
       wsRef.current.close(1000);
@@ -384,7 +396,23 @@ export default function App() {
     }
     setAppState("idle");
     setStatusText("Ready to talk");
-  }, [stopRecording, releaseMicrophone]);
+    setDialogLog([]);
+  }, [stopRecording]);
+
+  // Cleanup при размонтировании: полностью освобождаем микрофон и WS
+  useEffect(() => {
+    return () => {
+      releaseMicrophone();
+      if (wsRef.current) {
+        wsClosingRef.current = true;
+        try {
+          wsRef.current.close(1000);
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, [releaseMicrophone]);
 
   // ── Обработчики кнопки (pointer events — работают и на mobile, и на desktop)
   const handlePointerDown = useCallback(
@@ -408,332 +436,186 @@ export default function App() {
     [appState, stopRecording]
   );
 
+  const handleRetryMicrophone = useCallback(async () => {
+    setAppState("initializing");
+    setStatusText("Getting ready…");
+    const ok = await initMicrophone();
+    if (ok) {
+      setAppState("idle");
+      setStatusText("Ready to talk");
+    } else {
+      setAppState("mic-denied");
+      setStatusText("Microphone is needed");
+    }
+  }, [initMicrophone]);
+
   // ── Определение свойств кнопки по состоянию ──────────────────────────────
+  const isInitializing = appState === "initializing";
   const isRecording = appState === "recording";
   const isSpeaking = appState === "speaking";
   const isConnecting = appState === "connecting";
+  const isMicDenied = appState === "mic-denied";
   const isError = appState === "error";
-  const buttonDisabled = isConnecting || isError || isSpeaking;
+  const buttonDisabled =
+    isInitializing || isConnecting || isError || isSpeaking || isMicDenied;
 
-  const getButtonLabel = () => {
-    if (isRecording) return "Release to Send";
-    if (isSpeaking) return "Speaking…";
-    if (isConnecting) return "Connecting…";
+  // Дата-атрибут для CSS — одно состояние управляет всем видом
+  const buttonVariant = isRecording
+    ? "recording"
+    : isSpeaking
+    ? "speaking"
+    : isConnecting
+    ? "connecting"
+    : isInitializing
+    ? "initializing"
+    : isMicDenied
+    ? "denied"
+    : isError
+    ? "error"
+    : "idle";
+
+  const buttonLabel = (() => {
+    if (isRecording) return "Release to send";
+    if (isSpeaking) return "Speaking";
+    if (isConnecting) return "Connecting";
+    if (isInitializing) return "Getting ready";
+    if (isMicDenied) return "Microphone off";
     if (isError) return "Error";
-    return "Hold to Talk";
-  };
+    return "Hold to talk";
+  })();
+
+  // Показываем End Session всегда — но делаем невидимым, когда не нужен,
+  // чтобы не было layout-shift. visibility:hidden сохраняет место.
+  const endSessionVisible =
+    appState === "connected" ||
+    appState === "speaking" ||
+    appState === "recording";
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div style={styles.container}>
-      {/* Шапка */}
-      <div style={styles.header}>
-        <h1 style={styles.title}>AI English Tutor</h1>
-        <p style={styles.greeting}>Hi, {userName}!</p>
-      </div>
+    <div className="tutor-app">
+      {/* Декоративный фон — статичные градиентные пятна */}
+      <div className="bg-orb bg-orb--one" aria-hidden />
+      <div className="bg-orb bg-orb--two" aria-hidden />
 
-      {/* Лог диалога */}
-      <div style={styles.logContainer}>
+      {/* Шапка */}
+      <header className="tutor-header">
+        <div className="tutor-brand">
+          <span className="tutor-brand__dot" aria-hidden />
+          <span className="tutor-brand__name">English Tutor</span>
+        </div>
+        <p className="tutor-hello">Hi, {userName}</p>
+      </header>
+
+      {/* Лог диалога — всегда одинакового размера */}
+      <section className="tutor-log" ref={logRef} aria-live="polite">
         {dialogLog.length === 0 ? (
-          <p style={styles.logPlaceholder}>
-            Press and hold the button below to start talking.
-          </p>
+          <div className="tutor-log__empty">
+            <div className="tutor-log__empty-icon" aria-hidden>
+              💬
+            </div>
+            <p className="tutor-log__empty-title">Let's chat in English</p>
+            <p className="tutor-log__empty-hint">
+              Hold the button below, speak a sentence, then release to hear me reply.
+            </p>
+          </div>
         ) : (
           dialogLog.map((entry) => (
             <div
               key={entry.id}
-              style={{
-                ...styles.logEntry,
-                ...(entry.role === "user"
-                  ? styles.logEntryUser
-                  : styles.logEntryTutor),
-              }}
+              className={`msg msg--${entry.role}`}
             >
-              <span style={styles.logRole}>
-                {entry.role === "user" ? "You" : "Tutor"}:
-              </span>{" "}
-              {entry.text}
+              <span className="msg__role">
+                {entry.role === "user" ? "You" : "Tutor"}
+              </span>
+              <span className="msg__text">{entry.text}</span>
             </div>
           ))
         )}
-      </div>
+      </section>
 
-      {/* Кнопка Push-to-Talk */}
-      <div style={styles.buttonArea}>
+      {/* Стабильный футер с кнопкой, статусом и End Session */}
+      <footer className="tutor-controls">
+        {/* Статус — фиксированной высоты, меняется только opacity/текст */}
+        <div className="tutor-status" data-variant={buttonVariant}>
+          <span className="tutor-status__dot" aria-hidden />
+          <span className="tutor-status__text">{statusText}</span>
+        </div>
+
+        {/* Кнопка */}
         <button
-          style={{
-            ...styles.talkButton,
-            ...(isRecording ? styles.talkButtonRecording : {}),
-            ...(isSpeaking ? styles.talkButtonSpeaking : {}),
-            ...(buttonDisabled && !isRecording && !isSpeaking
-              ? styles.talkButtonDisabled
-              : {}),
-          }}
+          className="talk-button"
+          data-variant={buttonVariant}
           disabled={buttonDisabled}
           onPointerDown={handlePointerDown}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
-          // Предотвращаем долгое нажатие на мобильных (контекстное меню)
           onContextMenu={(e) => e.preventDefault()}
+          aria-label={buttonLabel}
         >
-          <span style={styles.micIcon}>
-            {isRecording ? "🔴" : isSpeaking ? "🔊" : "🎤"}
+          <span className="talk-button__ring" aria-hidden />
+          <span className="talk-button__icon" aria-hidden>
+            {isRecording ? (
+              // Красный квадрат — "stop"
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+              </svg>
+            ) : isSpeaking ? (
+              // Динамик
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M4 9v6h4l5 4V5L8 9H4zm11.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"
+                  fill="currentColor"
+                />
+              </svg>
+            ) : (
+              // Микрофон
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3z"
+                  fill="currentColor"
+                />
+                <path
+                  d="M19 11a1 1 0 0 0-2 0 5 5 0 0 1-10 0 1 1 0 0 0-2 0 7 7 0 0 0 6 6.92V20H8a1 1 0 0 0 0 2h8a1 1 0 0 0 0-2h-3v-2.08A7 7 0 0 0 19 11z"
+                  fill="currentColor"
+                />
+              </svg>
+            )}
           </span>
-          <span style={styles.buttonLabel}>{getButtonLabel()}</span>
         </button>
 
-        {/* Статус */}
-        <p style={styles.statusText}>{statusText}</p>
+        {/* Подпись под кнопкой — фиксированной высоты */}
+        <div className="talk-button__label">{buttonLabel}</div>
 
-        {/* Ошибка */}
-        {isError && (
-          <div style={styles.errorBox}>
-            <p style={styles.errorText}>{errorMsg}</p>
+        {/* Нижняя строка — всегда занимает место, содержимое меняется */}
+        <div className="tutor-bottom-slot">
+          {isMicDenied ? (
+            <button className="link-button" onClick={handleRetryMicrophone}>
+              Allow microphone access
+            </button>
+          ) : isError ? (
             <button
-              style={styles.retryButton}
+              className="link-button"
               onClick={() => {
                 setAppState("idle");
                 setErrorMsg("");
                 setStatusText("Ready to talk");
               }}
             >
-              Try Again
+              {errorMsg || "Error"} — try again
             </button>
-          </div>
-        )}
-      </div>
-
-      {/* Кнопка сброса (показываем если уже подключены) */}
-      {(appState === "connected" ||
-        appState === "speaking" ||
-        appState === "recording") && (
-        <button style={styles.disconnectButton} onClick={closeConnection}>
-          End Session
-        </button>
-      )}
-
-      {/* Подвал */}
-      <div style={styles.footer}>
-        <p style={styles.footerText}>Powered by Yandex SpeechKit · A2–B1 English</p>
-      </div>
-
-      {/* Pulse-анимация для состояния записи */}
-      <style>{pulseKeyframes}</style>
+          ) : endSessionVisible ? (
+            <button className="link-button" onClick={closeConnection}>
+              End session
+            </button>
+          ) : (
+            // Невидимый плейсхолдер, чтобы не было layout-shift
+            <span className="link-button" aria-hidden style={{ visibility: "hidden" }}>
+              placeholder
+            </span>
+          )}
+        </div>
+      </footer>
     </div>
   );
 }
-
-// ─── Стили ────────────────────────────────────────────────────────────────────
-
-const pulseKeyframes = `
-  @keyframes pulse {
-    0%   { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.5); }
-    70%  { box-shadow: 0 0 0 20px rgba(244, 67, 54, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0); }
-  }
-  @keyframes speakPulse {
-    0%   { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5); }
-    70%  { box-shadow: 0 0 0 20px rgba(76, 175, 80, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
-  }
-`;
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    minHeight: "100vh",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    padding: "20px 16px 100px",
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-    backgroundColor: "#1a1a1a",
-    color: "#e0e0e0",
-    boxSizing: "border-box",
-    userSelect: "none",
-    WebkitUserSelect: "none",
-  },
-  header: {
-    textAlign: "center",
-    marginBottom: "20px",
-    paddingTop: "8px",
-  },
-  title: {
-    fontSize: "22px",
-    fontWeight: 700,
-    margin: "0 0 4px",
-    color: "#ffffff",
-    letterSpacing: "-0.3px",
-  },
-  greeting: {
-    fontSize: "15px",
-    margin: 0,
-    color: "#9e9e9e",
-  },
-  // ── Лог диалога ───────────────────────────────────────────────────────
-  logContainer: {
-    width: "100%",
-    maxWidth: "420px",
-    flex: 1,
-    minHeight: "200px",
-    maxHeight: "340px",
-    overflowY: "auto",
-    marginBottom: "24px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px",
-    padding: "12px",
-    backgroundColor: "#242424",
-    borderRadius: "16px",
-    border: "1px solid #2e2e2e",
-  },
-  logPlaceholder: {
-    margin: "auto",
-    textAlign: "center",
-    color: "#555",
-    fontSize: "14px",
-    lineHeight: 1.5,
-    padding: "20px",
-  },
-  logEntry: {
-    padding: "8px 12px",
-    borderRadius: "12px",
-    fontSize: "14px",
-    lineHeight: 1.45,
-    maxWidth: "85%",
-    wordBreak: "break-word",
-  },
-  logEntryUser: {
-    backgroundColor: "#2a3d2a",
-    border: "1px solid #3a5a3a",
-    alignSelf: "flex-end",
-    color: "#c8e6c9",
-  },
-  logEntryTutor: {
-    backgroundColor: "#1e2a3a",
-    border: "1px solid #2a3d5a",
-    alignSelf: "flex-start",
-    color: "#bbdefb",
-  },
-  logRole: {
-    fontWeight: 600,
-    opacity: 0.7,
-    fontSize: "12px",
-    textTransform: "uppercase" as const,
-    letterSpacing: "0.5px",
-  },
-  // ── Кнопка ────────────────────────────────────────────────────────────
-  buttonArea: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: "16px",
-    width: "100%",
-  },
-  talkButton: {
-    width: "160px",
-    height: "160px",
-    borderRadius: "50%",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: "6px",
-    border: "3px solid #4CAF50",
-    backgroundColor: "#2a2a2a",
-    color: "#4CAF50",
-    cursor: "pointer",
-    transition: "all 0.15s ease",
-    WebkitTapHighlightColor: "transparent",
-    touchAction: "none",
-    outline: "none",
-    boxShadow: "0 4px 20px rgba(76, 175, 80, 0.2)",
-  },
-  talkButtonRecording: {
-    backgroundColor: "#3d1a1a",
-    borderColor: "#f44336",
-    color: "#f44336",
-    animation: "pulse 1.2s ease-in-out infinite",
-    boxShadow: "0 4px 20px rgba(244, 67, 54, 0.3)",
-  },
-  talkButtonSpeaking: {
-    backgroundColor: "#1a2d1a",
-    borderColor: "#4CAF50",
-    color: "#4CAF50",
-    animation: "speakPulse 1.2s ease-in-out infinite",
-  },
-  talkButtonDisabled: {
-    opacity: 0.4,
-    cursor: "not-allowed",
-    borderColor: "#555",
-    color: "#555",
-    boxShadow: "none",
-  },
-  micIcon: {
-    fontSize: "36px",
-    lineHeight: 1,
-    pointerEvents: "none",
-  },
-  buttonLabel: {
-    fontSize: "12px",
-    fontWeight: 600,
-    letterSpacing: "0.3px",
-    textAlign: "center",
-    pointerEvents: "none",
-  },
-  statusText: {
-    fontSize: "14px",
-    color: "#9e9e9e",
-    margin: 0,
-    height: "20px",
-    textAlign: "center",
-  },
-  // ── Ошибка ────────────────────────────────────────────────────────────
-  errorBox: {
-    backgroundColor: "#2d1a1a",
-    border: "1px solid #5a2a2a",
-    borderRadius: "12px",
-    padding: "12px 16px",
-    textAlign: "center",
-    maxWidth: "300px",
-  },
-  errorText: {
-    color: "#ef9a9a",
-    fontSize: "13px",
-    margin: "0 0 8px",
-  },
-  retryButton: {
-    backgroundColor: "#4CAF50",
-    color: "#fff",
-    border: "none",
-    borderRadius: "8px",
-    padding: "6px 16px",
-    fontSize: "13px",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  // ── End Session ───────────────────────────────────────────────────────
-  disconnectButton: {
-    marginTop: "20px",
-    backgroundColor: "transparent",
-    color: "#666",
-    border: "1px solid #333",
-    borderRadius: "8px",
-    padding: "8px 20px",
-    fontSize: "13px",
-    cursor: "pointer",
-    transition: "all 0.15s ease",
-  },
-  // ── Подвал ────────────────────────────────────────────────────────────
-  footer: {
-    position: "fixed" as const,
-    bottom: "16px",
-    left: 0,
-    right: 0,
-    textAlign: "center",
-  },
-  footerText: {
-    fontSize: "11px",
-    color: "#3a3a3a",
-    margin: 0,
-  },
-};
