@@ -261,13 +261,21 @@ async def _send_tts_to_ws(
     websocket: WebSocket, text: str, api_key: str, voice: str
 ) -> None:
     """Синтезирует текст и стримит PCM-чанки в WebSocket."""
+    chunks_sent = 0
+    bytes_sent = 0
+    logger.warning("[TTS] старт синтеза: voice=%s text=%r", voice, text[:80])
     try:
         async for pcm_chunk in _tts_stream(text, api_key, voice):
             if websocket.client_state != WebSocketState.CONNECTED:
+                logger.warning("[TTS] WS не в CONNECTED (сост. %s), прерываем отправку",
+                    websocket.client_state)
                 return
             await websocket.send_bytes(pcm_chunk)
+            chunks_sent += 1
+            bytes_sent += len(pcm_chunk)
+        logger.warning("[TTS] готово: %d чанков, %d байт отправлено", chunks_sent, bytes_sent)
     except Exception as exc:
-        logger.error("Ошибка отправки TTS: %s", exc, exc_info=True)
+        logger.error("[TTS] ошибка отправки (после %d чанков): %s", chunks_sent, exc, exc_info=True)
 
 
 # ─── Оркестратор WebSocket-сессии ─────────────────────────────────────────────

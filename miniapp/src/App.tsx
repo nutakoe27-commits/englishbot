@@ -96,10 +96,34 @@ export default function App() {
   // ── Воспроизведение PCM-аудио из бинарного WebSocket-фрейма ──────────────
   const enqueueAudio = useCallback((data: ArrayBuffer) => {
     const ctx = audioCtxRef.current;
-    if (!ctx) return;
+    if (!ctx) {
+      console.warn("[audio] enqueueAudio: AudioContext ещё не создан, chunk dropped",
+        { bytes: data.byteLength });
+      return;
+    }
+
+    // В мобильных WebView (Telegram) AudioContext часто остаётся suspended
+    // дольше, чем ожидаемся. Если он suspended — пытаемся resume и всё равно
+    // планируем воспроизведение — оно стартует, как только ctx станет running.
+    if (ctx.state === "suspended") {
+      console.warn("[audio] AudioContext suspended, пытаемся resume");
+      ctx.resume().catch((err) => console.warn("[audio] resume failed:", err));
+    }
 
     const float32 = pcm16ToFloat32(data);
     const numSamples = float32.length;
+
+    // ВАЖНО: буфер должен быть с sampleRate = ctx.sampleRate.
+    // Если ctx создался без явного sampleRate (напр., остался 48000 после записи),
+    // а мы создаём буфер с 24000 — браузер сделает resample (должно играться нормально,
+    // но логируем).
+    if (ctx.sampleRate !== OUTPUT_SAMPLE_RATE) {
+      console.warn(
+        "[audio] ctx.sampleRate (%d) ≠ OUTPUT_SAMPLE_RATE (%d) — будет resample",
+        ctx.sampleRate,
+        OUTPUT_SAMPLE_RATE
+      );
+    }
 
     const audioBuffer = ctx.createBuffer(1, numSamples, OUTPUT_SAMPLE_RATE);
     audioBuffer.copyToChannel(float32, 0);
@@ -112,6 +136,15 @@ export default function App() {
     const startTime = Math.max(ctx.currentTime, playbackTimeRef.current);
     source.start(startTime);
     playbackTimeRef.current = startTime + audioBuffer.duration;
+
+    console.log(
+      "[audio] chunk %d байт → %d сэмплов @ %dHz, state=%s, startAt=%f",
+      data.byteLength,
+      numSamples,
+      OUTPUT_SAMPLE_RATE,
+      ctx.state,
+      startTime
+    );
   }, []);
 
   // ── Открытие WebSocket + AudioContext ────────────────────────────────────
