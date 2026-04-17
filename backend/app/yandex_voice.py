@@ -112,6 +112,10 @@ async def _stt_stream(
             )
         )
 
+    # Счётчики для диагностики
+    stats = {"audio_sent": 0, "audio_bytes": 0, "eou_sent": 0}
+    eou_sent_event = asyncio.Event()
+
     async def request_iterator():
         # Первое сообщение — опции сессии
         yield options_request()
@@ -122,12 +126,20 @@ async def _stt_stream(
                 return
             kind = event.get("kind")
             if kind == "audio":
+                data = event["data"]
+                stats["audio_sent"] += 1
+                stats["audio_bytes"] += len(data)
                 yield stt_pb2.StreamingRequest(
-                    chunk=stt_pb2.AudioChunk(data=event["data"])
+                    chunk=stt_pb2.AudioChunk(data=data)
                 )
             elif kind == "eou":
                 # Явный EOU от клиента — просим Yandex финализировать фразу.
-                # Пустой Eou-месседж допустим (см. stt-v3 api-ref).
+                stats["eou_sent"] += 1
+                logger.warning(
+                    "[STT] → Eou() в Yandex (аудио отправлено: %d чанков, %d байт)",
+                    stats["audio_sent"], stats["audio_bytes"],
+                )
+                eou_sent_event.set()
                 yield stt_pb2.StreamingRequest(eou=stt_pb2.Eou())
             # неизвестные kind молча игнорируем
 
@@ -138,30 +150,84 @@ async def _stt_stream(
         stream = stub.RecognizeStreaming(request_iterator(), metadata=metadata)
         logger.warning("[STT] gRPC стрим открыт, ждём события…")
 
+        partial_count = 0
+        eou_received = False
+
+        async def reader():
+            nonlocal partial_count, eou_received
+            try:
+                async for response in stream:
+                    event_type = response.WhichOneof("Event")
+                    if event_type == "partial":
+                        alts = response.partial.alternatives
+                        txt = alts[0].text.strip() if alts else ""
+                        partial_count += 1
+                        if partial_count <= 3 or partial_count % 5 == 0:
+                            logger.warning("[STT] partial #%d: %r", partial_count, txt)
+                    elif event_type == "final":
+                        alts = response.final.alternatives
+                        txt = alts[0].text.strip() if alts else ""
+                        logger.warning("[STT] final: %r", txt)
+                        if txt:
+                            await out_queue.put(("final", txt))
+                    elif event_type == "final_refinement":
+                        alts = response.final_refinement.normalized_text.alternatives
+                        txt = alts[0].text.strip() if alts else ""
+                        if txt:
+                            logger.warning("[STT] refine: %r", txt)
+                            await out_queue.put(("refine", txt))
+                    elif event_type == "eou_update":
+                        logger.warning("[STT] eou_update от Yandex")
+                        eou_received = True
+                        await out_queue.put(("eou", ""))
+                        return
+                    elif event_type == "status_code":
+                        logger.warning(
+                            "[STT] status: code=%s msg=%s",
+                            response.status_code.code_type,
+                            response.status_code.message,
+                        )
+                    else:
+                        logger.warning("[STT] другое событие: %s", event_type)
+                logger.warning("[STT] gRPC стрим закрыт сервером")
+            except grpc.aio.AioRpcError as exc:
+                logger.error("[STT] gRPC ошибка: %s — %s", exc.code(), exc.details())
+            except Exception as exc:
+                logger.error("[STT] чтение упало: %s", exc, exc_info=True)
+            finally:
+                await out_queue.put(None)  # сигнал: чтение закончено
+
+        out_queue: asyncio.Queue = asyncio.Queue()
+        reader_task = asyncio.create_task(reader(), name="_stt_reader")
+
         try:
-            async for response in stream:
-                event = response.WhichOneof("Event")
-                if event == "final":
-                    alts = response.final.alternatives
-                    if alts and alts[0].text.strip():
-                        logger.warning("[STT] final: %s", alts[0].text.strip())
-                        yield ("final", alts[0].text.strip())
-                elif event == "final_refinement":
-                    alts = response.final_refinement.normalized_text.alternatives
-                    if alts and alts[0].text.strip():
-                        yield ("refine", alts[0].text.strip())
-                elif event == "eou_update":
-                    # Подтверждение финализации фразы от Yandex
-                    yield ("eou", "")
-                elif event == "status_code":
-                    logger.debug(
-                        "STT status: %s — %s",
-                        response.status_code.code_type,
-                        response.status_code.message,
+            while True:
+                # Если клиент уже отправил Eou() в Yandex, даём серверу 5с на ответ,
+                # иначе считаем фразу пустой и выходим.
+                timeout = 5.0 if eou_sent_event.is_set() else None
+                try:
+                    item = await asyncio.wait_for(out_queue.get(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "[STT] таймаут: Yandex не ответил на Eou() за 5с. Закрываем стрим."
                     )
-        except grpc.aio.AioRpcError as exc:
-            logger.error("STT gRPC ошибка: %s — %s", exc.code(), exc.details())
-            raise
+                    break
+                if item is None:
+                    break
+                yield item
+                if item[0] == "eou":
+                    break
+        finally:
+            if not reader_task.done():
+                reader_task.cancel()
+                try:
+                    await reader_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            logger.warning(
+                "[STT] сессия завершена: audio_sent=%d (%d байт), partial=%d, eou_received=%s",
+                stats["audio_sent"], stats["audio_bytes"], partial_count, eou_received,
+            )
 
 
 # ─── YandexGPT: генерация ответа репетитора ──────────────────────────────────
