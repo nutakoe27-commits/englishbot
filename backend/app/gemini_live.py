@@ -12,6 +12,7 @@ gemini_live.py — обёртка над Google Gemini Live API.
 
 import asyncio
 import logging
+import os
 from typing import NoReturn
 
 from fastapi import WebSocket
@@ -22,6 +23,19 @@ from google.genai import types
 from .config import settings, SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
+
+# Если HTTPS_PROXY / HTTP_PROXY заданы в .env — google-genai (httpx) и
+# библиотека websockets автоматически их подхватывают:
+#   - httpx считывает их через trust_env=True (дефолт)
+#   - websockets 13+ читает https_proxy/wss_proxy через urllib.getproxies()
+# Нужно только убедиться, что нижний регистр переменных тоже выставлен.
+_proxy_upper = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+if _proxy_upper:
+    os.environ.setdefault("https_proxy", _proxy_upper)
+    os.environ.setdefault("http_proxy", _proxy_upper)
+    # websockets читает именно wss_proxy для wss:// по умолчанию
+    os.environ.setdefault("wss_proxy", _proxy_upper)
+    logger.info("Используем прокси для Gemini API: %s", _proxy_upper.split("@")[-1])
 
 # MIME-тип входящего аудио, требуемый Gemini Live API
 _INPUT_MIME_TYPE = "audio/pcm;rate=16000"
