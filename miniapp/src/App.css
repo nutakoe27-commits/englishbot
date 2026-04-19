@@ -331,6 +331,8 @@ button {
 }
 .talk-button:disabled {
   cursor: not-allowed;
+  /* Блокируем все pointer-события — в Telegram WebView атрибут disabled один не всегда надёжен */
+  pointer-events: none;
 }
 
 /* Кольцо вокруг кнопки — даёт визуальный "пульс" без смещения layout */

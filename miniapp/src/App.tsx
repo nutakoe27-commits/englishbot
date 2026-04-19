@@ -69,6 +69,8 @@ export default function App() {
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   // Очередь воспроизведения: следующий момент времени в AudioContext
   const playbackTimeRef = useRef<number>(0);
+  // Таймер перехода speaking → connected (один, перезаводим на каждый чанк)
+  const speakingEndTimerRef = useRef<number | null>(null);
   const logIdRef = useRef<number>(0);
   // Флаг — ws уже закрывается
   const wsClosingRef = useRef<boolean>(false);
@@ -256,6 +258,10 @@ export default function App() {
       }
     }
     playbackTimeRef.current = 0;
+    if (speakingEndTimerRef.current !== null) {
+      clearTimeout(speakingEndTimerRef.current);
+      speakingEndTimerRef.current = null;
+    }
 
     const initData = WebApp.initData;
     const wsUrl = initData
@@ -278,10 +284,18 @@ export default function App() {
         setStatusText("Speaking…");
         enqueueAudio(event.data);
 
+        // Отменяем предыдущий таймер и заводим новый на актуальный remaining.
+        // Без этого на каждый чанк стартовал свой setTimeout и самый первый срабатывал
+        // посреди воспроизведения — кнопка мигала speaking ↔ connected.
+        if (speakingEndTimerRef.current !== null) {
+          clearTimeout(speakingEndTimerRef.current);
+          speakingEndTimerRef.current = null;
+        }
         const ctx = audioCtxRef.current;
         if (ctx) {
           const remaining = Math.max(0, playbackTimeRef.current - ctx.currentTime);
-          setTimeout(() => {
+          speakingEndTimerRef.current = window.setTimeout(() => {
+            speakingEndTimerRef.current = null;
             setAppState((prev) => (prev === "speaking" ? "connected" : prev));
             setStatusText((prev) => (prev === "Speaking…" ? "Your turn" : prev));
           }, remaining * 1000 + 200);
