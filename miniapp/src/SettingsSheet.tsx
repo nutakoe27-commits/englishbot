@@ -6,6 +6,7 @@ import {
   LENGTH_OPTIONS,
   LEVEL_OPTIONS,
   ROLE_PRESETS,
+  SPEECH_LANG_OPTIONS,
   type TutorSettings,
 } from "./tutorSettings";
 
@@ -32,7 +33,8 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
     draft.role === initial.role &&
     draft.roleCustom.trim() === initial.roleCustom.trim() &&
     draft.length === initial.length &&
-    draft.corrections === initial.corrections;
+    draft.corrections === initial.corrections &&
+    draft.speechLang === initial.speechLang;
 
   const canSave =
     draft.role !== "custom" || draft.roleCustom.trim().length > 0;
@@ -165,6 +167,32 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
               />
               <span className="switch" aria-hidden />
             </label>
+          </section>
+
+          {/* 5. Язык вашей речи (тьютор всё равно отвечает по-английски) */}
+          <section className="sheet-group">
+            <h3 className="sheet-group__title">Your speech language</h3>
+            <div className="segmented">
+              {SPEECH_LANG_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`segmented__item ${
+                    draft.speechLang === opt.value ? "is-active" : ""
+                  }`}
+                  onClick={() =>
+                    setDraft((d) => ({ ...d, speechLang: opt.value }))
+                  }
+                >
+                  <span className="segmented__label">{opt.label}</span>
+                  <span className="segmented__hint">{opt.hint}</span>
+                </button>
+              ))}
+            </div>
+            <p className="sheet-note">
+              Tutor always replies in English — this just tells the
+              speech-to-text which language to expect from you.
+            </p>
           </section>
         </div>
 

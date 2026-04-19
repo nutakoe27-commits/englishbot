@@ -867,3 +867,10 @@ button {
 .btn--ghost:hover {
   background: rgba(255, 255, 255, 0.09);
 }
+
+.sheet-note {
+  margin: 4px 2px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
