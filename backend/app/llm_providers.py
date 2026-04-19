@@ -18,7 +18,7 @@ from typing import Protocol
 
 import httpx
 
-from .config import SYSTEM_PROMPT, settings
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,12 @@ logger = logging.getLogger(__name__)
 # ─── Общий контракт ──────────────────────────────────────────────────────────
 
 class LLMProvider(Protocol):
-    async def complete(self, user_text: str, history: list[dict]) -> str: ...
+    async def complete(
+        self,
+        user_text: str,
+        history: list[dict],
+        system_prompt: str,
+    ) -> str: ...
 
 
 # ─── vLLM (OpenAI-совместимый) ───────────────────────────────────────────────
@@ -74,10 +79,15 @@ class VLLMProvider:
             out.append({"role": role, "content": content})
         return out
 
-    async def complete(self, user_text: str, history: list[dict]) -> str:
+    async def complete(
+        self,
+        user_text: str,
+        history: list[dict],
+        system_prompt: str,
+    ) -> str:
         # /no_think подавляет reasoning Qwen3 на токенизерном уровне.
         # Ставится в user-реплику (в system не работает).
-        messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
         messages.extend(self._to_openai(history))
         messages.append({"role": "user", "content": f"/no_think\n{user_text}"})
 

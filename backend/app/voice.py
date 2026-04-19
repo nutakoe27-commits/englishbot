@@ -29,6 +29,7 @@ from starlette.websockets import WebSocketState
 from .llm_providers import get_llm_provider
 from .stt_providers import get_stt_provider
 from .tts_providers import get_tts_provider
+from .tutor_prompt import SessionSettings, build_greeting, build_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,20 @@ async def run_voice_session(websocket: WebSocket) -> None:
     """
     logger.warning("[voice] run_voice_session старт")
 
+    # Настройки сессии (уровень, роль, длина, исправления) — из query-параметров WS.
+    session_settings = SessionSettings.from_query(dict(websocket.query_params))
+    system_prompt = build_system_prompt(session_settings)
+    logger.warning(
+        "[voice] настройки: level=%s role=%s length=%s corrections=%s%s",
+        session_settings.level,
+        session_settings.role,
+        session_settings.length,
+        session_settings.corrections,
+        f" custom={session_settings.role_custom!r}"
+        if session_settings.role == "custom"
+        else "",
+    )
+
     # Инициализируем три провайдера — каждый читает свои настройки.
     try:
         llm = get_llm_provider()
@@ -109,7 +124,7 @@ async def run_voice_session(websocket: WebSocket) -> None:
     # ─── Приветственное сообщение репетитора ───────────────────────
     # Сразу после подключения приглашаем пользователя заговорить — чтобы было понятно,
     # что бот готов, и сессия не выглядела «зависшей» при молчании.
-    greeting = "Hi! I'm your English tutor. What would you like to talk about today?"
+    greeting = build_greeting(session_settings)
     try:
         if websocket.client_state == WebSocketState.CONNECTED:
             await websocket.send_json({
@@ -193,7 +208,11 @@ async def run_voice_session(websocket: WebSocket) -> None:
             })
 
         try:
-            reply = await llm.complete(user_text=text, history=history)
+            reply = await llm.complete(
+                user_text=text,
+                history=history,
+                system_prompt=system_prompt,
+            )
         except Exception as exc:
             logger.error("LLM сбой: %s", exc, exc_info=True)
             reply = "I'm having trouble right now. Let's try again in a moment."
