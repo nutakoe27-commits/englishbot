@@ -89,6 +89,9 @@ export default function App() {
   const logIdRef = useRef<number>(0);
   // Флаг — ws уже закрывается
   const wsClosingRef = useRef<boolean>(false);
+  // Защита от параллельных/повторных вызовов openConnection: пока идёт
+  // хэндшейк нового WS или ожидание закрытия старого — дубликаты игнорируем.
+  const openingRef = useRef<boolean>(false);
   // Флаг — идёт ли сейчас запись (ref для доступа из замыканий без stale closure)
   const isRecordingRef = useRef<boolean>(false);
   // Флаг — палец сейчас зажат на кнопке (критично для синхронизации с async WS)
@@ -252,103 +255,154 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Открытие WebSocket ────────────────────────────────────────────────────
+  // ── Открытие WebSocket ──────────────────────────────────────────────────
+  // Идемпотентная, устойчивая к параллельным вызовам. Гарантии:
+  //   1) Если уже есть OPEN WS — сразу выход.
+  //   2) Если параллельно идёт открытие — дубликат игнорируем.
+  //   3) Если старый WS ещё не закрыт — дождёмся его onclose, потом новый.
+  //   4) Обработчики старого WS не трогают wsRef, если там уже другой сокет.
   const openConnection = useCallback(async () => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       return;
     }
-
-    setAppState("connecting");
-    setStatusText("Connecting…");
-    setErrorMsg("");
-    wsClosingRef.current = false;
-
-    // Резюмим AudioContext в user-gesture, если вдруг остался suspended
-    const ctx = audioCtxRef.current;
-    if (ctx && ctx.state === "suspended") {
-      try {
-        await ctx.resume();
-      } catch {
-        // ничего страшного
-      }
+    if (openingRef.current) {
+      return;
     }
-    playbackTimeRef.current = 0;
-    if (speakingEndTimerRef.current !== null) {
-      clearTimeout(speakingEndTimerRef.current);
-      speakingEndTimerRef.current = null;
-    }
-
-    const initData = WebApp.initData;
-    // Собираем query-строку: init_data (для валидации Telegram) + настройки тьютора.
-    const queryParts: string[] = [];
-    if (initData) {
-      queryParts.push(`init_data=${encodeURIComponent(initData)}`);
-    }
-    queryParts.push(settingsToQuery(settingsRef.current));
-    const wsUrl = queryParts.length
-      ? `${WS_URL}?${queryParts.join("&")}`
-      : WS_URL;
-
-    const ws = new WebSocket(wsUrl);
-    ws.binaryType = "arraybuffer";
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setAppState("connected");
-      setStatusText("Ready to talk");
-    };
-
-    ws.onmessage = (event) => {
-      if (event.data instanceof ArrayBuffer) {
-        // Бинарные данные → PCM 24 kHz аудио
-        setAppState("speaking");
-        setStatusText("Speaking…");
-        enqueueAudio(event.data);
-
-        // Отменяем предыдущий таймер и заводим новый на актуальный remaining.
-        // Без этого на каждый чанк стартовал свой setTimeout и самый первый срабатывал
-        // посреди воспроизведения — кнопка мигала speaking ↔ connected.
-        if (speakingEndTimerRef.current !== null) {
-          clearTimeout(speakingEndTimerRef.current);
-          speakingEndTimerRef.current = null;
-        }
-        const ctx = audioCtxRef.current;
-        if (ctx) {
-          const remaining = Math.max(0, playbackTimeRef.current - ctx.currentTime);
-          speakingEndTimerRef.current = window.setTimeout(() => {
-            speakingEndTimerRef.current = null;
-            setAppState((prev) => (prev === "speaking" ? "connected" : prev));
-            setStatusText((prev) => (prev === "Speaking…" ? "Your turn" : prev));
-          }, remaining * 1000 + 200);
-        }
-      } else if (typeof event.data === "string") {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === "text" && msg.text) {
-            addLogEntry(msg.role as "user" | "tutor", msg.text);
+    openingRef.current = true;
+    try {
+      // Дожидаемся закрытия старого WS (если есть), чтобы не было двух
+      // параллельных соединений к бэкенду.
+      const stale = wsRef.current;
+      if (stale && stale.readyState !== WebSocket.CLOSED) {
+        wsClosingRef.current = true;
+        if (
+          stale.readyState === WebSocket.OPEN ||
+          stale.readyState === WebSocket.CONNECTING
+        ) {
+          try {
+            stale.close(1000);
+          } catch {
+            // ignore
           }
-        } catch {
-          // игнорируем нераспознанный JSON
         }
-      }
-    };
-
-    ws.onerror = (err) => {
-      console.error("WebSocket error:", err);
-      if (!wsClosingRef.current) {
-        setAppState("error");
-        setErrorMsg("Connection error. Please try again.");
-        setStatusText("Error");
-      }
-    };
-
-    ws.onclose = () => {
-      if (!wsClosingRef.current) {
-        setAppState("idle");
-        setStatusText("Ready to talk");
+        await new Promise<void>((resolve) => {
+          const prev = stale.onclose;
+          stale.onclose = (ev) => {
+            try {
+              prev?.call(stale, ev);
+            } finally {
+              resolve();
+            }
+          };
+          // Страховка: если close не придёт — пойдём дальше через секунду.
+          setTimeout(resolve, 1000);
+        });
       }
       wsRef.current = null;
-    };
+
+      setAppState("connecting");
+      setStatusText("Connecting…");
+      setErrorMsg("");
+      wsClosingRef.current = false;
+
+      // Резюмим AudioContext в user-gesture, если вдруг остался suspended
+      const ctx = audioCtxRef.current;
+      if (ctx && ctx.state === "suspended") {
+        try {
+          await ctx.resume();
+        } catch {
+          // ничего страшного
+        }
+      }
+      playbackTimeRef.current = 0;
+      if (speakingEndTimerRef.current !== null) {
+        clearTimeout(speakingEndTimerRef.current);
+        speakingEndTimerRef.current = null;
+      }
+
+      const initData = WebApp.initData;
+      // Собираем query-строку: init_data + настройки тьютора.
+      const queryParts: string[] = [];
+      if (initData) {
+        queryParts.push(`init_data=${encodeURIComponent(initData)}`);
+      }
+      queryParts.push(settingsToQuery(settingsRef.current));
+      const wsUrl = queryParts.length
+        ? `${WS_URL}?${queryParts.join("&")}`
+        : WS_URL;
+
+      const ws = new WebSocket(wsUrl);
+      ws.binaryType = "arraybuffer";
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (wsRef.current !== ws) return;
+        setAppState("connected");
+        setStatusText("Ready to talk");
+      };
+
+      ws.onmessage = (event) => {
+        if (wsRef.current !== ws) return;
+        if (event.data instanceof ArrayBuffer) {
+          // Бинарные данные → PCM 24 kHz аудио
+          setAppState("speaking");
+          setStatusText("Speaking…");
+          enqueueAudio(event.data);
+
+          if (speakingEndTimerRef.current !== null) {
+            clearTimeout(speakingEndTimerRef.current);
+            speakingEndTimerRef.current = null;
+          }
+          const audioCtx = audioCtxRef.current;
+          if (audioCtx) {
+            const remaining = Math.max(
+              0,
+              playbackTimeRef.current - audioCtx.currentTime,
+            );
+            speakingEndTimerRef.current = window.setTimeout(() => {
+              speakingEndTimerRef.current = null;
+              setAppState((prev) => (prev === "speaking" ? "connected" : prev));
+              setStatusText((prev) =>
+                prev === "Speaking…" ? "Your turn" : prev,
+              );
+            }, remaining * 1000 + 200);
+          }
+        } else if (typeof event.data === "string") {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === "text" && msg.text) {
+              addLogEntry(msg.role as "user" | "tutor", msg.text);
+            }
+          } catch {
+            // игнорируем нераспознанный JSON
+          }
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error("WebSocket error:", err);
+        // Ошибка старого WS не должна портить UI, если уже активен другой.
+        if (wsRef.current !== ws) return;
+        if (!wsClosingRef.current) {
+          setAppState("error");
+          setErrorMsg("Connection error. Please try again.");
+          setStatusText("Error");
+        }
+      };
+
+      ws.onclose = () => {
+        // Не затираем wsRef, если он уже указывает на другой (новый) сокет.
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+          if (!wsClosingRef.current) {
+            setAppState("idle");
+            setStatusText("Ready to talk");
+          }
+        }
+      };
+    } finally {
+      openingRef.current = false;
+    }
   }, [addLogEntry, enqueueAudio]);
 
   // ── Начало записи (unmute уже открытого микрофона) ────────────────────────
@@ -447,25 +501,12 @@ export default function App() {
       saveSettings(next);
       settingsRef.current = next;
       setSettingsOpen(false);
-
-      // Если сессия была активна — перезапускаем WS с новыми настройками.
-      const ws = wsRef.current;
-      if (ws && ws.readyState !== WebSocket.CLOSED) {
-        wsClosingRef.current = true;
-        try {
-          ws.close(1000);
-        } catch {
-          // ignore
-        }
-        wsRef.current = null;
-      }
       setDialogLog([]);
-      setAppState("idle");
-      setStatusText("Ready to talk");
-      // Новая сессия с свежими настройками
+      // openConnection сам корректно закроет старый WS (если есть) и откроет
+      // новый с обновлёнными query-параметрами.
       void openConnection();
     },
-    [openConnection]
+    [openConnection],
   );
 
   // Cleanup при размонтировании: полностью освобождаем микрофон и WS
