@@ -80,11 +80,12 @@ async def run_voice_session(websocket: WebSocket) -> None:
     session_settings = SessionSettings.from_query(dict(websocket.query_params))
     system_prompt = build_system_prompt(session_settings)
     logger.warning(
-        "[voice] настройки: level=%s role=%s length=%s corrections=%s%s",
+        "[voice] настройки: level=%s role=%s length=%s corrections=%s speech_lang=%s%s",
         session_settings.level,
         session_settings.role,
         session_settings.length,
         session_settings.corrections,
+        session_settings.speech_lang,
         f" custom={session_settings.role_custom!r}"
         if session_settings.role == "custom"
         else "",
@@ -99,7 +100,8 @@ async def run_voice_session(websocket: WebSocket) -> None:
         return
 
     try:
-        stt = get_stt_provider()
+        # Язык STT приходит из настроек сессии: en / ru / "" (auto)
+        stt = get_stt_provider(language=session_settings.whisper_language())
     except Exception as exc:
         logger.error("Не удалось создать STT-провайдера: %s", exc)
         await websocket.close(code=1011, reason="Server misconfiguration: STT provider")

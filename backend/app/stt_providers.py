@@ -211,17 +211,26 @@ class WhisperSTTProvider:
 
 # ─── Фабрика ─────────────────────────────────────────────────────────────────
 
-def get_stt_provider() -> STTProvider:
-    """Создаёт WhisperSTTProvider из настроек. Требует WHISPER_STT_URL."""
+def get_stt_provider(language: Optional[str] = None) -> STTProvider:
+    """Создаёт WhisperSTTProvider из настроек.
+
+    Args:
+        language: язык STT для конкретной сессии. Если None — берём
+                  дефолт из .env (WHISPER_STT_LANGUAGE). Пустая строка
+                  = автодетект (Whisper сам определит).
+    """
     if not settings.WHISPER_STT_URL:
         raise RuntimeError(
             "STT не сконфигурирован: задайте WHISPER_STT_URL в .env"
         )
+    effective_lang = language if language is not None else (
+        settings.WHISPER_STT_LANGUAGE or "en"
+    )
     logger.warning(
         "[STT] url=%s language=%s",
-        settings.WHISPER_STT_URL, settings.WHISPER_STT_LANGUAGE,
+        settings.WHISPER_STT_URL, effective_lang or "auto",
     )
     return WhisperSTTProvider(
         url=settings.WHISPER_STT_URL,
-        language=settings.WHISPER_STT_LANGUAGE or "en",
+        language=effective_lang,
     )
