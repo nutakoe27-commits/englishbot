@@ -481,3 +481,389 @@ button {
     bottom: 40px;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   Settings: кнопка-шестерёнка в шапке
+   ══════════════════════════════════════════════════════════════ */
+.tutor-header__right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease,
+    transform 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.icon-button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+.icon-button:active {
+  transform: scale(0.94);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Settings: bottom sheet
+   ══════════════════════════════════════════════════════════════ */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(6, 8, 14, 0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  animation: sheet-fade-in 180ms ease-out;
+}
+
+@keyframes sheet-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.sheet {
+  width: 100%;
+  max-width: 520px;
+  max-height: 86dvh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(
+    180deg,
+    rgba(24, 26, 36, 0.98) 0%,
+    rgba(17, 19, 27, 0.98) 100%
+  );
+  border-top-left-radius: 22px;
+  border-top-right-radius: 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 -20px 60px rgba(0, 0, 0, 0.55);
+  animation: sheet-slide-up 260ms cubic-bezier(0.22, 0.8, 0.32, 1);
+  overflow: hidden;
+}
+
+@keyframes sheet-slide-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+.sheet__header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.sheet__header::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.sheet__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--text);
+}
+.sheet__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.sheet__close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sheet__content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 20px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.sheet__content::-webkit-scrollbar { width: 6px; }
+.sheet__content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+
+.sheet__footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 12px 20px calc(14px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* ─── Группы настроек ─── */
+.sheet-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sheet-group__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-faint);
+}
+
+/* ─── Segmented (Level / Length) ─── */
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.segmented__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 6px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.segmented__item:active {
+  transform: scale(0.97);
+}
+.segmented__item.is-active {
+  background: linear-gradient(180deg, rgba(124, 92, 255, 0.28), rgba(124, 92, 255, 0.16));
+  color: var(--text);
+  box-shadow: 0 2px 12px rgba(124, 92, 255, 0.28),
+    inset 0 0 0 1px rgba(161, 138, 255, 0.35);
+}
+.segmented__label {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+}
+.segmented__hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.2;
+}
+.segmented__item.is-active .segmented__hint {
+  color: var(--accent-soft);
+}
+
+/* ─── Роль — сетка карточек-чипов ─── */
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.role-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease,
+    transform 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 72px;
+}
+.role-chip:active {
+  transform: scale(0.96);
+}
+.role-chip.is-active {
+  border-color: rgba(161, 138, 255, 0.55);
+  background: linear-gradient(180deg, rgba(124, 92, 255, 0.22), rgba(124, 92, 255, 0.10));
+  color: var(--text);
+  box-shadow: 0 2px 14px rgba(124, 92, 255, 0.22);
+}
+.role-chip__emoji {
+  font-size: 22px;
+  line-height: 1;
+}
+.role-chip__label {
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  line-height: 1.2;
+}
+
+@media (max-width: 380px) {
+  .role-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+.sheet-input {
+  margin-top: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+.sheet-input::placeholder {
+  color: var(--text-faint);
+}
+.sheet-input:focus {
+  border-color: rgba(161, 138, 255, 0.55);
+  background: rgba(124, 92, 255, 0.08);
+}
+
+/* ─── Switch-row (toggle корректировок) ─── */
+.switch-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.switch-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.switch-row__title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+.switch-row__hint {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.35;
+}
+.switch-row__input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background 180ms ease;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 200ms cubic-bezier(0.3, 0.8, 0.4, 1);
+}
+.switch-row__input:checked ~ .switch {
+  background: var(--accent);
+}
+.switch-row__input:checked ~ .switch::after {
+  transform: translateX(18px);
+}
+
+/* ─── Кнопки ─── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  letter-spacing: -0.1px;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 120ms ease,
+    opacity 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 4px 20px rgba(124, 92, 255, 0.35);
+}
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.btn--ghost {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.09);
+}

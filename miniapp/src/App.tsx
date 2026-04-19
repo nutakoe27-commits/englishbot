@@ -15,6 +15,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import WebApp from "@twa-dev/sdk";
 import "./App.css";
+import { SettingsSheet } from "./SettingsSheet";
+import {
+  loadSettings,
+  saveSettings,
+  settingsToQuery,
+  type TutorSettings,
+} from "./tutorSettings";
 
 // ─── Типы ─────────────────────────────────────────────────────────────────────
 
@@ -60,6 +67,14 @@ export default function App() {
   const [dialogLog, setDialogLog] = useState<DialogEntry[]>([]);
   const [statusText, setStatusText] = useState<string>("Getting ready…");
   const [errorMsg, setErrorMsg] = useState<string>("");
+  // Настройки тьютора (уровень, роль, длина, исправления)
+  const [settings, setSettings] = useState<TutorSettings>(() => loadSettings());
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  // Реф с актуальными настройками — openConnection читает его без ре-рендера
+  const settingsRef = useRef<TutorSettings>(settings);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   // Рефы для аудио/WS объектов (не вызывают ре-рендер)
   const wsRef = useRef<WebSocket | null>(null);
@@ -264,8 +279,14 @@ export default function App() {
     }
 
     const initData = WebApp.initData;
-    const wsUrl = initData
-      ? `${WS_URL}?init_data=${encodeURIComponent(initData)}`
+    // Собираем query-строку: init_data (для валидации Telegram) + настройки тьютора.
+    const queryParts: string[] = [];
+    if (initData) {
+      queryParts.push(`init_data=${encodeURIComponent(initData)}`);
+    }
+    queryParts.push(settingsToQuery(settingsRef.current));
+    const wsUrl = queryParts.length
+      ? `${WS_URL}?${queryParts.join("&")}`
       : WS_URL;
 
     const ws = new WebSocket(wsUrl);
@@ -416,6 +437,36 @@ export default function App() {
     setStatusText("Ready to talk");
     setDialogLog([]);
   }, [stopRecording]);
+
+  // ── Применение новых настроек: сохраняем, закрываем текущую сессию и
+  // переоткрываем WS с обновлёнными query-параметрами. Тьютор пришлёт
+  // новое приветствие под выбранную роль.
+  const handleSettingsSave = useCallback(
+    (next: TutorSettings) => {
+      setSettings(next);
+      saveSettings(next);
+      settingsRef.current = next;
+      setSettingsOpen(false);
+
+      // Если сессия была активна — перезапускаем WS с новыми настройками.
+      const ws = wsRef.current;
+      if (ws && ws.readyState !== WebSocket.CLOSED) {
+        wsClosingRef.current = true;
+        try {
+          ws.close(1000);
+        } catch {
+          // ignore
+        }
+        wsRef.current = null;
+      }
+      setDialogLog([]);
+      setAppState("idle");
+      setStatusText("Ready to talk");
+      // Новая сессия с свежими настройками
+      void openConnection();
+    },
+    [openConnection]
+  );
 
   // Cleanup при размонтировании: полностью освобождаем микрофон и WS
   useEffect(() => {
@@ -570,7 +621,31 @@ export default function App() {
           <span className="tutor-brand__dot" aria-hidden />
           <span className="tutor-brand__name">English Tutor</span>
         </div>
-        <p className="tutor-hello">Hi, {userName}</p>
+        <div className="tutor-header__right">
+          <p className="tutor-hello">Hi, {userName}</p>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Settings"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
+              <path
+                d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                fill="none"
+              />
+              <path
+                d="M19.4 13a7.7 7.7 0 0 0 0-2l2-1.5-2-3.4-2.3.9a7.6 7.6 0 0 0-1.7-1L15 3.5h-4l-.4 2.4a7.6 7.6 0 0 0-1.7 1l-2.3-.9-2 3.4L6.6 11a7.7 7.7 0 0 0 0 2l-2 1.5 2 3.4 2.3-.9a7.6 7.6 0 0 0 1.7 1l.4 2.4h4l.4-2.4a7.6 7.6 0 0 0 1.7-1l2.3.9 2-3.4-2-1.5Z"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                fill="none"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
       </header>
 
       {/* Лог диалога — всегда одинакового размера */}
@@ -682,6 +757,14 @@ export default function App() {
           )}
         </div>
       </footer>
+
+      {settingsOpen && (
+        <SettingsSheet
+          initial={settings}
+          onCancel={() => setSettingsOpen(false)}
+          onSave={handleSettingsSave}
+        />
+      )}
     </div>
   );
 }
