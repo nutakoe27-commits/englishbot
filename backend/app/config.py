@@ -21,6 +21,26 @@ class Settings(BaseSettings):
     # Telegram Bot token — используется для валидации initData
     BOT_TOKEN: Optional[str] = None
 
+    # ─── База данных ──────────────────────────────────────────────────────
+    # Формат: mysql+aiomysql://user:password@host:port/dbname?charset=utf8mb4
+    # На VPS: mysql+aiomysql://englishbot:PWD@host.docker.internal:3306/englishbot?charset=utf8mb4
+    DATABASE_URL: Optional[str] = None
+
+    # ─── Админы ────────────────────────────────────────────────────────────
+    # Telegram ID админов через запятую: "123456,789012"
+    ADMIN_IDS: str = ""
+
+    @property
+    def admin_ids_list(self) -> list[int]:
+        if not self.ADMIN_IDS:
+            return []
+        out: list[int] = []
+        for part in self.ADMIN_IDS.split(","):
+            part = part.strip()
+            if part.isdigit():
+                out.append(int(part))
+        return out
+
     # ─── LLM (vLLM на V100) ──────────────────────────────────────────────
     # OpenAI-совместимый endpoint. В проде host.docker.internal через
     # SSH-reverse-tunnel до V100: http://host.docker.internal:23333/v1
