@@ -21,13 +21,12 @@ from typing import Literal
 
 Level = Literal["A2", "B1", "B2", "C1"]
 Length = Literal["short", "long"]
-# Язык речи ученика для STT. Тьютор всё равно отвечает по-английски.
-# "auto" — детект силами Whisper (пустое поле language в конфиге STT).
-SpeechLang = Literal["en", "ru", "auto"]
+# Режим сессии: voice — микрофон + TTS-ответ; chat — только текст в обе стороны.
+Mode = Literal["voice", "chat"]
 
 VALID_LEVELS: tuple[Level, ...] = ("A2", "B1", "B2", "C1")
 VALID_LENGTHS: tuple[Length, ...] = ("short", "long")
-VALID_SPEECH_LANGS: tuple[SpeechLang, ...] = ("en", "ru", "auto")
+VALID_MODES: tuple[Mode, ...] = ("voice", "chat")
 
 
 # ─── Пресеты ролей ───────────────────────────────────────────────────────────
@@ -80,7 +79,7 @@ class SessionSettings:
     role_custom: str = ""
     length: Length = "short"
     corrections: bool = True
-    speech_lang: SpeechLang = "en"
+    mode: Mode = "voice"
 
     @classmethod
     def from_query(cls, params: dict) -> "SessionSettings":
@@ -101,9 +100,9 @@ class SessionSettings:
         corrections_raw = (params.get("corrections") or "on").lower()
         corrections = corrections_raw in ("on", "true", "1", "yes")
 
-        speech_lang = (params.get("speech_lang") or "en").lower()
-        if speech_lang not in VALID_SPEECH_LANGS:
-            speech_lang = "en"
+        mode = (params.get("mode") or "voice").lower()
+        if mode not in VALID_MODES:
+            mode = "voice"
 
         return cls(
             level=level,  # type: ignore[arg-type]
@@ -111,12 +110,8 @@ class SessionSettings:
             role_custom=role_custom,
             length=length,  # type: ignore[arg-type]
             corrections=corrections,
-            speech_lang=speech_lang,  # type: ignore[arg-type]
+            mode=mode,  # type: ignore[arg-type]
         )
-
-    def whisper_language(self) -> str:
-        """Код языка для Whisper STT. Пустая строка = автодетект."""
-        return "" if self.speech_lang == "auto" else self.speech_lang
 
     def role_description(self) -> str:
         """Возвращает описание роли для подстановки в промпт."""
@@ -194,35 +189,25 @@ def build_system_prompt(s: SessionSettings) -> str:
     parts.append(_LENGTH_GUIDANCE[s.length])
     parts.append(_CORRECTION_ON if s.corrections else _CORRECTION_OFF)
 
-    # Если ученик говорит не на английском (русский / auto) —
-    # прямо инструктируем модель: понять, но ответить по-английски.
-    if s.speech_lang != "en":
-        parts.append(
-            "IMPORTANT — the learner may speak to you in Russian (their\n"
-            "transcript will arrive in Cyrillic). When that happens:\n"
-            "- Understand exactly what they meant.\n"
-            "- Reply ONLY in English, matching the level above.\n"
-            "- You may briefly show the English version of their phrase as if\n"
-            "  helping them translate, but never switch your whole reply to Russian.\n"
-            "- Encourage them to try saying it in English next time, kindly."
-        )
-        universal_rules = (
-            "Universal rules:\n"
-            "- Always reply in English (even if the learner spoke Russian).\n"
-            "- Stay fully in character for your role.\n"
-            "- Be warm, patient, and encouraging.\n"
-            "- Never break character to talk about yourself as an AI."
-        )
-    else:
-        universal_rules = (
-            "Universal rules:\n"
-            "- Speak ONLY in English.\n"
-            "- Stay fully in character for your role.\n"
-            "- Be warm, patient, and encouraging.\n"
-            "- If the learner switches to another language, gently steer them back to English.\n"
-            "- Never break character to talk about yourself as an AI."
-        )
-    parts.append(universal_rules)
+    # Ученик может писать/говорить на любом языке (Whisper в auto, текстовый ввод
+    # вообще без языковых ограничений). Но тьютор всегда отвечает по-английски.
+    parts.append(
+        "IMPORTANT — the learner may write or speak to you in another\n"
+        "language (most often Russian). When that happens:\n"
+        "- Understand exactly what they meant.\n"
+        "- Reply ONLY in English, matching the level above.\n"
+        "- You may briefly show the English version of their phrase as if\n"
+        "  helping them translate, but never switch your whole reply to Russian.\n"
+        "- Encourage them to try saying it in English next time, kindly."
+    )
+
+    parts.append(
+        "Universal rules:\n"
+        "- Always reply in English (even if the learner used another language).\n"
+        "- Stay fully in character for your role.\n"
+        "- Be warm, patient, and encouraging.\n"
+        "- Never break character to talk about yourself as an AI."
+    )
 
     return "\n\n".join(parts)
 

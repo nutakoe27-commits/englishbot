@@ -63,6 +63,111 @@ async def _send_tts_to_ws(websocket: WebSocket, tts, text: str) -> None:
         logger.error("[TTS] ошибка отправки (после %d чанков): %s", chunks_sent, exc, exc_info=True)
 
 
+# ─── Чисто текстовая сессия (chat-mode) ──────────────────────────────────────
+
+async def _run_chat_session(
+    *,
+    websocket: WebSocket,
+    llm,
+    system_prompt: str,
+    session_settings: SessionSettings,
+) -> None:
+    """Чисто текстовый диалог: клиент шлёт user_text — сервер отвечает text без озвучки.
+
+    Протокол WebSocket:
+      Клиент → JSON {"type":"user_text","text":"..."}
+      Сервер → JSON {"type":"text","role":"user"|"tutor","text":"..."}
+      Сервер → JSON {"type":"thinking"} и {"type":"thinking_done"} (индикация)
+    """
+    logger.warning("[chat] старт текстовой сессии")
+    history: list[dict] = []
+
+    # Приветствие — только текстом, без TTS.
+    greeting = build_greeting(session_settings)
+    try:
+        if websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.send_json({
+                "type": "text",
+                "role": "tutor",
+                "text": greeting,
+            })
+            history.append({"role": "assistant", "text": greeting})
+    except Exception as exc:
+        logger.warning("[chat] не удалось отправить приветствие: %s", exc)
+
+    try:
+        while True:
+            msg = await websocket.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+
+            text_payload = msg.get("text")
+            if not text_payload:
+                # Бинарные фреймы в chat-режиме не ждём — просто игнор.
+                continue
+            try:
+                ctrl = json.loads(text_payload)
+            except Exception:
+                logger.debug("[chat] непарсимый text-фрейм: %r", text_payload[:120])
+                continue
+
+            if ctrl.get("type") != "user_text":
+                # Никаких EOU/audio в chat-режиме не ждём.
+                continue
+
+            user_text = (ctrl.get("text") or "").strip()
+            if not user_text:
+                continue
+            # Разумный лимит на длину сообщения, чтобы не раздувать контекст LLM.
+            user_text = user_text[:2000]
+
+            logger.warning("[chat] user: %s", user_text[:120])
+
+            # Эхо пользовательского сообщения отправлять обратно не нужно — клиент уже
+            # отрендерил его локально (в отличие от voice-режима, где отправляем
+            # финал STT, чтобы показать распознанный текст).
+
+            # Индикация «thinking…» (опционально, фронт может показывать «typing…»).
+            if websocket.client_state == WebSocketState.CONNECTED:
+                try:
+                    await websocket.send_json({"type": "thinking"})
+                except Exception:
+                    pass
+
+            try:
+                reply = await llm.complete(
+                    user_text=user_text,
+                    history=history,
+                    system_prompt=system_prompt,
+                )
+            except Exception as exc:
+                logger.error("[chat] LLM сбой: %s", exc, exc_info=True)
+                reply = "I'm having trouble right now. Let's try again in a moment."
+
+            history.append({"role": "user", "text": user_text})
+            history.append({"role": "assistant", "text": reply})
+            if len(history) > MAX_HISTORY_TURNS * 2:
+                del history[: len(history) - MAX_HISTORY_TURNS * 2]
+
+            if websocket.client_state == WebSocketState.CONNECTED:
+                try:
+                    await websocket.send_json({"type": "thinking_done"})
+                except Exception:
+                    pass
+                await websocket.send_json({
+                    "type": "text",
+                    "role": "tutor",
+                    "text": reply,
+                })
+            logger.warning("[chat] tutor: %s", reply[:120])
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.error("[chat] ошибка в цикле: %s", exc, exc_info=True)
+    finally:
+        logger.warning("[chat] сессия завершена для %s", websocket.client)
+
+
 # ─── Оркестратор WebSocket-сессии ─────────────────────────────────────────────
 
 async def run_voice_session(websocket: WebSocket) -> None:
@@ -80,18 +185,18 @@ async def run_voice_session(websocket: WebSocket) -> None:
     session_settings = SessionSettings.from_query(dict(websocket.query_params))
     system_prompt = build_system_prompt(session_settings)
     logger.warning(
-        "[voice] настройки: level=%s role=%s length=%s corrections=%s speech_lang=%s%s",
+        "[voice] настройки: level=%s role=%s length=%s corrections=%s mode=%s%s",
         session_settings.level,
         session_settings.role,
         session_settings.length,
         session_settings.corrections,
-        session_settings.speech_lang,
+        session_settings.mode,
         f" custom={session_settings.role_custom!r}"
         if session_settings.role == "custom"
         else "",
     )
 
-    # Инициализируем три провайдера — каждый читает свои настройки.
+    # LLM нужен в любом режиме.
     try:
         llm = get_llm_provider()
     except Exception as exc:
@@ -99,9 +204,20 @@ async def run_voice_session(websocket: WebSocket) -> None:
         await websocket.close(code=1011, reason="Server misconfiguration: LLM provider")
         return
 
+    # Чисто текстовый режим — передаём управление отдельному хэндлеру без STT/TTS.
+    if session_settings.mode == "chat":
+        await _run_chat_session(
+            websocket=websocket,
+            llm=llm,
+            system_prompt=system_prompt,
+            session_settings=session_settings,
+        )
+        return
+
+    # Голосовой режим — нужны STT и TTS.
     try:
-        # Язык STT приходит из настроек сессии: en / ru / "" (auto)
-        stt = get_stt_provider(language=session_settings.whisper_language())
+        # Whisper всегда в автодетекте (язык речи определяется моделью самостоятельно).
+        stt = get_stt_provider(language="")
     except Exception as exc:
         logger.error("Не удалось создать STT-провайдера: %s", exc)
         await websocket.close(code=1011, reason="Server misconfiguration: STT provider")

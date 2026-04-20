@@ -874,3 +874,120 @@ button {
   line-height: 1.4;
   color: var(--text-faint);
 }
+
+/* ─── Chat mode ─────────────────────────────────────────────────────── */
+/* Футер в chat-режиме: индикатор печати · композер · нижняя строка */
+.tutor-controls--chat {
+  grid-template-rows: 20px auto 32px;
+  gap: 10px;
+  padding: 8px 14px 4px;
+  width: 100%;
+  justify-items: stretch;
+  box-sizing: border-box;
+}
+
+.chat-thinking-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  font-size: 13px;
+  color: var(--text-dim);
+  justify-self: center;
+}
+.chat-thinking-indicator__dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.chat-thinking-indicator__dots > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  animation: chat-typing 1s ease-in-out infinite;
+}
+.chat-thinking-indicator__dots > span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.chat-thinking-indicator__dots > span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes chat-typing {
+  0%, 60%, 100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.chat-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  width: 100%;
+  max-width: 640px;
+  justify-self: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  padding: 8px 8px 8px 14px;
+  transition: border-color 160ms var(--ease), background 160ms var(--ease);
+}
+.chat-composer:focus-within {
+  border-color: var(--accent-soft);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.chat-composer__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: 140px;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.4;
+  padding: 6px 0;
+}
+.chat-composer__input::placeholder {
+  color: var(--text-faint);
+}
+.chat-composer__input:disabled {
+  opacity: 0.6;
+}
+
+.chat-composer__send {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 140ms var(--ease), transform 140ms var(--ease),
+    opacity 140ms var(--ease);
+}
+.chat-composer__send:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.chat-composer__send:active:not(:disabled) {
+  transform: scale(0.95);
+}
+.chat-composer__send:disabled {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+.chat-composer__send svg {
+  transform: translateX(1px); /* визуальная компенсация для "бумажного самолётика" */
+}
