@@ -108,6 +108,30 @@ export interface PaymentRecord {
   notes: string | null;
 }
 
+export interface BulkExtendResponse {
+  ok: boolean;
+  affected: number;
+}
+
+export interface BroadcastJobStatus {
+  job_id: string;
+  text_preview: string;
+  total: number;
+  sent: number;
+  failed: number;
+  blocked: number;
+  is_running: boolean;
+  cancelled: boolean;
+  started_at: number | null;
+  finished_at: number | null;
+  error: string | null;
+}
+
+export interface BroadcastStatusResponse {
+  ok: boolean;
+  job: BroadcastJobStatus | null;
+}
+
 // ─── Endpoints ───────────────────────────────────────────────────────────────
 export const api = {
   me: (token?: string) => request<{ ok: boolean }>("/api/admin/me", { token }),
@@ -147,4 +171,28 @@ export const api = {
     }),
   recentPayments: () =>
     request<PaymentRecord[]>("/api/admin/payments/recent"),
+
+  // ─── Массовые операции ───────────────────────────────────────
+  extendAllSubscriptions: (days: number, notes?: string) =>
+    request<BulkExtendResponse>("/api/admin/subscription/extend-all", {
+      method: "POST",
+      body: JSON.stringify({ days, notes: notes ?? null }),
+    }),
+  sendUserMessage: (userId: number, text: string) =>
+    request<{ ok: boolean; delivered: boolean }>(
+      `/api/admin/users/${userId}/message`,
+      { method: "POST", body: JSON.stringify({ text }) }
+    ),
+  startBroadcast: (text: string) =>
+    request<{ ok: boolean; job_id: string }>("/api/admin/broadcast", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
+  broadcastStatus: () =>
+    request<BroadcastStatusResponse>("/api/admin/broadcast/status"),
+  cancelBroadcast: () =>
+    request<{ ok: boolean; cancelled: boolean }>(
+      "/api/admin/broadcast/cancel",
+      { method: "POST" }
+    ),
 };

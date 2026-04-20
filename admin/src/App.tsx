@@ -5,6 +5,7 @@ import {
   clearToken,
   getToken,
   setToken,
+  type BroadcastJobStatus,
   type Metrics,
   type PaymentRecord,
   type UserBrief,
@@ -176,6 +177,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     );
   } else if (route === "/users") {
     view = <UsersList />;
+  } else if (route === "/broadcast") {
+    view = <BroadcastPage />;
   } else if (route === "/settings") {
     view = <SettingsPage />;
   } else {
@@ -205,6 +208,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
         <nav style={S.nav}>
           {navBtn("/dashboard", "Метрики")}
           {navBtn("/users", "Пользователи")}
+          {navBtn("/broadcast", "Массовые")}
           {navBtn("/settings", "Настройки")}
         </nav>
         <button style={S.btnSecondary} onClick={logout}>
@@ -509,7 +513,10 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
       {/* ── Подписка ────────────────────── */}
       <GrantCard userId={u.id} onDone={(nu) => setU(nu)} />
 
-      {/* ── Блокировка ──────────────────── */}
+      {/* ── Написать сообщение ───────────── */}
+      <SendMessageCard user={u} />
+
+      {/* ── Блокировка ──────────────── */}
       <div style={S.card}>
         <h3 style={S.h3}>Блокировка</h3>
         <p style={S.muted}>
@@ -538,6 +545,141 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
 
       {/* ── Напоминание ─────────────────── */}
       <ReminderCard user={u} onDone={(nu) => setU(nu)} />
+    </div>
+  );
+}
+
+function SendMessageCard({ user }: { user: UserDetail }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = text.trim();
+    if (!t) return;
+    setBusy(true);
+    setErr(null);
+    setOk(null);
+    try {
+      await api.sendUserMessage(user.id, t);
+      setOk("Сообщение доставлено");
+      setText("");
+      setTimeout(() => {
+        setOk(null);
+        setOpen(false);
+      }, 1500);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={S.card}>
+      <h3 style={S.h3}>Написать сообщение</h3>
+      <p style={S.muted}>
+        Бот отправит сообщение напрямую этому пользователю. Поддерживается HTML.
+      </p>
+      <button
+        type="button"
+        style={S.btn}
+        onClick={() => {
+          setOpen(true);
+          setErr(null);
+          setOk(null);
+        }}
+        disabled={user.is_blocked}
+      >
+        ✉ Написать
+      </button>
+      {user.is_blocked && (
+        <div style={{ ...S.muted, marginTop: 8 }}>
+          Юзер заблокирован — отправка недоступна.
+        </div>
+      )}
+
+      {open && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: 16,
+          }}
+          onClick={() => !busy && setOpen(false)}
+        >
+          <form
+            onSubmit={submit}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: colors.card,
+              padding: 20,
+              borderRadius: 10,
+              maxWidth: 520,
+              width: "100%",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+            }}
+          >
+            <h3 style={S.h3}>
+              Сообщение для {userFullName(user)}
+            </h3>
+            <div style={{ ...S.muted, marginBottom: 10 }}>
+              tg_id {user.tg_id}
+              {user.username ? ` · @${user.username}` : ""}
+            </div>
+            {ok && <div style={S.success}>{ok}</div>}
+            {err && <div style={S.error}>{err}</div>}
+            <textarea
+              style={{
+                ...S.input,
+                minHeight: 140,
+                fontFamily: "inherit",
+                resize: "vertical",
+              }}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Текст сообщения (до 4000 символов, можно HTML-теги)"
+              maxLength={4000}
+              autoFocus
+            />
+            <div style={{ ...S.muted, marginTop: 4, fontSize: 12 }}>
+              {text.length} / 4000
+            </div>
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                marginTop: 12,
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                type="button"
+                style={S.btnSecondary}
+                onClick={() => setOpen(false)}
+                disabled={busy}
+              >
+                Отмена
+              </button>
+              <button
+                type="submit"
+                style={S.btn}
+                disabled={busy || !text.trim()}
+              >
+                {busy ? "Отправка…" : "Отправить"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
@@ -854,6 +996,437 @@ function SettingsPage() {
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+// ─── Broadcast + Bulk Extend ─────────────────────────────────────────────────
+function BroadcastPage() {
+  return (
+    <div>
+      <h2 style={S.h2}>Массовые действия</h2>
+      <BulkExtendCard />
+      <BroadcastCard />
+    </div>
+  );
+}
+
+function BulkExtendCard() {
+  const [days, setDays] = useState<number>(7);
+  const [notes, setNotes] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [ok, setOk] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    setOk(null);
+    setErr(null);
+    try {
+      const r = await api.extendAllSubscriptions(days, notes.trim() || undefined);
+      setOk(`Подписка продлена для ${r.affected} пользователей на +${days} дн.`);
+      setNotes("");
+      setConfirmOpen(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const quick = [3, 7, 14, 30];
+
+  return (
+    <div style={S.card}>
+      <h3 style={S.h3}>Продлить подписку всем активным</h3>
+      <p style={S.muted}>
+        Подписка будет продлена только тем пользователям, у которых она сейчас
+        активна (subscription_until &gt; сейчас). Каждому создаётся запись в
+        payments с типом admin_bulk для аудита.
+      </p>
+      {ok && <div style={{ ...S.success, marginBottom: 10 }}>{ok}</div>}
+      {err && <div style={{ ...S.error, marginBottom: 10 }}>{err}</div>}
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+        {quick.map((d) => (
+          <button
+            type="button"
+            key={d}
+            onClick={() => setDays(d)}
+            style={{
+              ...S.btnSecondary,
+              ...(days === d
+                ? {
+                    borderColor: colors.primary,
+                    color: colors.primary,
+                    fontWeight: 600,
+                  }
+                : {}),
+            }}
+          >
+            +{d} дн.
+          </button>
+        ))}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "120px 1fr",
+          gap: 12,
+          marginBottom: 12,
+        }}
+      >
+        <div>
+          <label style={S.label}>Дней</label>
+          <input
+            style={S.input}
+            type="number"
+            min={1}
+            max={3650}
+            value={days}
+            onChange={(e) => setDays(parseInt(e.target.value || "0", 10))}
+          />
+        </div>
+        <div>
+          <label style={S.label}>Заметка (опционально)</label>
+          <input
+            style={S.input}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Например: компенсация за сбой 20 апреля"
+          />
+        </div>
+      </div>
+
+      <button
+        type="button"
+        style={S.btn}
+        disabled={busy || days < 1}
+        onClick={() => setConfirmOpen(true)}
+      >
+        Продлить всем активным на +{days} дн.
+      </button>
+
+      {confirmOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: 16,
+          }}
+          onClick={() => !busy && setConfirmOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: colors.card,
+              padding: 20,
+              borderRadius: 10,
+              maxWidth: 440,
+              width: "100%",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+            }}
+          >
+            <h3 style={S.h3}>Подтверждение</h3>
+            <p>
+              Продлить подписку <b>всем активным подписчикам</b> на{" "}
+              <b>+{days} дн.</b>?
+            </p>
+            <p style={S.muted}>Это действие нельзя откатить одной кнопкой.</p>
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                marginTop: 12,
+                justifyContent: "flex-end",
+              }}
+            >
+              <button
+                type="button"
+                style={S.btnSecondary}
+                onClick={() => setConfirmOpen(false)}
+                disabled={busy}
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                style={S.btn}
+                onClick={submit}
+                disabled={busy}
+              >
+                {busy ? "Продлеваем…" : "Да, продлить"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BroadcastCard() {
+  const [text, setText] = useState<string>("");
+  const [job, setJob] = useState<BroadcastJobStatus | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const loadStatus = async () => {
+    try {
+      const r = await api.broadcastStatus();
+      setJob(r.job);
+    } catch (e) {
+      // Тихо — статус может падать
+    }
+  };
+
+  // При монтировании загрузим статус один раз
+  useEffect(() => {
+    loadStatus();
+  }, []);
+
+  // Поллинг прогресса раз в секунду пока is_running
+  useEffect(() => {
+    if (!job || !job.is_running) return;
+    const t = setInterval(loadStatus, 1000);
+    return () => clearInterval(t);
+  }, [job?.is_running]);
+
+  const start = async () => {
+    if (!text.trim()) return;
+    setStarting(true);
+    setErr(null);
+    setOk(null);
+    try {
+      await api.startBroadcast(text);
+      setOk("Рассылка запущена");
+      setConfirmOpen(false);
+      setTimeout(loadStatus, 200);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const cancel = async () => {
+    setErr(null);
+    setOk(null);
+    try {
+      await api.cancelBroadcast();
+      setOk("Запрос на отмену отправлен");
+      setTimeout(loadStatus, 200);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const running = !!job?.is_running;
+  const progressPct =
+    job && job.total > 0
+      ? Math.min(100, Math.round(((job.sent + job.failed + job.blocked) / job.total) * 100))
+      : 0;
+
+  return (
+    <div style={S.card}>
+      <h3 style={S.h3}>Рассылка всем пользователям</h3>
+      <p style={S.muted}>
+        Сообщение будет отправлено всем незаблокированным пользователям через
+        бота. Ограничение скорости — 25 сообщ/сек (чтобы не попасть в лимит
+        Telegram). Заблокировавшие бота помечаются автоматически.
+      </p>
+      {ok && <div style={{ ...S.success, marginBottom: 10 }}>{ok}</div>}
+      {err && <div style={{ ...S.error, marginBottom: 10 }}>{err}</div>}
+
+      <label style={S.label}>Текст сообщения (до 4000 символов, HTML)</label>
+      <textarea
+        style={{
+          ...S.input,
+          minHeight: 140,
+          fontFamily: "inherit",
+          resize: "vertical",
+          marginBottom: 6,
+        }}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Например: Привет! Сегодня мы запустили новый режим тренировки..."
+        maxLength={4000}
+        disabled={running}
+      />
+      <div style={{ ...S.muted, fontSize: 12, marginBottom: 12 }}>
+        {text.length} / 4000
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          style={S.btn}
+          disabled={running || !text.trim() || starting}
+          onClick={() => setConfirmOpen(true)}
+        >
+          {starting ? "Запускаем…" : "Запустить рассылку"}
+        </button>
+        {running && (
+          <button type="button" style={S.btnDanger} onClick={cancel}>
+            Отменить
+          </button>
+        )}
+        <button type="button" style={S.btnSecondary} onClick={loadStatus}>
+          Обновить статус
+        </button>
+      </div>
+
+      {/* ── Прогресс / история ── */}
+      {job && (
+        <div
+          style={{
+            marginTop: 16,
+            padding: 12,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 8,
+          }}
+        >
+          <div style={{ fontSize: 14, marginBottom: 8 }}>
+            <b>Статус:</b>{" "}
+            {job.is_running
+              ? "идёт рассылка…"
+              : job.cancelled
+              ? "отменена"
+              : job.error
+              ? "завершена с ошибкой"
+              : "завершена"}{" "}
+            <span style={S.muted}>· job {job.job_id}</span>
+          </div>
+
+          <div
+            style={{
+              width: "100%",
+              height: 10,
+              background: "#eee",
+              borderRadius: 999,
+              overflow: "hidden",
+              marginBottom: 8,
+            }}
+          >
+            <div
+              style={{
+                width: `${progressPct}%`,
+                height: "100%",
+                background: colors.primary,
+                transition: "width 0.5s",
+              }}
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 14 }}>
+            <span>
+              Доставлено: <b>{job.sent}</b>
+            </span>
+            <span>
+              Заблокировали бота: <b>{job.blocked}</b>
+            </span>
+            <span>
+              Ошибок: <b>{job.failed}</b>
+            </span>
+            <span>
+              Всего: <b>{job.total}</b>
+            </span>
+            <span style={S.muted}>{progressPct}%</span>
+          </div>
+
+          {job.error && (
+            <div style={{ ...S.error, marginTop: 8 }}>Ошибка: {job.error}</div>
+          )}
+          {job.text_preview && (
+            <div style={{ marginTop: 10, fontSize: 13 }}>
+              <div style={S.muted}>Превью текста:</div>
+              <div
+                style={{
+                  whiteSpace: "pre-wrap",
+                  padding: 8,
+                  background: "#f7f7f7",
+                  borderRadius: 6,
+                  marginTop: 4,
+                }}
+              >
+                {job.text_preview}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {confirmOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: 16,
+          }}
+          onClick={() => !starting && setConfirmOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: colors.card,
+              padding: 20,
+              borderRadius: 10,
+              maxWidth: 520,
+              width: "100%",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+            }}
+          >
+            <h3 style={S.h3}>Подтвердите рассылку</h3>
+            <p>Сообщение уйдёт всем незаблокированным пользователям:</p>
+            <div
+              style={{
+                whiteSpace: "pre-wrap",
+                padding: 10,
+                background: "#f7f7f7",
+                borderRadius: 6,
+                fontSize: 13,
+                maxHeight: 240,
+                overflow: "auto",
+                marginBottom: 12,
+              }}
+            >
+              {text}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                style={S.btnSecondary}
+                onClick={() => setConfirmOpen(false)}
+                disabled={starting}
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                style={S.btn}
+                onClick={start}
+                disabled={starting || !text.trim()}
+              >
+                {starting ? "Запускаем…" : "Да, отправить всем"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

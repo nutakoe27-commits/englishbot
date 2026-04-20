@@ -305,3 +305,66 @@ class Repo:
             select(Payment).order_by(Payment.created_at.desc()).limit(limit)
         )
         return list(res.scalars().all())
+
+    # ─── Массовые операции ──────────────────────────────────────────────
+    async def get_active_subscribers(self) -> Sequence[User]:
+        """Юзеры с активной подпиской сейчас (subscription_until > now)."""
+        now = utcnow()
+        res = await self.s.execute(
+            select(User).where(User.subscription_until > now)
+        )
+        return list(res.scalars().all())
+
+    async def get_broadcast_recipients(self) -> Sequence[User]:
+        """Получатели рассылки: все незаблокированные юзеры с tg_id."""
+        res = await self.s.execute(
+            select(User).where(
+                User.is_blocked.is_(False),
+                User.tg_id.is_not(None),
+            )
+        )
+        return list(res.scalars().all())
+
+    async def bulk_extend_active_subscriptions(
+        self,
+        *,
+        days: int,
+        plan: str = "admin_bulk",
+        granted_by_tg_id: Optional[int] = None,
+        notes: Optional[str] = None,
+    ) -> int:
+        """Продлить подписку всем активным подписчикам на N дней.
+
+        Возвращает количество затронутых юзеров. Создаёт Payment-запись
+        для каждого для аудита.
+        """
+        now = utcnow()
+        active = await self.get_active_subscribers()
+        count = 0
+        for u in active:
+            base = (
+                u.subscription_until
+                if u.subscription_until and u.subscription_until > now
+                else now
+            )
+            new_until = base + timedelta(days=days)
+            await self.s.execute(
+                update(User)
+                .where(User.id == u.id)
+                .values(subscription_until=new_until)
+            )
+            self.s.add(
+                Payment(
+                    user_id=u.id,
+                    amount_rub=0.0,
+                    plan=plan,
+                    status="succeeded",
+                    days_granted=days,
+                    granted_by_tg_id=granted_by_tg_id,
+                    notes=notes,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            count += 1
+        return count
