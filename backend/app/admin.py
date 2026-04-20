@@ -135,6 +135,21 @@ class BroadcastStartRequest(BaseModel):
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
+async def _user_to_detail(repo: Repo, u) -> UserDetail:
+    """Полный профиль юзера — вернуть после POST-действия, чтобы фронт сразу обновился."""
+    brief = await _user_to_brief(repo, u)
+    used = await repo.get_used_seconds_today(u.id)
+    free_seconds = await repo.get_kv_int("free_seconds_per_day", 600)
+    return UserDetail(
+        **brief.model_dump(),
+        language_code=u.language_code,
+        reminder_enabled=u.reminder_enabled,
+        reminder_hour_msk=u.reminder_time.hour if u.reminder_time else 19,
+        used_seconds_today=used,
+        free_seconds_per_day=free_seconds,
+    )
+
+
 async def _user_to_brief(repo: Repo, u) -> UserBrief:
     has_sub = await repo.has_active_subscription(u)
     return UserBrief(
@@ -214,24 +229,15 @@ async def user_detail(user_id: int) -> UserDetail:
         u = await repo.get_user_by_id(user_id)
         if u is None:
             raise HTTPException(404, "Юзер не найден")
-        brief = await _user_to_brief(repo, u)
-        used = await repo.get_used_seconds_today(u.id)
-        free_seconds = await repo.get_kv_int("free_seconds_per_day", 600)
-        return UserDetail(
-            **brief.model_dump(),
-            language_code=u.language_code,
-            reminder_enabled=u.reminder_enabled,
-            reminder_hour_msk=u.reminder_time.hour if u.reminder_time else 19,
-            used_seconds_today=used,
-            free_seconds_per_day=free_seconds,
-        )
+        return await _user_to_detail(repo, u)
 
 
 @router.post(
     "/users/{user_id}/grant-subscription",
+    response_model=UserDetail,
     dependencies=[Depends(require_admin_token)],
 )
-async def grant_subscription(user_id: int, req: GrantRequest) -> dict:
+async def grant_subscription(user_id: int, req: GrantRequest) -> UserDetail:
     async with db_session() as s:
         repo = Repo(s)
         u = await repo.get_user_by_id(user_id)
@@ -245,33 +251,32 @@ async def grant_subscription(user_id: int, req: GrantRequest) -> dict:
             amount_rub=req.amount_rub,
             notes=req.notes,
         )
-        # Прочитаем обновлённого юзера
         u2 = await repo.get_user_by_id(user_id)
-        return {
-            "ok": True,
-            "subscription_until": (
-                u2.subscription_until.isoformat() if u2.subscription_until else None
-            ),
-        }
+        return await _user_to_detail(repo, u2)
 
 
 @router.post(
-    "/users/{user_id}/block", dependencies=[Depends(require_admin_token)]
+    "/users/{user_id}/block",
+    response_model=UserDetail,
+    dependencies=[Depends(require_admin_token)],
 )
-async def block_user(user_id: int, req: BlockRequest) -> dict:
+async def block_user(user_id: int, req: BlockRequest) -> UserDetail:
     async with db_session() as s:
         repo = Repo(s)
         u = await repo.get_user_by_id(user_id)
         if u is None:
             raise HTTPException(404, "Юзер не найден")
         await repo.set_blocked(u, req.blocked)
-        return {"ok": True, "blocked": req.blocked}
+        u2 = await repo.get_user_by_id(user_id)
+        return await _user_to_detail(repo, u2)
 
 
 @router.post(
-    "/users/{user_id}/reminder", dependencies=[Depends(require_admin_token)]
+    "/users/{user_id}/reminder",
+    response_model=UserDetail,
+    dependencies=[Depends(require_admin_token)],
 )
-async def update_reminder(user_id: int, req: ReminderRequest) -> dict:
+async def update_reminder(user_id: int, req: ReminderRequest) -> UserDetail:
     async with db_session() as s:
         repo = Repo(s)
         u = await repo.get_user_by_id(user_id)
@@ -280,7 +285,8 @@ async def update_reminder(user_id: int, req: ReminderRequest) -> dict:
         await repo.set_reminder(
             u, enabled=req.enabled, reminder_hour=req.hour_msk
         )
-        return {"ok": True}
+        u2 = await repo.get_user_by_id(user_id)
+        return await _user_to_detail(repo, u2)
 
 
 @router.get(
