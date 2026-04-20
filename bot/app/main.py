@@ -16,6 +16,7 @@ from aiogram.types import (
 from dotenv import load_dotenv
 
 from .reminders import (
+    get_user_profile,
     get_user_reminder,
     is_db_ready,
     reminders_loop,
@@ -37,6 +38,11 @@ MINIAPP_URL: str = os.getenv("MINIAPP_URL", "https://englishbot.krichigindocs.ru
 # Источник истины сейчас — эти константы (бот не ходит в DB).
 PRICE_MONTHLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_MONTHLY_RUB", "699"))
 PRICE_YEARLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_YEARLY_RUB", "4990"))
+
+# Дневной лимит для free-тарифа (секунды). Источник истины — settings_kv
+# в backend (ключ free_seconds_per_day), здесь держим фолбэк-значение для
+# отображения в профиле.
+FREE_DAILY_SECONDS = int(os.getenv("FREE_DAILY_SECONDS", "600"))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -190,16 +196,182 @@ async def cmd_help(message: Message) -> None:
 
 
 # ─── /profile ────────────────────────────────────────────────────────────────
+def _fmt_minutes(seconds: int) -> str:
+    """600 → '10 мин', 45 → '0.8 мин', 3725 → '62 мин'."""
+    if seconds <= 0:
+        return "0 мин"
+    minutes = seconds / 60
+    if minutes < 10:
+        return f"{minutes:.1f} мин"
+    return f"{int(round(minutes))} мин"
+
+
+def _fmt_total_practice(seconds: int) -> str:
+    """Для суммарной статистики: '5 ч 42 мин' или '18 мин'."""
+    if seconds < 60:
+        return "меньше минуты"
+    total_min = seconds // 60
+    if total_min < 60:
+        return f"{total_min} мин"
+    hours = total_min // 60
+    mins = total_min % 60
+    if mins == 0:
+        return f"{hours} ч"
+    return f"{hours} ч {mins} мин"
+
+
+def _fmt_subscription_until(dt) -> str:
+    """datetime → '21.05.2026'. None → '—'."""
+    if dt is None:
+        return "—"
+    return dt.strftime("%d.%m.%Y")
+
+
+def _profile_keyboard(has_sub: bool) -> InlineKeyboardMarkup:
+    sub_text = "⭐ Продлить подписку" if has_sub else "⭐ Оформить подписку"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎤 Начать разговор",
+                    web_app=WebAppInfo(url=MINIAPP_URL),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=sub_text,
+                    callback_data="profile:subscribe",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⏰ Настроить напоминание",
+                    callback_data="reminder:settings",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📘 Как правильно заниматься",
+                    callback_data="show_guide",
+                )
+            ],
+        ]
+    )
+
+
+def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
+    """Собирает HTML-текст карточки профиля."""
+    from_user = message.from_user
+    tg_id = from_user.id if from_user else 0
+
+    first_name = (profile or {}).get("first_name") or (
+        from_user.first_name if from_user else None
+    ) or "Друг"
+    username = (profile or {}).get("username") or (
+        from_user.username if from_user else None
+    )
+    username_line = f"@{username}" if username else "<i>username не задан в Telegram</i>"
+
+    lines = [
+        "👤 <b>Твой профиль</b>",
+        "",
+        f"<b>{first_name}</b>",
+        username_line,
+        f"<code>ID: {tg_id}</code>",
+        "",
+    ]
+
+    if profile is None:
+        lines += [
+            "⏳ Подробная статистика появится после первого разговора.",
+            "Нажми «🎤 Начать разговор» и запусти мини-апп.",
+        ]
+        return "\n".join(lines)
+
+    # Подписка
+    lines.append("<b>⭐ Подписка</b>")
+    if profile["has_subscription"]:
+        until = _fmt_subscription_until(profile["subscription_until"])
+        days = profile["days_left"]
+        lines.append(f"Premium — активна до <b>{until}</b>")
+        if days > 0:
+            lines.append(f"Осталось: <b>{days}</b> дн.")
+    else:
+        lines.append("Free — бесплатный тариф")
+    lines.append("")
+
+    # Сегодня
+    used_today = profile["used_seconds_today"]
+    lines.append("<b>⏱ Сегодня</b>")
+    if profile["has_subscription"]:
+        lines.append(f"Практика: <b>{_fmt_minutes(used_today)}</b> — без лимитов")
+    else:
+        limit_min = FREE_DAILY_SECONDS // 60
+        left_sec = max(0, FREE_DAILY_SECONDS - used_today)
+        lines.append(
+            f"Практика: <b>{_fmt_minutes(used_today)}</b> из {limit_min} мин"
+        )
+        if left_sec > 0:
+            lines.append(
+                f"Осталось: <b>{_fmt_minutes(left_sec)}</b> (сброс в 00:00 МСК)"
+            )
+        else:
+            lines.append(
+                "Дневной лимит исчерпан — продолжи завтра или оформи подписку."
+            )
+    lines.append("")
+
+    # Всего практики
+    total_sec = profile["used_seconds_total"]
+    lines.append("<b>📈 Всего практики</b>")
+    lines.append(f"<b>{_fmt_total_practice(total_sec)}</b> за всё время")
+    lines.append("")
+
+    # Напоминания
+    lines.append("<b>⏰ Напоминания</b>")
+    if profile["reminder_enabled"]:
+        hour = profile["reminder_hour"]
+        lines.append(f"Включены — ежедневно в <b>{hour:02d}:00</b> МСК")
+    else:
+        lines.append("Отключены")
+
+    return "\n".join(lines)
+
+
 @dp.message(Command("profile"))
 async def cmd_profile(message: Message) -> None:
+    if not message.from_user:
+        return
+    try:
+        profile = await asyncio.wait_for(
+            get_user_profile(message.from_user.id),
+            timeout=5.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("[profile] get_user_profile превысил timeout 5с")
+        profile = None
+    except Exception as exc:
+        logger.warning("[profile] get_user_profile упал: %s", exc)
+        profile = None
+
+    text = _build_profile_text(message, profile)
+    has_sub = bool(profile and profile.get("has_subscription"))
     await message.answer(
-        text=(
-            "👤 <b>Твой профиль</b>\n\n"
-            "⏳ Скоро: твой прогресс, уровень английского "
-            "и статистика занятий появятся здесь."
-        ),
+        text=text,
+        reply_markup=_profile_keyboard(has_sub),
         parse_mode="HTML",
     )
+
+
+@dp.callback_query(lambda c: c.data == "profile:subscribe")
+async def cb_profile_subscribe(query: CallbackQuery) -> None:
+    await query.answer()
+    if query.message:
+        await query.message.answer(
+            text=SUBSCRIBE_TEXT,
+            reply_markup=_subscribe_keyboard(),
+            parse_mode="HTML",
+        )
 
 
 # ─── /subscribe ──────────────────────────────────────────────────────────────
