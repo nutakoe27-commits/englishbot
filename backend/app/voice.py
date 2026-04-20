@@ -41,6 +41,46 @@ OUTPUT_SAMPLE_RATE = 24000
 # История диалога — храним несколько последних реплик для контекста LLM.
 MAX_HISTORY_TURNS = 6
 
+# Период «тика» учёта времени для бесплатных юзеров (секунды).
+USAGE_HEARTBEAT_SECONDS = 5
+
+
+async def _usage_watchdog(websocket: WebSocket, limits_ctx) -> None:
+    """Каждые USAGE_HEARTBEAT_SECONDS списывает порцию с дневного лимита.
+
+    Если у юзера активная подписка — продолжает писать в daily_usage
+    (для аналитики), но никогда не закрывает WS.
+    Если бесплатный и лимит исчерпан — отправляет {"type":"limit_reached"}
+    и закрывает WS кодом 4004.
+    """
+    if limits_ctx is None:
+        return
+    try:
+        while True:
+            await asyncio.sleep(USAGE_HEARTBEAT_SECONDS)
+            if websocket.client_state != WebSocketState.CONNECTED:
+                return
+            await limits_ctx.heartbeat(USAGE_HEARTBEAT_SECONDS)
+            if limits_ctx.is_exceeded():
+                logger.warning(
+                    "[limits] бесплатный лимит исчерпан, закрываем WS user_db_id=%s",
+                    limits_ctx.user_db_id,
+                )
+                try:
+                    await websocket.send_json(
+                        {"type": "limit_reached", **limits_ctx.snapshot().to_dict()}
+                    )
+                    await websocket.close(code=4004, reason="Daily limit reached")
+                except Exception:
+                    pass
+                return
+    except asyncio.CancelledError:
+        # Нормальный путь — сессия закрылась раньше тика
+        raise
+    except Exception as exc:
+        logger.error("[limits] watchdog упал: %s", exc, exc_info=True)
+
+
 
 # ─── Хелпер: синтез + отправка в WebSocket ───────────────────────────
 
@@ -71,6 +111,7 @@ async def _run_chat_session(
     llm,
     system_prompt: str,
     session_settings: SessionSettings,
+    limits_ctx=None,
 ) -> None:
     """Чисто текстовый диалог: клиент шлёт user_text — сервер отвечает text без озвучки.
 
@@ -81,6 +122,12 @@ async def _run_chat_session(
     """
     logger.warning("[chat] старт текстовой сессии")
     history: list[dict] = []
+
+    watchdog: Optional[asyncio.Task] = (
+        asyncio.create_task(_usage_watchdog(websocket, limits_ctx))
+        if limits_ctx is not None
+        else None
+    )
 
     # Приветствие — только текстом, без TTS.
     greeting = build_greeting(session_settings)
@@ -165,12 +212,18 @@ async def _run_chat_session(
     except Exception as exc:
         logger.error("[chat] ошибка в цикле: %s", exc, exc_info=True)
     finally:
+        if watchdog and not watchdog.done():
+            watchdog.cancel()
+            try:
+                await watchdog
+            except asyncio.CancelledError:
+                pass
         logger.warning("[chat] сессия завершена для %s", websocket.client)
 
 
 # ─── Оркестратор WebSocket-сессии ─────────────────────────────────────────────
 
-async def run_voice_session(websocket: WebSocket) -> None:
+async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
     """
     Основной цикл голосового диалога.
 
@@ -211,6 +264,7 @@ async def run_voice_session(websocket: WebSocket) -> None:
             llm=llm,
             system_prompt=system_prompt,
             session_settings=session_settings,
+            limits_ctx=limits_ctx,
         )
         return
 
@@ -436,14 +490,23 @@ async def run_voice_session(websocket: WebSocket) -> None:
         except Exception as exc:
             logger.error("Ошибка в process_stt: %s", exc, exc_info=True)
 
-    # Запускаем две корутины параллельно
+    # Запускаем три корутины параллельно: приём, обработка, и watchdog лимитов
     recv_task = asyncio.create_task(receive_from_client(), name="recv_from_client")
     proc_task = asyncio.create_task(process_stt(), name="process_stt")
+    watchdog_task: Optional[asyncio.Task] = (
+        asyncio.create_task(_usage_watchdog(websocket, limits_ctx), name="usage_watchdog")
+        if limits_ctx is not None
+        else None
+    )
 
     try:
-        # Ждём, пока любая из задач не завершится (обычно — disconnect)
+        wait_set = {recv_task, proc_task}
+        if watchdog_task is not None:
+            wait_set.add(watchdog_task)
+        # Ждём, пока любая из задач не завершится (обычно — disconnect или
+        # лимит-watchdog при превышении).
         done, pending = await asyncio.wait(
-            {recv_task, proc_task},
+            wait_set,
             return_when=asyncio.FIRST_COMPLETED,
         )
         for task in pending:

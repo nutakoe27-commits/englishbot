@@ -44,7 +44,12 @@ services:
 
   # ── Mini App — React SPA (nginx внутри контейнера) ────────────────────────
   miniapp:
-    build: ./miniapp
+    build:
+      context: ./miniapp
+      args:
+        # Username бота без '@' — используется в LockScreen для deep-link в /subscribe.
+        # Значение впечатывается в JS-бандл на этапе build (Vite).
+        VITE_BOT_USERNAME: ${BOT_USERNAME:-EnglishTutorBot}
     restart: unless-stopped
     ports:
       - "127.0.0.1:8081:80"

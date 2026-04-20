@@ -3,9 +3,10 @@ import logging
 import os
 
 from aiogram import Bot, Dispatcher
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     BotCommand,
+    CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -23,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN: str = os.environ["BOT_TOKEN"]
 MINIAPP_URL: str = os.getenv("MINIAPP_URL", "https://englishbot.krichigindocs.ru")
+
+# Цены синхронизированы с settings_kv (DB) и LockScreen в mini app.
+# Источник истины сейчас — эти константы (бот не ходит в DB).
+PRICE_MONTHLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_MONTHLY_RUB", "699"))
+PRICE_YEARLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_YEARLY_RUB", "4990"))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -49,7 +55,17 @@ def _miniapp_keyboard() -> InlineKeyboardMarkup:
 
 # ─── /start ──────────────────────────────────────────────────────────────────
 @dp.message(Command("start"))
-async def cmd_start(message: Message) -> None:
+async def cmd_start(message: Message, command: CommandObject) -> None:
+    # Deep-link из mini app: «/start subscribe» — сразу показываем экран подписки
+    payload = (command.args or "").strip().lower()
+    if payload == "subscribe":
+        await message.answer(
+            text=SUBSCRIBE_TEXT,
+            parse_mode="HTML",
+            reply_markup=_subscribe_keyboard(),
+        )
+        return
+
     user_name = message.from_user.first_name if message.from_user else "друг"
 
     await message.answer(
@@ -178,16 +194,71 @@ async def cmd_profile(message: Message) -> None:
 
 
 # ─── /subscribe ──────────────────────────────────────────────────────────────
+SUBSCRIBE_TEXT = (
+    "⭐ <b>Подписка English Tutor</b>\n\n"
+    "На бесплатном тарифе — <b>10 минут в день</b> практики. "
+    "Лимит сбрасывается в полночь по МСК.\n\n"
+    "С подпиской — <b>без лимитов</b> и круглые сутки:\n"
+    f"• <b>{PRICE_MONTHLY_RUB} ₽ / месяц</b>\n"
+    f"• <b>{PRICE_YEARLY_RUB} ₽ / год</b> (выгоднее на ~40%)\n\n"
+    "⏳ <i>Оплата будет доступна ближайшими днями — мы сейчас подключаем платёжную "
+    "систему. Нажми кнопку ниже — мы сообщим, как только всё будет готово.</i>"
+)
+
+
+def _subscribe_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"💳 Оплатить месяц — {PRICE_MONTHLY_RUB} ₽",
+                    callback_data="subscribe:monthly",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"💳 Оплатить год — {PRICE_YEARLY_RUB} ₽",
+                    callback_data="subscribe:yearly",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🎙 Начать разговор",
+                    web_app=WebAppInfo(url=MINIAPP_URL),
+                )
+            ],
+        ]
+    )
+
+
 @dp.message(Command("subscribe"))
 async def cmd_subscribe(message: Message) -> None:
     await message.answer(
-        text=(
-            "⭐ <b>Подписка</b>\n\n"
-            "⏳ Скоро: расширенный доступ к AI-репетитору. "
-            "Следи за обновлениями!"
-        ),
+        text=SUBSCRIBE_TEXT,
         parse_mode="HTML",
+        reply_markup=_subscribe_keyboard(),
     )
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("subscribe:"))
+async def cb_subscribe_stub(callback: CallbackQuery) -> None:
+    """Заглушка: оплата ещё не подключена. Просто сообщаем юзеру."""
+    await callback.answer(
+        "Оплата скоро будет доступна — мы сообщим в боте.",
+        show_alert=True,
+    )
+    if callback.message:
+        plan = (callback.data or "").split(":", 1)[-1]
+        plan_label = "месяц" if plan == "monthly" else "год"
+        price = PRICE_MONTHLY_RUB if plan == "monthly" else PRICE_YEARLY_RUB
+        await callback.message.answer(
+            text=(
+                f"Ты выбрал тариф «<b>{plan_label}</b>» — <b>{price} ₽</b>.\n\n"
+                "Платёжная система подключается — пришлём ссылку на оплату в этот чат, "
+                "как только всё будет готово."
+            ),
+            parse_mode="HTML",
+        )
 
 
 async def _set_bot_commands() -> None:
