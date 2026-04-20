@@ -51,7 +51,7 @@ const MAX_LOG_ENTRIES = 20;
 // Пробрасывается на этапе Docker build через VITE_BOT_USERNAME (см. docker-compose.yml).
 // Указывать БЕЗ символа '@'.
 const BOT_USERNAME =
-  (import.meta.env.VITE_BOT_USERNAME as string | undefined) || "EnglishTutorBot";
+  (import.meta.env.VITE_BOT_USERNAME as string | undefined) || "kmo_ai_english_bot";
 
 // ─── Лимиты ───────────────────────────────────────────────────────────────────
 

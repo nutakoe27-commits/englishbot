@@ -53,7 +53,7 @@ services:
       args:
         # Username бота без '@' — используется в LockScreen для deep-link в /subscribe.
         # Значение впечатывается в JS-бандл на этапе build (Vite).
-        VITE_BOT_USERNAME: ${BOT_USERNAME:-EnglishTutorBot}
+        VITE_BOT_USERNAME: ${BOT_USERNAME:-kmo_ai_english_bot}
     restart: unless-stopped
     ports:
       - "127.0.0.1:8081:80"

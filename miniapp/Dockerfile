@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Build-args → ENV для Vite. Vite впечатывает значения import.meta.env.VITE_*
 # в бандл на этапе build, поэтому их нужно передавать именно здесь.
-ARG VITE_BOT_USERNAME=EnglishTutorBot
+ARG VITE_BOT_USERNAME=kmo_ai_english_bot
 ENV VITE_BOT_USERNAME=$VITE_BOT_USERNAME
 
 # Устанавливаем зависимости
