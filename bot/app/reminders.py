@@ -27,7 +27,7 @@ from aiogram.types import (
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, Integer, String, Time, func
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Integer, String, Text, Time, func
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,14 @@ class _DailyUsage(_Base):
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
     used_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class _SettingKV(_Base):
+    __tablename__ = "settings_kv"
+
+    key: Mapped[str] = mapped_column("key", String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
@@ -127,6 +135,52 @@ def _reminder_keyboard(miniapp_url: str) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+# ─── Maintenance mode (читается из settings_kv) ────────────────────────────
+
+_MAINT_CACHE: dict = {"ts": 0.0, "enabled": False, "message": ""}
+_MAINT_TTL_SEC = 5.0  # короткий кеш, чтобы не бить в БД на каждый апдейт
+
+_DEFAULT_MAINT_MESSAGE = (
+    "🔧 Бот временно недоступен — ведутся технические работы. "
+    "Возвращайся через 10–15 минут."
+)
+
+
+async def get_maintenance_status() -> tuple[bool, str]:
+    """Читает maintenance_mode и maintenance_message из settings_kv.
+
+    Кешируется на 5 секунд — чтобы высоконагруженный бот не слал DoS в MySQL.
+    При проблемах с БД отдаёт (False, "") — fail-open (бот продолжает
+    работать), чтобы сбой БД не ломал весь бот.
+    """
+    import time as _time
+
+    now = _time.time()
+    if now - _MAINT_CACHE["ts"] < _MAINT_TTL_SEC:
+        return bool(_MAINT_CACHE["enabled"]), str(_MAINT_CACHE["message"])
+
+    if not is_db_ready():
+        return False, ""
+
+    assert _SessionMaker is not None
+    try:
+        async with _SessionMaker() as s:
+            res = await s.execute(
+                select(_SettingKV).where(
+                    _SettingKV.key.in_(["maintenance_mode", "maintenance_message"])
+                )
+            )
+            rows = {r.key: r.value for r in res.scalars().all()}
+        raw = rows.get("maintenance_mode", "0") or "0"
+        enabled = raw.strip().lower() in ("1", "true", "yes", "on")
+        message = rows.get("maintenance_message") or _DEFAULT_MAINT_MESSAGE
+        _MAINT_CACHE.update({"ts": now, "enabled": enabled, "message": message})
+        return enabled, message
+    except Exception as exc:
+        logger.warning("[maintenance] не удалось читать флаг: %s", exc)
+        return False, ""
 
 
 async def get_user_reminder(tg_id: int) -> Optional[tuple[bool, int]]:

@@ -11,11 +11,13 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    Update,
     WebAppInfo,
 )
 from dotenv import load_dotenv
 
 from .reminders import (
+    get_maintenance_status,
     get_user_profile,
     get_user_reminder,
     is_db_ready,
@@ -44,8 +46,55 @@ PRICE_YEARLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_YEARLY_RUB", "4990"))
 # отображения в профиле.
 FREE_DAILY_SECONDS = int(os.getenv("FREE_DAILY_SECONDS", "600"))
 
+# ADMIN_IDS (через запятую) — эти tg_id минуют maintenance-гейт.
+_ADMIN_IDS: set[int] = {
+    int(x.strip())
+    for x in os.getenv("ADMIN_IDS", "").split(",")
+    if x.strip().isdigit()
+}
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+
+# ─── Maintenance middleware ───────────────────────────────────────────
+# Если settings_kv.maintenance_mode = '1', бот всем (кроме админов) отвечает
+# майнтенанс-сообщением и не пускает апдейт дальше по handler chain.
+# Админы (из ADMIN_IDS) могут тестировать бота во время тех.работ.
+
+@dp.update.outer_middleware()
+async def _maintenance_middleware(handler, event: Update, data: dict):
+    # Извлекаем tg_id и хендл для ответа в зависимости от типа апдейта
+    tg_id: Optional[int] = None
+    message: Optional[Message] = None
+    callback: Optional[CallbackQuery] = None
+
+    if event.message and event.message.from_user:
+        tg_id = event.message.from_user.id
+        message = event.message
+    elif event.callback_query and event.callback_query.from_user:
+        tg_id = event.callback_query.from_user.id
+        callback = event.callback_query
+
+    # Админы проходят всегда
+    if tg_id is not None and tg_id in _ADMIN_IDS:
+        return await handler(event, data)
+
+    enabled, message_text = await get_maintenance_status()
+    if not enabled:
+        return await handler(event, data)
+
+    # Тех.работы активны — отвечаем сообщением, handler chain не зовём
+    try:
+        if message is not None:
+            await message.answer(message_text)
+        elif callback is not None:
+            # alert=True — модальный попап, чтобы точно увидели
+            await callback.answer(message_text, show_alert=True)
+    except Exception as exc:
+        logger.warning("[maintenance] не удалось ответить: %s", exc)
+    logger.info("[maintenance] апдейт от tg_id=%s заблокирован", tg_id)
+    return None
 
 
 def _miniapp_keyboard() -> InlineKeyboardMarkup:
