@@ -560,6 +560,10 @@ function SendMessageCard({ user }: { user: UserDetail }) {
     e.preventDefault();
     const t = text.trim();
     if (!t) return;
+    if (!user?.id) {
+      setErr("Не удалось определить id юзера — обновите страницу.");
+      return;
+    }
     setBusy(true);
     setErr(null);
     setOk(null);
