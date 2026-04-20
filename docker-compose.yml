@@ -36,6 +36,10 @@ services:
     build: ./bot
     restart: unless-stopped
     env_file: .env
+    # Бот тянется напрямую в MySQL на хосте для ежедневных напоминаний
+    # и чтения/записи users.reminder_*. DATABASE_URL берётся из .env.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       backend:
         condition: service_healthy
