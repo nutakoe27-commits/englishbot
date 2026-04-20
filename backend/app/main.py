@@ -10,6 +10,7 @@ main.py — точка входа FastAPI-приложения.
 import hashlib
 import hmac
 import json
+import asyncio
 import logging
 import os
 import urllib.parse
@@ -194,9 +195,13 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
     )
 
     # ── Проверка maintenance + лимиты (только если БД поднята) ──────────
+    # Важно: весь блок под таймаутом — если MySQL висит/пул исчерпан,
+    # лучше пропустить человека без лимитов, чем вечно держать сокет молча.
     limits_ctx: Optional[LimitsContext] = None
     if user_info and settings.DATABASE_URL:
-        try:
+        logger.info("[WS] начинаю проверку maintenance/лимитов")
+
+        async def _check_db_preflight() -> Optional[LimitsContext]:
             async with db_session() as session:
                 from .db import Repo
                 repo = Repo(session)
@@ -211,9 +216,9 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
                             {"type": "maintenance", "message": msg}
                         )
                         await websocket.close(code=4002, reason="Maintenance mode")
-                        return
+                        return None
                 # 2. Upsert + лимиты
-                limits_ctx = await build_limits_context(
+                return await build_limits_context(
                     repo=repo,
                     repo_factory=db_session,
                     tg_id=int(user_info["id"]),
@@ -222,6 +227,25 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
                     last_name=user_info.get("last_name"),
                     language_code=user_info.get("language_code"),
                 )
+
+        try:
+            # 5 сек на весь preflight — больше не ждём.
+            limits_ctx = await asyncio.wait_for(_check_db_preflight(), timeout=5.0)
+            if limits_ctx is None and websocket.client_state.name != "CONNECTED":
+                # Попали в ветку maintenance и сокет уже закрыт — выходим.
+                return
+            logger.info(
+                "[WS] preflight готов: has_sub=%s blocked=%s remaining=%s",
+                getattr(limits_ctx, "has_subscription", None),
+                getattr(limits_ctx, "is_blocked", None),
+                getattr(limits_ctx, "remaining_seconds", None),
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "[WS] preflight БД превысил 5 сек — продолжаем без лимитов для user_id=%s",
+                user_info.get("id"),
+            )
+            limits_ctx = None
         except Exception as exc:
             logger.error("Ошибка БД на connect: %s", exc, exc_info=True)
             limits_ctx = None  # fallback: лучше работать без лимитов, чем падать
