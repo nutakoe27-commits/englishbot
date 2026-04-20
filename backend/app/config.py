@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # Telegram ID админов через запятую: "123456,789012"
     ADMIN_IDS: str = ""
 
+    # Токен для админ-панели. Передаётся в заголовке X-Admin-Token.
+    # Генерируй разовым: openssl rand -hex 32
+    ADMIN_TOKEN: Optional[str] = None
+
     @property
     def admin_ids_list(self) -> list[int]:
         if not self.ADMIN_IDS:

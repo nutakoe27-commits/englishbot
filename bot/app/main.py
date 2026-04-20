@@ -14,6 +14,13 @@ from aiogram.types import (
 )
 from dotenv import load_dotenv
 
+from .reminders import (
+    get_user_reminder,
+    is_db_ready,
+    reminders_loop,
+    set_user_reminder,
+)
+
 load_dotenv()
 
 logging.basicConfig(
@@ -173,6 +180,7 @@ async def cmd_help(message: Message) -> None:
             "/guide — <b>как правильно заниматься</b> (прочитай обязательно)\n"
             "/profile — твой прогресс и статистика\n"
             "/subscribe — информация о подписке\n"
+            "/reminder — настройка ежедневного напоминания\n"
             "/help — эта справка\n\n"
             "Чтобы начать практику — нажми «🎤 Начать разговор» в /start."
         ),
@@ -240,6 +248,142 @@ async def cmd_subscribe(message: Message) -> None:
     )
 
 
+# ─── /reminder ───────────────────────────────────────────────────────────────
+REMINDER_HOURS = (8, 12, 15, 19, 21)
+
+
+def _reminder_settings_keyboard(current_hour: int, enabled: bool) -> InlineKeyboardMarkup:
+    """Клавиатура выбора часа напоминания + кнопка отключения."""
+    def _hour_btn(h: int) -> InlineKeyboardButton:
+        mark = "✅ " if (enabled and h == current_hour) else ""
+        return InlineKeyboardButton(
+            text=f"{mark}{h:02d}:00",
+            callback_data=f"reminder:hour:{h}",
+        )
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [_hour_btn(h) for h in REMINDER_HOURS[:3]],
+            [_hour_btn(h) for h in REMINDER_HOURS[3:]],
+            [
+                InlineKeyboardButton(
+                    text=("🔕 Отключить напоминания" if enabled else "🔔 Уже отключены"),
+                    callback_data="reminder:off",
+                )
+            ],
+        ]
+    )
+
+
+def _format_reminder_status(enabled: bool, hour_msk: int) -> str:
+    if enabled:
+        return (
+            "🔔 <b>Напоминания включены</b>\n\n"
+            f"Сейчас: каждый день в <b>{hour_msk:02d}:00 МСК</b>.\n\n"
+            "Регулярность важнее длительности — 10 минут каждый день "
+            "дадут больше, чем час раз в неделю. Можно поменять время "
+            "или выключить ниже."
+        )
+    return (
+        "🔕 <b>Напоминания выключены</b>\n\n"
+        "Выбери удобное время — я буду присылать короткий пинок "
+        "в этот чат раз в день."
+    )
+
+
+@dp.message(Command("reminder"))
+async def cmd_reminder(message: Message) -> None:
+    if not is_db_ready():
+        await message.answer(
+            "⚠️ Напоминания временно недоступны — мы уже чиним. Попробуй позже."
+        )
+        return
+    if not message.from_user:
+        return
+    tg_id = message.from_user.id
+    row = await get_user_reminder(tg_id)
+    if row is None:
+        # Пользователь ещё не заходил в mini app — записи в users нет.
+        await message.answer(
+            "Чтобы настроить напоминания, сначала открой приложение через "
+            "«🎤 Начать разговор» в /start — я запомню тебя.",
+            reply_markup=_miniapp_keyboard(),
+        )
+        return
+    enabled, hour_msk = row
+    await message.answer(
+        text=_format_reminder_status(enabled, hour_msk),
+        parse_mode="HTML",
+        reply_markup=_reminder_settings_keyboard(hour_msk, enabled),
+    )
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("reminder:"))
+async def cb_reminder(callback: CallbackQuery) -> None:
+    if not callback.from_user or not callback.data:
+        await callback.answer()
+        return
+    if not is_db_ready():
+        await callback.answer(
+            "Напоминания временно недоступны", show_alert=True
+        )
+        return
+
+    tg_id = callback.from_user.id
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "off":
+        ok = await set_user_reminder(tg_id, enabled=False)
+        if not ok:
+            await callback.answer(
+                "Сначала открой mini app — я тебя ещё не знаю.", show_alert=True
+            )
+            return
+        await callback.answer("Напоминания выключены")
+        row = await get_user_reminder(tg_id)
+        enabled, hour_msk = row if row else (False, 19)
+        if callback.message:
+            try:
+                await callback.message.edit_text(
+                    text=_format_reminder_status(enabled, hour_msk),
+                    parse_mode="HTML",
+                    reply_markup=_reminder_settings_keyboard(hour_msk, enabled),
+                )
+            except Exception:
+                pass
+        return
+
+    if action == "hour" and len(parts) == 3:
+        try:
+            hour = int(parts[2])
+        except ValueError:
+            await callback.answer()
+            return
+        if hour < 0 or hour > 23:
+            await callback.answer()
+            return
+        ok = await set_user_reminder(tg_id, enabled=True, hour_msk=hour)
+        if not ok:
+            await callback.answer(
+                "Сначала открой mini app — я тебя ещё не знаю.", show_alert=True
+            )
+            return
+        await callback.answer(f"Ок, буду напоминать в {hour:02d}:00 МСК")
+        if callback.message:
+            try:
+                await callback.message.edit_text(
+                    text=_format_reminder_status(True, hour),
+                    parse_mode="HTML",
+                    reply_markup=_reminder_settings_keyboard(hour, True),
+                )
+            except Exception:
+                pass
+        return
+
+    await callback.answer()
+
+
 @dp.callback_query(lambda c: c.data and c.data.startswith("subscribe:"))
 async def cb_subscribe_stub(callback: CallbackQuery) -> None:
     """Заглушка: оплата ещё не подключена. Просто сообщаем юзеру."""
@@ -269,6 +413,7 @@ async def _set_bot_commands() -> None:
             BotCommand(command="guide", description="Как заниматься (инструкция)"),
             BotCommand(command="profile", description="Мой профиль"),
             BotCommand(command="subscribe", description="Подписка"),
+            BotCommand(command="reminder", description="Напоминания"),
             BotCommand(command="help", description="Справка по командам"),
         ]
     )
@@ -278,6 +423,15 @@ async def _set_bot_commands() -> None:
 async def main() -> None:
     logger.info("Starting bot in long polling mode...")
     await _set_bot_commands()
+    # Фоновая задача: ежедневные напоминания.
+    # Если БД не настроена, reminders_loop сам тихо завершится.
+    if is_db_ready():
+        logger.info("Starting reminders loop (DB ready)")
+        asyncio.create_task(reminders_loop(bot, MINIAPP_URL))
+    else:
+        logger.warning(
+            "Reminders loop NOT started — DATABASE_URL not set or DB not reachable"
+        )
     await dp.start_polling(bot, skip_updates=True)
 
 
