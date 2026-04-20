@@ -517,6 +517,30 @@ export default function App() {
       settingsRef.current = next;
       setSettingsOpen(false);
       setDialogLog([]);
+      // Сбрасываем UI-состояния от предыдущей сессии — иначе chat-thinking /
+      // недопечатанный текст могут зависнуть при переключении режимов.
+      setChatThinking(false);
+      setChatDraft("");
+      setErrorMsg("");
+      if (isRecordingRef.current) {
+        stopRecording();
+      }
+      if (speakingEndTimerRef.current !== null) {
+        clearTimeout(speakingEndTimerRef.current);
+        speakingEndTimerRef.current = null;
+      }
+      // Принудительно закрываем текущий WS — новые query-параметры
+      // (в т.ч. mode) применяются только при следующем connect. Без этого
+      // при переключении voice↔chat сервер остаётся в старом режиме и чат ломается.
+      if (wsRef.current) {
+        wsClosingRef.current = true;
+        try {
+          wsRef.current.close(1000);
+        } catch {
+          // ignore
+        }
+        wsRef.current = null;
+      }
       void (async () => {
         // Если переключились с chat на voice и микрофон ещё не был инициализирован —
         // запрашиваем его сейчас (это реакция на жест «Apply» — valid user-gesture).
@@ -537,12 +561,12 @@ export default function App() {
         } else {
           setStatusText("Ready to chat");
         }
-        // openConnection сам корректно закроет старый WS (если есть) и
+        // openConnection сам корректно дождётся закрытия старого WS и
         // откроет новый с обновлёнными query-параметрами.
         await openConnection();
       })();
     },
-    [openConnection, initMicrophone],
+    [openConnection, initMicrophone, stopRecording],
   );
 
   // ── Отправка текстового сообщения в chat-режиме ────────────────────────
