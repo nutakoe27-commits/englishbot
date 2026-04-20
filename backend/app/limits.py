@@ -92,11 +92,16 @@ class LimitsContext:
         )
 
     async def heartbeat(self, seconds: int) -> int:
-        """Списать N секунд. Возвращает обновлённое used_seconds_today."""
+        """Списать N секунд. Возвращает обновлённое used_seconds_today.
+
+        repo_factory — это db_session (выдаёт AsyncSession), поэтому внутри
+        оборачиваем в Repo(session).
+        """
         if self.has_subscription:
             # Подписчикам всё равно записываем для аналитики, но без проверок
             try:
-                async with self._repo_factory() as repo:
+                async with self._repo_factory() as session:
+                    repo = Repo(session)
                     await repo.add_used_seconds(
                         user_id=self.user_db_id, seconds=seconds
                     )
@@ -104,7 +109,8 @@ class LimitsContext:
                 log.warning("[limits] heartbeat (subscriber) ошибка: %s", exc)
             return self.used_seconds_today
         try:
-            async with self._repo_factory() as repo:
+            async with self._repo_factory() as session:
+                repo = Repo(session)
                 self.used_seconds_today = await repo.add_used_seconds(
                     user_id=self.user_db_id, seconds=seconds
                 )
