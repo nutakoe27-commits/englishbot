@@ -25,9 +25,11 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from . import broadcast as broadcast_mod
 from .config import settings
 from .db import db_session
 from .db.repo import Repo, msk_today
@@ -110,6 +112,25 @@ class MaintenanceRequest(BaseModel):
 class MaintenanceResponse(BaseModel):
     enabled: bool
     message: str
+
+
+class BulkExtendRequest(BaseModel):
+    days: int = Field(ge=1, le=3650)
+    notes: Optional[str] = None
+    granted_by_tg_id: Optional[int] = None
+
+
+class BulkExtendResponse(BaseModel):
+    ok: bool
+    affected: int
+
+
+class MessageRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class BroadcastStartRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -294,6 +315,100 @@ async def set_maintenance(req: MaintenanceRequest) -> MaintenanceResponse:
             "Бот временно недоступен — ведутся технические работы.",
         )
         return MaintenanceResponse(enabled=req.enabled, message=msg or "")
+
+
+# ─── Массовые операции ──────────────────────────────────────────────────────
+
+@router.post(
+    "/subscription/extend-all",
+    response_model=BulkExtendResponse,
+    dependencies=[Depends(require_admin_token)],
+)
+async def extend_all_active_subscriptions(req: BulkExtendRequest) -> BulkExtendResponse:
+    """Продлить подписку всем юзерам, у которых она сейчас активна."""
+    async with db_session() as s:
+        repo = Repo(s)
+        affected = await repo.bulk_extend_active_subscriptions(
+            days=req.days,
+            plan="admin_bulk",
+            granted_by_tg_id=req.granted_by_tg_id,
+            notes=req.notes or f"Bulk extend +{req.days}d",
+        )
+        return BulkExtendResponse(ok=True, affected=affected)
+
+
+@router.post(
+    "/users/{user_id}/message",
+    dependencies=[Depends(require_admin_token)],
+)
+async def send_user_message(user_id: int, req: MessageRequest) -> dict:
+    """Отправить сообщение одному юзеру от имени бота."""
+    if not settings.BOT_TOKEN:
+        raise HTTPException(503, "BOT_TOKEN не задан в .env")
+    async with db_session() as s:
+        repo = Repo(s)
+        u = await repo.get_user_by_id(user_id)
+        if u is None:
+            raise HTTPException(404, "Юзер не найден")
+        if not u.tg_id:
+            raise HTTPException(400, "У юзера нет tg_id")
+
+        async with httpx.AsyncClient() as client:
+            ok, code, retry_after = await broadcast_mod.send_message_to_tg(
+                client, u.tg_id, req.text
+            )
+
+        if ok:
+            return {"ok": True, "delivered": True}
+
+        # 403 — бот заблокирован узером: помечаем и возвращаем ошибку
+        if code == 403:
+            await repo.set_blocked(u, True)
+            raise HTTPException(
+                409, "Пользователь заблокировал бота (помечен как is_blocked)"
+            )
+        detail = f"Telegram API error (status={code})"
+        if retry_after:
+            detail += f", retry_after={retry_after}s"
+        raise HTTPException(502, detail)
+
+
+@router.post(
+    "/broadcast",
+    dependencies=[Depends(require_admin_token)],
+)
+async def start_broadcast(req: BroadcastStartRequest) -> dict:
+    """Запустить фоновую рассылку всем незаблокированным юзерам."""
+    if not settings.BOT_TOKEN:
+        raise HTTPException(503, "BOT_TOKEN не задан в .env")
+    try:
+        job = await broadcast_mod.start_broadcast(req.text)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True, "job_id": job.job_id}
+
+
+@router.get(
+    "/broadcast/status",
+    dependencies=[Depends(require_admin_token)],
+)
+async def broadcast_status() -> dict:
+    """Текущий статус рассылки (или последней завершённой)."""
+    job = broadcast_mod.current_job()
+    if job is None:
+        return {"ok": True, "job": None}
+    return {"ok": True, "job": job.to_dict()}
+
+
+@router.post(
+    "/broadcast/cancel",
+    dependencies=[Depends(require_admin_token)],
+)
+async def cancel_broadcast() -> dict:
+    ok = await broadcast_mod.cancel_broadcast()
+    if not ok:
+        raise HTTPException(409, "В данный момент нет активной рассылки")
+    return {"ok": True, "cancelled": True}
 
 
 @router.get(
