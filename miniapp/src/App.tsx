@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import WebApp from "@twa-dev/sdk";
 import "./App.css";
 import { SettingsSheet } from "./SettingsSheet";
+import { LockScreen } from "./LockScreen";
 import {
   loadSettings,
   saveSettings,
@@ -46,6 +47,30 @@ interface DialogEntry {
 const WS_URL = "wss://api-english.krichigindocs.ru/ws/voice";
 const OUTPUT_SAMPLE_RATE = 24000; // TTS отдаёт 24 kHz PCM
 const MAX_LOG_ENTRIES = 20;
+// Username бота для deep-link на /subscribe и /start.
+// Пробрасывается на этапе Docker build через VITE_BOT_USERNAME (см. docker-compose.yml).
+// Указывать БЕЗ символа '@'.
+const BOT_USERNAME =
+  (import.meta.env.VITE_BOT_USERNAME as string | undefined) || "EnglishTutorBot";
+
+// ─── Лимиты ───────────────────────────────────────────────────────────────────
+
+type LockKind = "limit_reached" | "maintenance" | "blocked";
+
+interface LimitsInfo {
+  remaining_seconds: number; // -1 = unlimited (подписчик)
+  has_subscription: boolean;
+  free_seconds_per_day: number;
+  used_seconds_today: number;
+}
+
+/** mm:ss из количества секунд */
+function formatMmSs(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const mm = Math.floor(s / 60).toString().padStart(2, "0");
+  const ss = (s % 60).toString().padStart(2, "0");
+  return `${mm}:${ss}`;
+}
 
 // ─── Утилиты ──────────────────────────────────────────────────────────────────
 
@@ -74,6 +99,11 @@ export default function App() {
   const [chatDraft, setChatDraft] = useState<string>("");
   // Тьютор сейчас «думает» (индикация в chat-режиме пока LLM формирует ответ)
   const [chatThinking, setChatThinking] = useState<boolean>(false);
+  // Лимиты бесплатного тарифа (приходят от сервера сразу после accept)
+  const [limits, setLimits] = useState<LimitsInfo | null>(null);
+  // Состояние lock-screen: null = обычный UI; иначе — показываем overlay
+  const [lockState, setLockState] = useState<LockKind | null>(null);
+  const [lockMessage, setLockMessage] = useState<string>("");
   // Реф с актуальными настройками — openConnection читает его без ре-рендера
   const settingsRef = useRef<TutorSettings>(settings);
   useEffect(() => {
@@ -100,6 +130,31 @@ export default function App() {
   const isRecordingRef = useRef<boolean>(false);
   // Флаг — палец сейчас зажат на кнопке (критично для синхронизации с async WS)
   const isPressedRef = useRef<boolean>(false);
+  // Реф для актуальных лимитов — читается из setInterval-тика без stale closure
+  const limitsRef = useRef<LimitsInfo | null>(null);
+  useEffect(() => {
+    limitsRef.current = limits;
+  }, [limits]);
+
+  // Локальный countdown: пока WS открыт и юзер на бесплатном тарифе —
+  // раз в секунду уменьшаем remaining_seconds, чтобы таймер в хедере был
+  // живым. Сервер всё равно периодически шлёт «limits» для синка.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const cur = limitsRef.current;
+      if (!cur || cur.has_subscription) return;
+      // Тикаем только при живом WS
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (cur.remaining_seconds <= 0) return;
+      setLimits({
+        ...cur,
+        remaining_seconds: Math.max(0, cur.remaining_seconds - 1),
+        used_seconds_today: cur.used_seconds_today + 1,
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
   // Время начала записи — для отсечения случайных коротких тапов
   const recordingStartedAtRef = useRef<number>(0);
   // ID конкретного pointer'а, который начал запись (чтобы игнорировать другие касания)
@@ -386,6 +441,50 @@ export default function App() {
               setChatThinking(true);
             } else if (msg.type === "thinking_done") {
               setChatThinking(false);
+            } else if (msg.type === "limits") {
+              // Сервер прислал текущее состояние лимитов — сохраняем
+              setLimits({
+                remaining_seconds:
+                  typeof msg.remaining_seconds === "number"
+                    ? msg.remaining_seconds
+                    : 0,
+                has_subscription: !!msg.has_subscription,
+                free_seconds_per_day:
+                  typeof msg.free_seconds_per_day === "number"
+                    ? msg.free_seconds_per_day
+                    : 600,
+                used_seconds_today:
+                  typeof msg.used_seconds_today === "number"
+                    ? msg.used_seconds_today
+                    : 0,
+              });
+            } else if (msg.type === "limit_reached") {
+              // Расходован весь дневной лимит — сервер сейчас закроет сокет (4004)
+              setLimits({
+                remaining_seconds: 0,
+                has_subscription: false,
+                free_seconds_per_day:
+                  typeof msg.free_seconds_per_day === "number"
+                    ? msg.free_seconds_per_day
+                    : 600,
+                used_seconds_today:
+                  typeof msg.used_seconds_today === "number"
+                    ? msg.used_seconds_today
+                    : 600,
+              });
+              setLockMessage("");
+              setLockState("limit_reached");
+              wsClosingRef.current = true;
+            } else if (msg.type === "maintenance") {
+              // Режим техработ — сервер сейчас закроет сокет (4002)
+              setLockMessage(typeof msg.message === "string" ? msg.message : "");
+              setLockState("maintenance");
+              wsClosingRef.current = true;
+            } else if (msg.type === "blocked") {
+              // Аккаунт заблокирован — сервер сейчас закроет сокет (4003)
+              setLockMessage(typeof msg.message === "string" ? msg.message : "");
+              setLockState("blocked");
+              wsClosingRef.current = true;
             }
           } catch {
             // игнорируем нераспознанный JSON
@@ -404,9 +503,18 @@ export default function App() {
         }
       };
 
-      ws.onclose = () => {
-        // Не затираем wsRef, если он уже указывает на другой (новый) сокет.
+      ws.onclose = (ev) => {
+        // Резервный путь: если JSON-фрейм не успел дойти до онмессажи,
+        // определяем тип блокировки по close-коду.
+        const code = ev?.code;
         if (wsRef.current === ws) {
+          if (code === 4004) {
+            setLockState((cur) => cur ?? "limit_reached");
+          } else if (code === 4002) {
+            setLockState((cur) => cur ?? "maintenance");
+          } else if (code === 4003) {
+            setLockState((cur) => cur ?? "blocked");
+          }
           wsRef.current = null;
           if (!wsClosingRef.current) {
             setAppState("idle");
@@ -504,6 +612,9 @@ export default function App() {
     setAppState("idle");
     setStatusText("Ready to talk");
     setDialogLog([]);
+    setLimits(null);
+    setLockState(null);
+    setLockMessage("");
   }, [stopRecording]);
 
   // ── Применение новых настроек: сохраняем, закрываем текущую сессию и
@@ -757,6 +868,16 @@ export default function App() {
           <span className="tutor-brand__name">English Tutor</span>
         </div>
         <div className="tutor-header__right">
+          {limits && !limits.has_subscription && limits.remaining_seconds >= 0 && (
+            <span
+              className="timer-pill"
+              data-warning={limits.remaining_seconds <= 60 ? "true" : "false"}
+              title="Осталось на сегодня (бесплатный тариф)"
+              aria-label="Осталось времени на сегодня"
+            >
+              ⏱ {formatMmSs(limits.remaining_seconds)}
+            </span>
+          )}
           <p className="tutor-hello">Hi, {userName}</p>
           <button
             type="button"
@@ -981,6 +1102,14 @@ export default function App() {
           initial={settings}
           onCancel={() => setSettingsOpen(false)}
           onSave={handleSettingsSave}
+        />
+      )}
+
+      {lockState !== null && (
+        <LockScreen
+          kind={lockState}
+          message={lockMessage}
+          botUsername={BOT_USERNAME}
         />
       )}
     </div>

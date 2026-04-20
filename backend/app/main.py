@@ -20,7 +20,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .db import init_db
+from .db import db_session, init_db
+from .limits import LimitsContext, build_limits_context
 from .voice import run_voice_session
 
 # ─── Конфигурация логирования ──────────────────────────────────────────
@@ -188,9 +189,59 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
         user_info.get("id") if user_info else "anonymous",
     )
 
+    # ── Проверка maintenance + лимиты (только если БД поднята) ──────────
+    limits_ctx: Optional[LimitsContext] = None
+    if user_info and settings.DATABASE_URL:
+        try:
+            async with db_session() as session:
+                from .db import Repo
+                repo = Repo(session)
+                # 1. Maintenance — всех отправляем лесом, кроме админов
+                if await repo.get_kv_bool("maintenance_mode", False):
+                    if user_info.get("id") not in settings.admin_ids_list:
+                        msg = await repo.get_kv(
+                            "maintenance_message",
+                            "Бот временно недоступен — ведутся технические работы.",
+                        )
+                        await websocket.send_json(
+                            {"type": "maintenance", "message": msg}
+                        )
+                        await websocket.close(code=4002, reason="Maintenance mode")
+                        return
+                # 2. Upsert + лимиты
+                limits_ctx = await build_limits_context(
+                    repo=repo,
+                    repo_factory=db_session,
+                    tg_id=int(user_info["id"]),
+                    username=user_info.get("username"),
+                    first_name=user_info.get("first_name"),
+                    last_name=user_info.get("last_name"),
+                    language_code=user_info.get("language_code"),
+                )
+        except Exception as exc:
+            logger.error("Ошибка БД на connect: %s", exc, exc_info=True)
+            limits_ctx = None  # fallback: лучше работать без лимитов, чем падать
+
+    if limits_ctx is not None:
+        if limits_ctx.is_blocked:
+            await websocket.send_json(
+                {"type": "blocked", "message": "Ваш аккаунт заблокирован."}
+            )
+            await websocket.close(code=4003, reason="Account blocked")
+            return
+        if limits_ctx.is_exceeded():
+            snap = limits_ctx.snapshot().to_dict()
+            await websocket.send_json({"type": "limit_reached", **snap})
+            await websocket.close(code=4004, reason="Daily limit reached")
+            return
+        # Сообщаем клиенту лимиты — он отрисует таймер
+        await websocket.send_json(
+            {"type": "limits", **limits_ctx.snapshot().to_dict()}
+        )
+
     # ── Запуск голосовой сессии ─────────────────────────────────────────
     try:
-        await run_voice_session(websocket)
+        await run_voice_session(websocket, limits_ctx=limits_ctx)
     except WebSocketDisconnect:
         logger.info("Клиент отключился: %s", websocket.client)
     except Exception as exc:
