@@ -13,12 +13,14 @@ import json
 import logging
 import os
 import urllib.parse
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
+from .db import init_db
 from .voice import run_voice_session
 
 # ─── Конфигурация логирования ──────────────────────────────────────────
