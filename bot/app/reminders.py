@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
 
 from aiogram import Bot
@@ -27,7 +27,7 @@ from aiogram.types import (
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import BigInteger, Boolean, DateTime, String, Time
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Integer, String, Time, func
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +50,19 @@ class _User(_Base):
     tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
     username: Mapped[Optional[str]] = mapped_column(String(64))
     first_name: Mapped[Optional[str]] = mapped_column(String(128))
+    subscription_until: Mapped[Optional[datetime]] = mapped_column(DateTime)
     reminder_time: Mapped[time] = mapped_column(Time, nullable=False)
     reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class _DailyUsage(_Base):
+    __tablename__ = "daily_usage"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    used_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
@@ -155,6 +165,81 @@ async def set_user_reminder(
         await s.execute(update(_User).where(_User.tg_id == tg_id).values(**values))
         await s.commit()
     return True
+
+
+# ─── Профиль пользователя ────────────────────────────────────────────────────
+
+def _msk_today() -> date:
+    """Сегодняшняя дата в МСК (для ключа daily_usage)."""
+    return datetime.now(MSK).date()
+
+
+async def get_user_profile(tg_id: int) -> Optional[dict]:
+    """Возвращает словарь с данными профиля или None, если юзер не найден / БД нет.
+
+    Поля:
+        user_db_id: int
+        username: Optional[str]
+        first_name: Optional[str]
+        subscription_until: Optional[datetime]   # UTC
+        has_subscription: bool
+        days_left: int                           # 0 если нет подписки
+        reminder_enabled: bool
+        reminder_hour: int
+        used_seconds_today: int
+        used_seconds_total: int
+    """
+    if not is_db_ready():
+        return None
+    assert _SessionMaker is not None
+    try:
+        async with _SessionMaker() as s:
+            res = await s.execute(select(_User).where(_User.tg_id == tg_id))
+            u = res.scalar_one_or_none()
+            if u is None:
+                return None
+
+            # Подписка
+            now_utc = datetime.utcnow()
+            has_sub = bool(u.subscription_until and u.subscription_until > now_utc)
+            days_left = 0
+            if has_sub and u.subscription_until:
+                delta = u.subscription_until - now_utc
+                days_left = max(0, delta.days)
+
+            # Использование сегодня
+            today = _msk_today()
+            r_today = await s.execute(
+                select(_DailyUsage.used_seconds).where(
+                    _DailyUsage.user_id == u.id,
+                    _DailyUsage.usage_date == today,
+                )
+            )
+            used_today = int(r_today.scalar() or 0)
+
+            # Всего за всё время
+            r_total = await s.execute(
+                select(func.coalesce(func.sum(_DailyUsage.used_seconds), 0)).where(
+                    _DailyUsage.user_id == u.id,
+                )
+            )
+            used_total = int(r_total.scalar() or 0)
+
+            return {
+                "user_db_id": int(u.id),
+                "username": u.username,
+                "first_name": u.first_name,
+                "subscription_until": u.subscription_until,
+                "has_subscription": has_sub,
+                "days_left": days_left,
+                "reminder_enabled": bool(u.reminder_enabled),
+                "reminder_hour": int(u.reminder_time.hour if u.reminder_time else 19),
+                "used_seconds_today": used_today,
+                "used_seconds_total": used_total,
+            }
+    except Exception as exc:
+        logger.warning("[profile] get_user_profile упал: %s", exc)
+        return None
 
 
 # ─── Фоновая корутина рассылки ────────────────────────────────────────────────
