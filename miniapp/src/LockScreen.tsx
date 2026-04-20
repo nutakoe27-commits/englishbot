@@ -5,7 +5,7 @@ type LockKind = "limit_reached" | "maintenance" | "blocked";
 interface Props {
   kind: LockKind;
   message?: string; // для maintenance / blocked
-  botUsername?: string; // например "EnglishTutorBot" — без @
+  botUsername?: string; // например "kmo_ai_english_bot" — без @
   onDismiss?: () => void; // например, кнопка «Закрыть» в режиме админа/dev
 }
 
