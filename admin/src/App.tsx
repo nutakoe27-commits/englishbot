@@ -243,15 +243,19 @@ function Dashboard() {
   if (err) return <div style={S.error}>{err}</div>;
   if (!metrics) return <div style={S.muted}>Загружаем метрики…</div>;
 
+  // Берём всё через num() — если backend вдруг вернёт null/undefined,
+  // не падаем, а показываем 0.
+  const num = (v: number | null | undefined): string =>
+    (v == null ? 0 : v).toString();
   const items: { label: string; value: string }[] = [
-    { label: "Всего юзеров", value: metrics.total_users.toString() },
-    { label: "Активных подписок", value: metrics.active_subscriptions.toString() },
-    { label: "Заблокировано", value: metrics.blocked_users.toString() },
-    { label: "DAU (сегодня)", value: metrics.dau.toString() },
-    { label: "WAU (7 дн.)", value: metrics.wau.toString() },
-    { label: "MAU (30 дн.)", value: metrics.mau.toString() },
-    { label: "Минут сегодня", value: metrics.minutes_today.toString() },
-    { label: "Выручка всего", value: fmtRub(metrics.total_revenue_rub) },
+    { label: "Всего юзеров", value: num(metrics.total_users) },
+    { label: "Активных подписок", value: num(metrics.active_subscriptions) },
+    { label: "Заблокировано", value: num(metrics.blocked_users) },
+    { label: "DAU (сегодня)", value: num(metrics.dau) },
+    { label: "WAU (7 дн.)", value: num(metrics.wau) },
+    { label: "MAU (30 дн.)", value: num(metrics.mau) },
+    { label: "Минут сегодня", value: num(metrics.minutes_today) },
+    { label: "Выручка всего", value: fmtRub(metrics.total_revenue_rub ?? 0) },
   ];
 
   return (
@@ -286,10 +290,10 @@ function Dashboard() {
               {payments.map((p) => (
                 <tr key={p.id}>
                   <td style={S.td}>{fmtDate(p.created_at)}</td>
-                  <td style={S.td}>{p.tg_id}</td>
-                  <td style={S.td}>{p.plan}</td>
-                  <td style={S.td}>{fmtRub(p.amount_rub)}</td>
-                  <td style={S.td}>{p.status}</td>
+                  <td style={S.td}>{p.tg_id ?? p.user_id ?? "—"}</td>
+                  <td style={S.td}>{p.plan ?? "—"}</td>
+                  <td style={S.td}>{fmtRub(p.amount_rub ?? 0)}</td>
+                  <td style={S.td}>{p.status ?? "—"}</td>
                   <td style={S.td}>{p.notes ?? "—"}</td>
                 </tr>
               ))}
@@ -493,7 +497,9 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
           <StatusPill
             label="Напоминание"
             value={
-              u.reminder_enabled ? `в ${u.reminder_hour_msk.toString().padStart(2, "0")}:00 МСК` : "выключено"
+              u.reminder_enabled
+                ? `в ${(u.reminder_hour_msk ?? 19).toString().padStart(2, "0")}:00 МСК`
+                : "выключено"
             }
             tone={u.reminder_enabled ? "success" : "muted"}
           />
