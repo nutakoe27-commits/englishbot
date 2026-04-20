@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from typing import Optional
 
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command, CommandObject
@@ -291,19 +292,53 @@ def _format_reminder_status(enabled: bool, hour_msk: int) -> str:
     )
 
 
+DB_TIMEOUT_S = 5.0
+
+
+async def _safe_get_reminder(tg_id: int) -> Optional[tuple[bool, int]]:
+    try:
+        return await asyncio.wait_for(get_user_reminder(tg_id), timeout=DB_TIMEOUT_S)
+    except Exception as exc:
+        logger.warning("reminder: get_user_reminder упал: %s", exc)
+        return None
+
+
+async def _safe_set_reminder(
+    tg_id: int,
+    *,
+    enabled: Optional[bool] = None,
+    hour_msk: Optional[int] = None,
+) -> Optional[bool]:
+    """True/False — результат set_user_reminder. None — ошибка/таймаут БД."""
+    try:
+        return await asyncio.wait_for(
+            set_user_reminder(tg_id, enabled=enabled, hour_msk=hour_msk),
+            timeout=DB_TIMEOUT_S,
+        )
+    except Exception as exc:
+        logger.warning("reminder: set_user_reminder упал: %s", exc)
+        return None
+
+
 @dp.message(Command("reminder"))
 async def cmd_reminder(message: Message) -> None:
-    if not is_db_ready():
-        await message.answer(
-            "⚠️ Напоминания временно недоступны — мы уже чиним. Попробуй позже."
-        )
-        return
+    logger.info(
+        "/reminder from tg_id=%s",
+        message.from_user.id if message.from_user else "?",
+    )
     if not message.from_user:
         return
+    if not is_db_ready():
+        await message.answer(
+            "⚠️ Напоминания временно недоступны — подключаем БД. "
+            "Попробуй через пару минут."
+        )
+        return
     tg_id = message.from_user.id
-    row = await get_user_reminder(tg_id)
+    row = await _safe_get_reminder(tg_id)
     if row is None:
-        # Пользователь ещё не заходил в mini app — записи в users нет.
+        # Ни юзера в БД, ни ошибки в интерфейсе различить не можем —
+        # покажем общий полезный экран.
         await message.answer(
             "Чтобы настроить напоминания, сначала открой приложение через "
             "«🎤 Начать разговор» в /start — я запомню тебя.",
@@ -318,8 +353,32 @@ async def cmd_reminder(message: Message) -> None:
     )
 
 
+async def _show_reminder_panel(callback: CallbackQuery, tg_id: int) -> None:
+    """Показать (или перерисовать) экран настроек напоминания."""
+    row = await _safe_get_reminder(tg_id)
+    enabled, hour_msk = row if row else (False, 19)
+    text = _format_reminder_status(enabled, hour_msk)
+    kb = _reminder_settings_keyboard(hour_msk, enabled)
+    if callback.message:
+        try:
+            await callback.message.edit_text(text=text, parse_mode="HTML", reply_markup=kb)
+            return
+        except Exception:
+            # Сообщение могло быть нередактируемым (старое или с web_app-кнопкой) —
+            # пришлём новым.
+            try:
+                await callback.message.answer(text=text, parse_mode="HTML", reply_markup=kb)
+            except Exception as exc:
+                logger.warning("reminder: не удалось показать панель: %s", exc)
+
+
 @dp.callback_query(lambda c: c.data and c.data.startswith("reminder:"))
 async def cb_reminder(callback: CallbackQuery) -> None:
+    logger.info(
+        "reminder callback: data=%r from tg_id=%s",
+        callback.data,
+        callback.from_user.id if callback.from_user else "?",
+    )
     if not callback.from_user or not callback.data:
         await callback.answer()
         return
@@ -333,25 +392,26 @@ async def cb_reminder(callback: CallbackQuery) -> None:
     parts = callback.data.split(":")
     action = parts[1] if len(parts) > 1 else ""
 
+    # «reminder:settings» — кнопка из push-уведомления. Показываем панель.
+    if action == "settings":
+        await callback.answer()
+        await _show_reminder_panel(callback, tg_id)
+        return
+
     if action == "off":
-        ok = await set_user_reminder(tg_id, enabled=False)
-        if not ok:
+        result = await _safe_set_reminder(tg_id, enabled=False)
+        if result is None:
+            await callback.answer(
+                "Ошибка БД. Попробуй чуть позже.", show_alert=True
+            )
+            return
+        if result is False:
             await callback.answer(
                 "Сначала открой mini app — я тебя ещё не знаю.", show_alert=True
             )
             return
         await callback.answer("Напоминания выключены")
-        row = await get_user_reminder(tg_id)
-        enabled, hour_msk = row if row else (False, 19)
-        if callback.message:
-            try:
-                await callback.message.edit_text(
-                    text=_format_reminder_status(enabled, hour_msk),
-                    parse_mode="HTML",
-                    reply_markup=_reminder_settings_keyboard(hour_msk, enabled),
-                )
-            except Exception:
-                pass
+        await _show_reminder_panel(callback, tg_id)
         return
 
     if action == "hour" and len(parts) == 3:
@@ -363,22 +423,19 @@ async def cb_reminder(callback: CallbackQuery) -> None:
         if hour < 0 or hour > 23:
             await callback.answer()
             return
-        ok = await set_user_reminder(tg_id, enabled=True, hour_msk=hour)
-        if not ok:
+        result = await _safe_set_reminder(tg_id, enabled=True, hour_msk=hour)
+        if result is None:
+            await callback.answer(
+                "Ошибка БД. Попробуй чуть позже.", show_alert=True
+            )
+            return
+        if result is False:
             await callback.answer(
                 "Сначала открой mini app — я тебя ещё не знаю.", show_alert=True
             )
             return
         await callback.answer(f"Ок, буду напоминать в {hour:02d}:00 МСК")
-        if callback.message:
-            try:
-                await callback.message.edit_text(
-                    text=_format_reminder_status(True, hour),
-                    parse_mode="HTML",
-                    reply_markup=_reminder_settings_keyboard(hour, True),
-                )
-            except Exception:
-                pass
+        await _show_reminder_panel(callback, tg_id)
         return
 
     await callback.answer()

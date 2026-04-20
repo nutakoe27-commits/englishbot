@@ -303,17 +303,27 @@ async def recent_payments(limit: int = Query(default=20, ge=1, le=100)) -> list[
     async with db_session() as s:
         repo = Repo(s)
         rows = await repo.recent_payments(limit=limit)
-        return [
-            {
-                "id": p.id,
-                "user_id": p.user_id,
-                "amount_rub": float(p.amount_rub),
-                "plan": p.plan,
-                "status": p.status,
-                "days_granted": p.days_granted,
-                "granted_by_tg_id": p.granted_by_tg_id,
-                "notes": p.notes,
-                "created_at": p.created_at.isoformat(),
-            }
-            for p in rows
-        ]
+        # Для фронта удобнее сразу отдавать tg_id юзера.
+        out: list[dict] = []
+        for p in rows:
+            tg_id: Optional[int] = None
+            try:
+                u = await repo.get_user_by_id(p.user_id)
+                tg_id = u.tg_id if u else None
+            except Exception:
+                tg_id = None
+            out.append(
+                {
+                    "id": p.id,
+                    "user_id": p.user_id,
+                    "tg_id": tg_id,
+                    "amount_rub": float(p.amount_rub or 0),
+                    "plan": p.plan,
+                    "status": p.status,
+                    "days_granted": p.days_granted,
+                    "granted_by_tg_id": p.granted_by_tg_id,
+                    "notes": p.notes,
+                    "created_at": p.created_at.isoformat(),
+                }
+            )
+        return out
