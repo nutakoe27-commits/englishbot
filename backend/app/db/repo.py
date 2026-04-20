@@ -329,7 +329,7 @@ class Repo:
         self,
         *,
         days: int,
-        plan: str = "admin_bulk",
+        plan: str = "admin_grant",
         granted_by_tg_id: Optional[int] = None,
         notes: Optional[str] = None,
     ) -> int:

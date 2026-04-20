@@ -328,11 +328,19 @@ async def extend_all_active_subscriptions(req: BulkExtendRequest) -> BulkExtendR
     """Продлить подписку всем юзерам, у которых она сейчас активна."""
     async with db_session() as s:
         repo = Repo(s)
+        # plan=admin_grant — единственный подходящий из ENUM (payments.plan):
+        # monthly | yearly | gift | admin_grant.
+        # Чтобы отличать массовое продление от одиночного — помечаем в notes.
+        tag = "[bulk]"
+        user_note = (req.notes or "").strip()
+        combined_notes = (
+            f"{tag} +{req.days}d" if not user_note else f"{tag} +{req.days}d — {user_note}"
+        )
         affected = await repo.bulk_extend_active_subscriptions(
             days=req.days,
-            plan="admin_bulk",
+            plan="admin_grant",
             granted_by_tg_id=req.granted_by_tg_id,
-            notes=req.notes or f"Bulk extend +{req.days}d",
+            notes=combined_notes,
         )
         return BulkExtendResponse(ok=True, affected=affected)
 
