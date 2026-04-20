@@ -34,10 +34,20 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # ─── Приложение ───────────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Пытаемся поднять БД. Если DATABASE_URL не задан — работаем без БД
+    # (legacy-режим). Интеграция с voice-сессиями и лимитами — в PR C.
+    db_ok = init_db()
+    logger.info("DB ready=%s", db_ok)
+    yield
+
+
 app = FastAPI(
     title="AI English Tutor — Backend",
-    version="0.3.0",
+    version="0.4.0",
     description="Backend API для Telegram Mini App с AI-репетитором английского.",
+    lifespan=lifespan,
 )
 
 # ─── CORS ────────────────────────────────────────────────────────────────────
