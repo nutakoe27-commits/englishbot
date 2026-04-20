@@ -230,7 +230,7 @@ function Dashboard() {
         api.recentPayments().catch(() => [] as PaymentRecord[]),
       ]);
       setMetrics(m);
-      setPayments(p);
+      setPayments(Array.isArray(p) ? p : []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -318,7 +318,7 @@ function UsersList() {
     setErr(null);
     try {
       const list = await api.users(query);
-      setItems(list);
+      setItems(Array.isArray(list) ? list : []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
