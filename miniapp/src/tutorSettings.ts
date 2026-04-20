@@ -3,8 +3,8 @@
 
 export type Level = "A2" | "B1" | "B2" | "C1";
 export type Length = "short" | "long";
-// Язык речи пользователя для STT. Тьютор всё равно отвечает по-английски.
-export type SpeechLang = "en" | "ru" | "auto";
+// Режим ввода: voice — микрофон + TTS-ответ; chat — текстовый двухсторонний чат.
+export type Mode = "voice" | "chat";
 
 export type RoleKey =
   | "language_partner"
@@ -22,7 +22,7 @@ export interface TutorSettings {
   roleCustom: string;
   length: Length;
   corrections: boolean;
-  speechLang: SpeechLang;
+  mode: Mode;
 }
 
 export const DEFAULT_SETTINGS: TutorSettings = {
@@ -31,7 +31,7 @@ export const DEFAULT_SETTINGS: TutorSettings = {
   roleCustom: "",
   length: "short",
   corrections: true,
-  speechLang: "en",
+  mode: "voice",
 };
 
 export const LEVEL_OPTIONS: { value: Level; label: string; hint: string }[] = [
@@ -46,10 +46,9 @@ export const LENGTH_OPTIONS: { value: Length; label: string; hint: string }[] = 
   { value: "long", label: "Detailed", hint: "3-5 sentences" },
 ];
 
-export const SPEECH_LANG_OPTIONS: { value: SpeechLang; label: string; hint: string }[] = [
-  { value: "en", label: "English", hint: "I speak EN" },
-  { value: "ru", label: "Русский", hint: "I speak RU" },
-  { value: "auto", label: "Auto", hint: "detect" },
+export const MODE_OPTIONS: { value: Mode; label: string; hint: string }[] = [
+  { value: "voice", label: "Voice", hint: "speak & listen" },
+  { value: "chat", label: "Chat", hint: "text only" },
 ];
 
 export const ROLE_PRESETS: { value: RoleKey; label: string; emoji: string }[] = [
@@ -82,9 +81,7 @@ export function loadSettings(): TutorSettings {
         typeof parsed.corrections === "boolean"
           ? parsed.corrections
           : DEFAULT_SETTINGS.corrections,
-      speechLang: isSpeechLang(parsed.speechLang)
-        ? parsed.speechLang
-        : DEFAULT_SETTINGS.speechLang,
+      mode: isMode(parsed.mode) ? parsed.mode : DEFAULT_SETTINGS.mode,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -105,7 +102,7 @@ export function settingsToQuery(settings: TutorSettings): string {
     role: settings.role,
     length: settings.length,
     corrections: settings.corrections ? "on" : "off",
-    speech_lang: settings.speechLang,
+    mode: settings.mode,
   });
   if (settings.role === "custom" && settings.roleCustom.trim()) {
     params.set("role_custom", settings.roleCustom.trim().slice(0, 200));
@@ -123,8 +120,8 @@ function isLength(v: unknown): v is Length {
   return v === "short" || v === "long";
 }
 
-function isSpeechLang(v: unknown): v is SpeechLang {
-  return v === "en" || v === "ru" || v === "auto";
+function isMode(v: unknown): v is Mode {
+  return v === "voice" || v === "chat";
 }
 
 function isRole(v: unknown): v is RoleKey {

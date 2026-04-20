@@ -70,6 +70,10 @@ export default function App() {
   // Настройки тьютора (уровень, роль, длина, исправления)
   const [settings, setSettings] = useState<TutorSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  // Черновик текстового сообщения в chat-режиме
+  const [chatDraft, setChatDraft] = useState<string>("");
+  // Тьютор сейчас «думает» (индикация в chat-режиме пока LLM формирует ответ)
+  const [chatThinking, setChatThinking] = useState<boolean>(false);
   // Реф с актуальными настройками — openConnection читает его без ре-рендера
   const settingsRef = useRef<TutorSettings>(settings);
   useEffect(() => {
@@ -228,21 +232,26 @@ export default function App() {
     }
   }, []);
 
-  // При монтировании компонента: запрашиваем микрофон, затем сразу открываем WS.
-  // Так к моменту первого нажатия кнопки WS уже в OPEN — нет гонки pointerdown/pointerup.
+  // При монтировании компонента: в voice-режиме запрашиваем микрофон, в chat — пропускаем.
+  // Затем сразу открываем WS — к первому вводу он уже в OPEN.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const ok = await initMicrophone();
-      if (cancelled) return;
-      if (!ok) {
-        setAppState("mic-denied");
-        setStatusText("Microphone is needed");
-        return;
+      if (settingsRef.current.mode === "chat") {
+        // Чистый чат — микрофон не нужен. Сразу idle и открываем WS.
+        setAppState("idle");
+        setStatusText("Ready to chat");
+      } else {
+        const ok = await initMicrophone();
+        if (cancelled) return;
+        if (!ok) {
+          setAppState("mic-denied");
+          setStatusText("Microphone is needed");
+          return;
+        }
+        setAppState("idle");
+        setStatusText("Ready to talk");
       }
-      setAppState("idle");
-      setStatusText("Ready to talk");
-      // Сразу открываем WS — к первому нажатию он будет готов
       try {
         await openConnection();
       } catch (err) {
@@ -372,6 +381,11 @@ export default function App() {
             const msg = JSON.parse(event.data);
             if (msg.type === "text" && msg.text) {
               addLogEntry(msg.role as "user" | "tutor", msg.text);
+              if (msg.role === "tutor") setChatThinking(false);
+            } else if (msg.type === "thinking") {
+              setChatThinking(true);
+            } else if (msg.type === "thinking_done") {
+              setChatThinking(false);
             }
           } catch {
             // игнорируем нераспознанный JSON
@@ -497,17 +511,70 @@ export default function App() {
   // новое приветствие под выбранную роль.
   const handleSettingsSave = useCallback(
     (next: TutorSettings) => {
+      const prevMode = settingsRef.current.mode;
       setSettings(next);
       saveSettings(next);
       settingsRef.current = next;
       setSettingsOpen(false);
       setDialogLog([]);
-      // openConnection сам корректно закроет старый WS (если есть) и откроет
-      // новый с обновлёнными query-параметрами.
-      void openConnection();
+      void (async () => {
+        // Если переключились с chat на voice и микрофон ещё не был инициализирован —
+        // запрашиваем его сейчас (это реакция на жест «Apply» — valid user-gesture).
+        if (
+          next.mode === "voice" &&
+          prevMode === "chat" &&
+          !mediaStreamRef.current
+        ) {
+          const ok = await initMicrophone();
+          if (!ok) {
+            setAppState("mic-denied");
+            setStatusText("Microphone is needed");
+            return;
+          }
+        }
+        if (next.mode === "voice") {
+          setStatusText("Ready to talk");
+        } else {
+          setStatusText("Ready to chat");
+        }
+        // openConnection сам корректно закроет старый WS (если есть) и
+        // откроет новый с обновлёнными query-параметрами.
+        await openConnection();
+      })();
     },
-    [openConnection],
+    [openConnection, initMicrophone],
   );
+
+  // ── Отправка текстового сообщения в chat-режиме ────────────────────────
+  const sendChatMessage = useCallback(async () => {
+    const text = chatDraft.trim();
+    if (!text) return;
+    if (chatThinking) return; // не пускаем второй запрос пока ответ ещё не пришёл
+    // Обеспечиваем, что WS открыт (на случай если бэкенд ронял сессию)
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      try {
+        await openConnection();
+      } catch (err) {
+        console.warn("sendChatMessage: openConnection failed", err);
+        return;
+      }
+    }
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.warn("sendChatMessage: WS не в OPEN после openConnection");
+      return;
+    }
+    // Локальный рендер своего сообщения (бэкенд эхо не присылает в chat-режиме)
+    addLogEntry("user", text);
+    setChatDraft("");
+    setChatThinking(true);
+    try {
+      ws.send(JSON.stringify({ type: "user_text", text }));
+    } catch (err) {
+      console.error("sendChatMessage: ws.send failed", err);
+      setChatThinking(false);
+    }
+  }, [chatDraft, chatThinking, openConnection, addLogEntry]);
 
   // Cleanup при размонтировании: полностью освобождаем микрофон и WS
   useEffect(() => {
@@ -649,6 +716,9 @@ export default function App() {
     appState === "speaking" ||
     appState === "recording";
 
+  // Режим текстового чата
+  const isChatMode = settings.mode === "chat";
+
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="tutor-app">
@@ -698,7 +768,9 @@ export default function App() {
             </div>
             <p className="tutor-log__empty-title">Let's chat in English</p>
             <p className="tutor-log__empty-hint">
-              Hold the button below, speak a sentence, then release to hear me reply.
+              {isChatMode
+                ? "Type a message below and press Send."
+                : "Hold the button below, speak a sentence, then release to hear me reply."}
             </p>
           </div>
         ) : (
@@ -716,88 +788,169 @@ export default function App() {
         )}
       </section>
 
-      {/* Стабильный футер с кнопкой, статусом и End Session */}
-      <footer className="tutor-controls">
-        {/* Статус — фиксированной высоты, меняется только opacity/текст */}
-        <div className="tutor-status" data-variant={buttonVariant}>
-          <span className="tutor-status__dot" aria-hidden />
-          <span className="tutor-status__text">{statusText}</span>
-        </div>
-
-        {/* Кнопка */}
-        <button
-          className="talk-button"
-          data-variant={buttonVariant}
-          disabled={buttonDisabled}
-          onPointerDown={handlePointerDown}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
-          onContextMenu={(e) => e.preventDefault()}
-          aria-label={buttonLabel}
-        >
-          <span className="talk-button__ring" aria-hidden />
-          <span className="talk-button__icon" aria-hidden>
-            {isRecording ? (
-              // Красный квадрат — "stop"
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
-              </svg>
-            ) : isSpeaking ? (
-              // Динамик
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M4 9v6h4l5 4V5L8 9H4zm11.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"
-                  fill="currentColor"
-                />
-              </svg>
+      {/* Стабильный футер — разный для voice / chat режимов */}
+      {isChatMode ? (
+        <footer className="tutor-controls tutor-controls--chat">
+          {/* Индикатор «tutor is typing…» фиксированной высоты */}
+          <div className="chat-thinking-indicator" aria-live="polite">
+            {chatThinking ? (
+              <>
+                <span className="chat-thinking-indicator__dots" aria-hidden>
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                <span>Tutor is typing…</span>
+              </>
             ) : (
-              // Микрофон
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+              <span aria-hidden style={{ visibility: "hidden" }}>placeholder</span>
+            )}
+          </div>
+
+          {/* Композер */}
+          <form
+            className="chat-composer"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void sendChatMessage();
+            }}
+          >
+            <textarea
+              className="chat-composer__input"
+              value={chatDraft}
+              onChange={(e) => setChatDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void sendChatMessage();
+                }
+              }}
+              placeholder="Type a message…"
+              rows={1}
+              aria-label="Message"
+              disabled={isError}
+            />
+            <button
+              type="submit"
+              className="chat-composer__send"
+              disabled={!chatDraft.trim() || chatThinking || isError}
+              aria-label="Send"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
                 <path
-                  d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3z"
-                  fill="currentColor"
-                />
-                <path
-                  d="M19 11a1 1 0 0 0-2 0 5 5 0 0 1-10 0 1 1 0 0 0-2 0 7 7 0 0 0 6 6.92V20H8a1 1 0 0 0 0 2h8a1 1 0 0 0 0-2h-3v-2.08A7 7 0 0 0 19 11z"
+                  d="M3 11.5 20 4l-7.5 17-2.5-7.5L3 11.5z"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinejoin="round"
                   fill="currentColor"
                 />
               </svg>
+            </button>
+          </form>
+
+          {/* Нижняя строка — End session / error */}
+          <div className="tutor-bottom-slot">
+            {isError ? (
+              <button
+                className="link-button"
+                onClick={() => {
+                  setAppState("idle");
+                  setErrorMsg("");
+                  setStatusText("Ready to chat");
+                }}
+              >
+                {errorMsg || "Error"} — try again
+              </button>
+            ) : endSessionVisible ? (
+              <button className="link-button" onClick={closeConnection}>
+                End session
+              </button>
+            ) : (
+              <span className="link-button" aria-hidden style={{ visibility: "hidden" }}>
+                placeholder
+              </span>
             )}
-          </span>
-        </button>
+          </div>
+        </footer>
+      ) : (
+        <footer className="tutor-controls">
+          {/* Статус — фиксированной высоты, меняется только opacity/текст */}
+          <div className="tutor-status" data-variant={buttonVariant}>
+            <span className="tutor-status__dot" aria-hidden />
+            <span className="tutor-status__text">{statusText}</span>
+          </div>
 
-        {/* Подпись под кнопкой — фиксированной высоты */}
-        <div className="talk-button__label">{buttonLabel}</div>
-
-        {/* Нижняя строка — всегда занимает место, содержимое меняется */}
-        <div className="tutor-bottom-slot">
-          {isMicDenied ? (
-            <button className="link-button" onClick={handleRetryMicrophone}>
-              Allow microphone access
-            </button>
-          ) : isError ? (
-            <button
-              className="link-button"
-              onClick={() => {
-                setAppState("idle");
-                setErrorMsg("");
-                setStatusText("Ready to talk");
-              }}
-            >
-              {errorMsg || "Error"} — try again
-            </button>
-          ) : endSessionVisible ? (
-            <button className="link-button" onClick={closeConnection}>
-              End session
-            </button>
-          ) : (
-            // Невидимый плейсхолдер, чтобы не было layout-shift
-            <span className="link-button" aria-hidden style={{ visibility: "hidden" }}>
-              placeholder
+          {/* Кнопка */}
+          <button
+            className="talk-button"
+            data-variant={buttonVariant}
+            disabled={buttonDisabled}
+            onPointerDown={handlePointerDown}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            onContextMenu={(e) => e.preventDefault()}
+            aria-label={buttonLabel}
+          >
+            <span className="talk-button__ring" aria-hidden />
+            <span className="talk-button__icon" aria-hidden>
+              {isRecording ? (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                  <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+                </svg>
+              ) : isSpeaking ? (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M4 9v6h4l5 4V5L8 9H4zm11.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"
+                    fill="currentColor"
+                  />
+                </svg>
+              ) : (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3z"
+                    fill="currentColor"
+                  />
+                  <path
+                    d="M19 11a1 1 0 0 0-2 0 5 5 0 0 1-10 0 1 1 0 0 0-2 0 7 7 0 0 0 6 6.92V20H8a1 1 0 0 0 0 2h8a1 1 0 0 0 0-2h-3v-2.08A7 7 0 0 0 19 11z"
+                    fill="currentColor"
+                  />
+                </svg>
+              )}
             </span>
-          )}
-        </div>
-      </footer>
+          </button>
+
+          {/* Подпись под кнопкой */}
+          <div className="talk-button__label">{buttonLabel}</div>
+
+          {/* Нижняя строка */}
+          <div className="tutor-bottom-slot">
+            {isMicDenied ? (
+              <button className="link-button" onClick={handleRetryMicrophone}>
+                Allow microphone access
+              </button>
+            ) : isError ? (
+              <button
+                className="link-button"
+                onClick={() => {
+                  setAppState("idle");
+                  setErrorMsg("");
+                  setStatusText("Ready to talk");
+                }}
+              >
+                {errorMsg || "Error"} — try again
+              </button>
+            ) : endSessionVisible ? (
+              <button className="link-button" onClick={closeConnection}>
+                End session
+              </button>
+            ) : (
+              <span className="link-button" aria-hidden style={{ visibility: "hidden" }}>
+                placeholder
+              </span>
+            )}
+          </div>
+        </footer>
+      )}
 
       {settingsOpen && (
         <SettingsSheet
