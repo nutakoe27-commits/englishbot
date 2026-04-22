@@ -27,7 +27,7 @@ from aiogram.types import (
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, Integer, String, Text, Time, func
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Integer, Numeric, String, Text, Time, func
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,28 @@ class _SettingKV(_Base):
 
     key: Mapped[str] = mapped_column("key", String(64), primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class _Payment(_Base):
+    """Зеркало backend/app/db/models.py::Payment (те же колонки и типы).
+    Бот пишет сюда при successful_payment от ЮКассы.
+    """
+
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    amount_rub: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    # ENUM payment_plan: monthly | yearly | gift | admin_grant
+    plan: Mapped[str] = mapped_column(String(32), nullable=False)
+    # ENUM payment_status: pending | succeeded | canceled | refunded
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    provider_payment_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
+    days_granted: Mapped[int] = mapped_column(Integer, nullable=False)
+    granted_by_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    notes: Mapped[Optional[str]] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
@@ -294,6 +316,92 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
     except Exception as exc:
         logger.warning("[profile] get_user_profile упал: %s", exc)
         return None
+
+
+# ─── Платежи (ЮКасса / successful_payment) ────────────────────────────────────
+
+async def credit_subscription_payment(
+    *,
+    tg_id: int,
+    plan: str,
+    days: int,
+    amount_rub: float,
+    provider_payment_id: Optional[str],
+    notes: Optional[str] = None,
+) -> Optional[datetime]:
+    """Продлить подписку после успешной оплаты через Telegram Payments / ЮКассу.
+
+    Идемпотентность: если запись с таким provider_payment_id уже есть в payments,
+    повторно дни не начисляем (возвращаем текущий subscription_until юзера).
+
+    Логика продления зеркалит backend/app/db/repo.py::add_subscription_days:
+    если subscription_until > now — база = он (добавляем к концу), иначе от now.
+    Возвращает новое subscription_until (UTC naive, как во всей схеме).
+    """
+    if not is_db_ready():
+        logger.error("[payments] DB не готова — не могу зачислить платёж tg_id=%s", tg_id)
+        raise RuntimeError("DB not ready")
+    assert _SessionMaker is not None
+
+    now = datetime.utcnow()
+    async with _SessionMaker() as s:
+        # 1) Идемпотентность по provider_payment_id
+        if provider_payment_id:
+            existing = await s.execute(
+                select(_Payment).where(_Payment.provider_payment_id == provider_payment_id)
+            )
+            if existing.scalar_one_or_none() is not None:
+                logger.info(
+                    "[payments] повторный successful_payment tg_id=%s provider_id=%s — пропускаю",
+                    tg_id, provider_payment_id,
+                )
+                # Вернём текущий until юзера — он уже был продлён в первый раз.
+                user_res = await s.execute(select(_User).where(_User.tg_id == tg_id))
+                u = user_res.scalar_one_or_none()
+                return u.subscription_until if u else None
+
+        # 2) Найти юзера
+        user_res = await s.execute(select(_User).where(_User.tg_id == tg_id))
+        user = user_res.scalar_one_or_none()
+        if user is None:
+            logger.error("[payments] tg_id=%s не найден в users — платёж получен, но зачислить некому", tg_id)
+            raise RuntimeError(f"user tg_id={tg_id} not found")
+
+        # 3) Новый subscription_until
+        current_until = user.subscription_until
+        base = current_until if (current_until and current_until > now) else now
+        new_until = base + timedelta(days=days)
+
+        # 4) Обновляем users.subscription_until
+        await s.execute(
+            update(_User).where(_User.id == user.id).values(
+                subscription_until=new_until, updated_at=now,
+            )
+        )
+
+        # 5) Записываем в payments
+        s.add(
+            _Payment(
+                user_id=user.id,
+                amount_rub=amount_rub,
+                plan=plan,
+                status="succeeded",
+                provider_payment_id=provider_payment_id,
+                days_granted=days,
+                granted_by_tg_id=None,  # самооплата — не админ
+                notes=notes,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+        await s.commit()
+
+    logger.info(
+        "[payments] зачислено: tg_id=%s plan=%s days=%d amount=%.2f until=%s",
+        tg_id, plan, days, amount_rub, new_until.isoformat() if new_until else "?",
+    )
+    return new_until
 
 
 # ─── Фоновая корутина рассылки ────────────────────────────────────────────────
