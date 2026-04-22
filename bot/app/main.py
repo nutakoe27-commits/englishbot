@@ -10,13 +10,18 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    LabeledPrice,
     Message,
+    PreCheckoutQuery,
     Update,
     WebAppInfo,
 )
 from dotenv import load_dotenv
 
+import json
+
 from .reminders import (
+    credit_subscription_payment,
     get_maintenance_status,
     get_user_profile,
     get_user_reminder,
@@ -52,6 +57,16 @@ _ADMIN_IDS: set[int] = {
     for x in os.getenv("ADMIN_IDS", "").split(",")
     if x.strip().isdigit()
 }
+
+# ЮКасса: provider_token выдаёт @BotFather при привязке магазина ЮКассы.
+# ShopID используем только для аудита/логов (в нативной интеграции запросы идут через Telegram, не напрямую в ЮКассу).
+YOOKASSA_PROVIDER_TOKEN: str = os.getenv("YOOKASSA_PROVIDER_TOKEN", "").strip()
+YOOKASSA_SHOP_ID: str = os.getenv("YOOKASSA_SHOP_ID", "").strip()
+# Фискализация включена: передаём receipt + требуем email. Выключить:
+# YOOKASSA_FISCALIZATION=0 в .env.
+YOOKASSA_FISCALIZATION: bool = os.getenv("YOOKASSA_FISCALIZATION", "1") == "1"
+# VAT code для receipt: 1=без НДС, 2=0%, 3=10%, 4=20%. Под УСН/ИП — 1.
+YOOKASSA_VAT_CODE: int = int(os.getenv("YOOKASSA_VAT_CODE", "1"))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -431,8 +446,8 @@ SUBSCRIBE_TEXT = (
     "С подпиской — <b>без лимитов</b> и круглые сутки:\n"
     f"• <b>{PRICE_MONTHLY_RUB} ₽ / месяц</b>\n"
     f"• <b>{PRICE_YEARLY_RUB} ₽ / год</b> (выгоднее на ~40%)\n\n"
-    "⏳ <i>Оплата будет доступна ближайшими днями — мы сейчас подключаем платёжную "
-    "систему. Нажми кнопку ниже — мы сообщим, как только всё будет готово.</i>"
+    "Оплата картой, SberPay или ЮМани — через ЮКассу прямо в Telegram. "
+    "<i>Чек будет отправлен на указанный email.</i>"
 )
 
 
@@ -662,25 +677,180 @@ async def cb_reminder(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+# ---- Планы подписки (единственное место, где эти данные хранятся в боте) -----
+_PLAN_CATALOG: dict[str, dict] = {
+    "monthly": {
+        "title": "English Tutor — подписка на месяц",
+        "description": "Безлимитные разговоры с AI-репетитором на 30 дней.",
+        "amount_rub": PRICE_MONTHLY_RUB,
+        "days": 30,
+        "label": "месяц",
+    },
+    "yearly": {
+        "title": "English Tutor — подписка на год",
+        "description": "Безлимитные разговоры с AI-репетитором на 365 дней (экономия ~40%).",
+        "amount_rub": PRICE_YEARLY_RUB,
+        "days": 365,
+        "label": "год",
+    },
+}
+
+
+def _build_provider_data(plan_key: str, plan: dict) -> Optional[str]:
+    """Формирует provider_data для ЮКассы (receipt / ФФД 1.2).
+
+    Сумма в чеке в РУБЛЯХ (в отличие от prices, где в копейках).
+    """
+    if not YOOKASSA_FISCALIZATION:
+        return None
+    data = {
+        "receipt": {
+            "items": [
+                {
+                    "description": plan["title"],
+                    "quantity": "1.00",
+                    "amount": {
+                        "value": f"{plan['amount_rub']:.2f}",
+                        "currency": "RUB",
+                    },
+                    "vat_code": YOOKASSA_VAT_CODE,
+                    "payment_mode": "full_payment",
+                    "payment_subject": "service",
+                }
+            ]
+        }
+    }
+    return json.dumps(data, ensure_ascii=False)
+
+
 @dp.callback_query(lambda c: c.data and c.data.startswith("subscribe:"))
-async def cb_subscribe_stub(callback: CallbackQuery) -> None:
-    """Заглушка: оплата ещё не подключена. Просто сообщаем юзеру."""
-    await callback.answer(
-        "Оплата скоро будет доступна — мы сообщим в боте.",
-        show_alert=True,
-    )
-    if callback.message:
-        plan = (callback.data or "").split(":", 1)[-1]
-        plan_label = "месяц" if plan == "monthly" else "год"
-        price = PRICE_MONTHLY_RUB if plan == "monthly" else PRICE_YEARLY_RUB
+async def cb_subscribe(callback: CallbackQuery) -> None:
+    """При клике на тариф — посылаем sendInvoice с provider_token ЮКассы."""
+    plan_key = (callback.data or "").split(":", 1)[-1]
+    plan = _PLAN_CATALOG.get(plan_key)
+    if not plan:
+        await callback.answer("Неизвестный тариф", show_alert=True)
+        return
+
+    if not YOOKASSA_PROVIDER_TOKEN:
+        await callback.answer(
+            "Платёжная система временно недоступна. Попробуйте позже.",
+            show_alert=True,
+        )
+        logger.error("YOOKASSA_PROVIDER_TOKEN is empty — cannot send invoice")
+        return
+
+    await callback.answer()
+    if not callback.message or not callback.from_user:
+        return
+
+    tg_id = callback.from_user.id
+    # invoice_payload: "sub:{plan_key}:{tg_id}" — читаем в successful_payment.
+    payload = f"sub:{plan_key}:{tg_id}"
+    amount_kop = plan["amount_rub"] * 100
+
+    try:
+        await bot.send_invoice(
+            chat_id=callback.message.chat.id,
+            title=plan["title"],
+            description=plan["description"],
+            payload=payload,
+            provider_token=YOOKASSA_PROVIDER_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label=plan["title"], amount=amount_kop)],
+            provider_data=_build_provider_data(plan_key, plan),
+            need_email=YOOKASSA_FISCALIZATION,
+            send_email_to_provider=YOOKASSA_FISCALIZATION,
+            need_phone_number=False,
+            need_shipping_address=False,
+        )
+        logger.info(
+            "Invoice sent: tg_id=%s plan=%s amount=%s shop=%s",
+            tg_id, plan_key, amount_kop, YOOKASSA_SHOP_ID or "?",
+        )
+    except Exception:
+        logger.exception("Failed to send invoice to tg_id=%s plan=%s", tg_id, plan_key)
         await callback.message.answer(
-            text=(
-                f"Ты выбрал тариф «<b>{plan_label}</b>» — <b>{price} ₽</b>.\n\n"
-                "Платёжная система подключается — пришлём ссылку на оплату в этот чат, "
-                "как только всё будет готово."
-            ),
+            "Не удалось выставить счёт. Попробуйте ещё раз через пару минут. "
+            "Если проблема повторится — напишите в поддержку."
+        )
+
+
+# ---- pre_checkout_query: отвечаем строго в течение 10 секунд ----
+@dp.pre_checkout_query()
+async def pre_checkout(query: PreCheckoutQuery) -> None:
+    payload = query.invoice_payload or ""
+    # Быстрая валидация: payload должен быть вида sub:<plan>:<tg_id>.
+    parts = payload.split(":")
+    ok = (
+        len(parts) == 3
+        and parts[0] == "sub"
+        and parts[1] in _PLAN_CATALOG
+        and parts[2].isdigit()
+    )
+    try:
+        if ok:
+            await bot.answer_pre_checkout_query(query.id, ok=True)
+        else:
+            await bot.answer_pre_checkout_query(
+                query.id, ok=False, error_message="Некорректные данные платежа. Повторите попытку."
+            )
+            logger.warning("pre_checkout rejected: payload=%r", payload)
+    except Exception:
+        logger.exception("pre_checkout_query answer failed")
+
+
+# ---- successful_payment: зачисляем дни, записываем в payments ----
+@dp.message(lambda m: m.successful_payment is not None)
+async def on_successful_payment(message: Message) -> None:
+    if not message.successful_payment or not message.from_user:
+        return
+    sp = message.successful_payment
+    tg_id = message.from_user.id
+    payload = sp.invoice_payload or ""
+    parts = payload.split(":")
+    if len(parts) != 3 or parts[0] != "sub":
+        logger.error("successful_payment: bad payload=%r from tg_id=%s", payload, tg_id)
+        await message.answer("Оплата получена, но возникла ошибка зачисления. Напишите в поддержку — мы всё выдадим вручную.")
+        return
+
+    plan_key = parts[1]
+    plan = _PLAN_CATALOG.get(plan_key)
+    if not plan:
+        logger.error("successful_payment: unknown plan=%r payload=%r", plan_key, payload)
+        return
+
+    provider_payment_id = sp.provider_payment_charge_id or sp.telegram_payment_charge_id
+    amount_rub = (sp.total_amount or 0) / 100.0
+
+    try:
+        until = await credit_subscription_payment(
+            tg_id=tg_id,
+            plan=plan_key,
+            days=plan["days"],
+            amount_rub=amount_rub,
+            provider_payment_id=provider_payment_id,
+            notes=f"yookassa shop={YOOKASSA_SHOP_ID or '?'} tg_charge={sp.telegram_payment_charge_id}",
+        )
+    except Exception:
+        logger.exception("Failed to credit payment: tg_id=%s payload=%r", tg_id, payload)
+        await message.answer(
+            "Оплата получена, но не удалось сразу зачислить дни. "
+            f"Напишите в поддержку, укажите ID: <code>{provider_payment_id}</code>.",
             parse_mode="HTML",
         )
+        return
+
+    until_str = _fmt_subscription_until(until) if until else "нет данных"
+    await message.answer(
+        f"✅ Платёж прошёл. Подписка «<b>{plan['label']}</b>» активна до <b>{until_str}</b>.\n\n"
+        "Спасибо и удачной практики! Жми «🎙 Начать разговор» в меню.",
+        parse_mode="HTML",
+    )
+    logger.info(
+        "Payment credited: tg_id=%s plan=%s days=%d amount=%.2f provider_id=%s",
+        tg_id, plan_key, plan["days"], amount_rub, provider_payment_id,
+    )
 
 
 async def _set_bot_commands() -> None:
