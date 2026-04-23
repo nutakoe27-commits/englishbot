@@ -33,18 +33,21 @@ class LimitsSnapshot:
     has_subscription: bool
     free_seconds_per_day: int
     used_seconds_today: int
+    bonus_seconds_today: int = 0  # квест-бонус, сбрасывается в полночь МСК
 
     @property
     def remaining_seconds(self) -> int:
         if self.has_subscription:
             return -1  # -1 = unlimited
-        return max(0, self.free_seconds_per_day - self.used_seconds_today)
+        cap = self.free_seconds_per_day + self.bonus_seconds_today
+        return max(0, cap - self.used_seconds_today)
 
     def to_dict(self) -> dict:
         return {
             "has_subscription": self.has_subscription,
             "free_seconds_per_day": self.free_seconds_per_day,
             "used_seconds_today": self.used_seconds_today,
+            "bonus_seconds_today": self.bonus_seconds_today,
             "remaining_seconds": self.remaining_seconds,
         }
 
@@ -62,16 +65,20 @@ class LimitsContext:
         self,
         *,
         user_db_id: int,
+        tg_id: int,
         has_subscription: bool,
         free_seconds_per_day: int,
         used_seconds_today: int,
+        bonus_seconds_today: int,
         is_blocked: bool,
         repo_factory,  # () -> async-context-manager c Repo
     ) -> None:
         self.user_db_id = user_db_id
+        self.tg_id = tg_id
         self.has_subscription = has_subscription
         self.free_seconds_per_day = free_seconds_per_day
         self.used_seconds_today = used_seconds_today
+        self.bonus_seconds_today = bonus_seconds_today
         self.is_blocked = is_blocked
         self._repo_factory = repo_factory
 
@@ -79,7 +86,8 @@ class LimitsContext:
     def remaining_seconds(self) -> int:
         if self.has_subscription:
             return -1
-        return max(0, self.free_seconds_per_day - self.used_seconds_today)
+        cap = self.free_seconds_per_day + self.bonus_seconds_today
+        return max(0, cap - self.used_seconds_today)
 
     def is_exceeded(self) -> bool:
         return not self.has_subscription and self.remaining_seconds <= 0
@@ -89,6 +97,7 @@ class LimitsContext:
             has_subscription=self.has_subscription,
             free_seconds_per_day=self.free_seconds_per_day,
             used_seconds_today=self.used_seconds_today,
+            bonus_seconds_today=self.bonus_seconds_today,
         )
 
     async def heartbeat(self, seconds: int) -> int:
@@ -142,11 +151,14 @@ async def build_limits_context(
         "free_seconds_per_day", DEFAULT_FREE_SECONDS_PER_DAY
     )
     used = await repo.get_used_seconds_today(user.id)
+    bonus = await repo.get_bonus_seconds_today(user.id)
     return LimitsContext(
         user_db_id=user.id,
+        tg_id=tg_id,
         has_subscription=has_sub,
         free_seconds_per_day=free_seconds,
         used_seconds_today=used,
+        bonus_seconds_today=bonus,
         is_blocked=user.is_blocked,
         repo_factory=repo_factory,
     )

@@ -22,6 +22,9 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8082:8000"
+    volumes:
+      # Записи Battle Mode (webm/opus). Лежат на VPS, не теряются при rebuild.
+      - ./data/battles:/app/data/battles
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -40,6 +43,9 @@ services:
     # и чтения/записи users.reminder_*. DATABASE_URL берётся из .env.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    expose:
+      # Внутренний HTTP-сервер для уведомлений от backend (bot:8080).
+      - "8080"
     depends_on:
       backend:
         condition: service_healthy

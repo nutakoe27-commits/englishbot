@@ -126,6 +126,16 @@ class Repo:
         )
         return int(res.scalar_one_or_none() or 0)
 
+    async def get_bonus_seconds_today(self, user_id: int) -> int:
+        """Бонус за выполненный Daily Quest (сбрасывается в 00:00 МСК)."""
+        res = await self.s.execute(
+            select(DailyUsage.bonus_seconds).where(
+                DailyUsage.user_id == user_id,
+                DailyUsage.usage_date == msk_today(),
+            )
+        )
+        return int(res.scalar_one_or_none() or 0)
+
     async def add_used_seconds(self, *, user_id: int, seconds: int) -> int:
         """Прибавить N секунд к дневному счётчику. Возвращает итоговое значение."""
         if seconds <= 0:

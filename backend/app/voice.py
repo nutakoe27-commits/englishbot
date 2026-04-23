@@ -122,6 +122,7 @@ async def _run_chat_session(
     """
     logger.warning("[chat] старт текстовой сессии")
     history: list[dict] = []
+    chat_session_start = asyncio.get_event_loop().time()
 
     watchdog: Optional[asyncio.Task] = (
         asyncio.create_task(_usage_watchdog(websocket, limits_ctx))
@@ -218,7 +219,15 @@ async def _run_chat_session(
                 await watchdog
             except asyncio.CancelledError:
                 pass
-        logger.warning("[chat] сессия завершена для %s", websocket.client)
+        duration_sec = int(asyncio.get_event_loop().time() - chat_session_start)
+        if limits_ctx is not None:
+            asyncio.create_task(_check_quest_after_session(
+                limits_ctx=limits_ctx,
+                history=history,
+                role=session_settings.role,
+                duration_sec=duration_sec,
+            ))
+        logger.warning("[chat] сессия завершена для %s (%dс)", websocket.client, duration_sec)
 
 
 # ─── Оркестратор WebSocket-сессии ─────────────────────────────────────────────
@@ -499,6 +508,7 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
         else None
     )
 
+    session_start = asyncio.get_event_loop().time()
     try:
         wait_set = {recv_task, proc_task}
         if watchdog_task is not None:
@@ -514,4 +524,116 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
         # Даём им завершиться корректно
         await asyncio.gather(*pending, return_exceptions=True)
     finally:
-        logger.warning("[voice] сессия завершена для %s", websocket.client)
+        duration_sec = int(asyncio.get_event_loop().time() - session_start)
+        # Daily Quest: проверяем выполнение квеста по транскрипту сессии.
+        if limits_ctx is not None:
+            asyncio.create_task(_check_quest_after_session(
+                limits_ctx=limits_ctx,
+                history=history,
+                role=session_settings.role,
+                duration_sec=duration_sec,
+            ))
+        logger.warning("[voice] сессия завершена для %s (%dс)", websocket.client, duration_sec)
+
+
+# ─── Hook после сессии: проверка Daily Quest ─────────────────────────────
+
+async def _check_quest_after_session(
+    *,
+    limits_ctx,
+    history: list[dict],
+    role: str,
+    duration_sec: int,
+) -> None:
+    """Собирает транскрипт user-реплик и зовёт quests.verify_session.
+
+    Если квест засчитан — дёргает внутренний endpoint бота, чтобы тот
+    прислал юзеру DM о выполнении.
+    """
+    # Импорты локально, чтобы не падать если quests недоступен (например при
+    # отсутствии БД в dev-режиме).
+    try:
+        from . import quests as quests_mod
+        from .db import db_session
+    except Exception as exc:
+        logger.warning("[voice][quest-hook] не могу импортировать: %s", exc)
+        return
+
+    user_text = "\n".join(
+        (turn.get("text") or "").strip()
+        for turn in history
+        if turn.get("role") == "user"
+    ).strip()
+
+    if not user_text and role not in ("barista", "interviewer", "travel_agent",
+                                       "doctor", "friend", "shopkeeper"):
+        logger.info("[voice][quest-hook] пустой транскрипт и роль не ролевая — пропускаем")
+        return
+
+    try:
+        async with db_session() as s:
+            result = await quests_mod.verify_session(
+                s,
+                user_id=limits_ctx.user_db_id,
+                transcript=user_text,
+                role=role,
+                duration_sec=duration_sec,
+            )
+            await s.commit()
+    except Exception as exc:
+        logger.error("[voice][quest-hook] verify_session failed: %s", exc, exc_info=True)
+        return
+
+    if not result.completed:
+        logger.info(
+            "[voice][quest-hook] квест не выполнен: key=%s debug=%s",
+            result.quest_key, result.debug if hasattr(result, 'debug') else None,
+        )
+        return
+
+    logger.warning(
+        "[voice][quest-hook] КВЕСТ ВЫПОЛНЕН user=%s quest=%s +%dсек",
+        limits_ctx.tg_id, result.quest_key, result.reward_seconds,
+    )
+
+    # Уведомляем бот (fire-and-forget).
+    import os
+    import httpx
+
+    bot_url = os.getenv("BOT_INTERNAL_URL", "http://bot:8080").rstrip("/")
+    secret = os.getenv("BACKEND_BOT_SECRET", "").strip()
+    if not secret:
+        logger.warning("[voice][quest-hook] BACKEND_BOT_SECRET не задан — не можем уведомить бот")
+        return
+
+    # Узнаём title_ru чтобы передать в DM.
+    title_ru = ""
+    try:
+        from sqlalchemy import select
+        from .db import db_session
+        from .db.models import QuestCatalog
+        async with db_session() as s:
+            r = await s.execute(
+                select(QuestCatalog).where(QuestCatalog.key == result.quest_key)
+            )
+            q = r.scalar_one_or_none()
+            if q is not None:
+                title_ru = q.title_ru
+    except Exception:
+        pass
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.post(
+                f"{bot_url}/internal/quest-completed",
+                json={
+                    "tg_id": limits_ctx.tg_id,
+                    "title_ru": title_ru,
+                    "reward_seconds": result.reward_seconds,
+                },
+                headers={"X-Bot-Secret": secret},
+            )
+            if r.status_code >= 400:
+                logger.warning("[voice][quest-hook] bot notify %s: %s", r.status_code, r.text[:200])
+    except Exception as exc:
+        logger.warning("[voice][quest-hook] bot notify failed: %s", exc)
