@@ -65,6 +65,7 @@ class LimitsContext:
         self,
         *,
         user_db_id: int,
+        tg_id: int,
         has_subscription: bool,
         free_seconds_per_day: int,
         used_seconds_today: int,
@@ -73,6 +74,7 @@ class LimitsContext:
         repo_factory,  # () -> async-context-manager c Repo
     ) -> None:
         self.user_db_id = user_db_id
+        self.tg_id = tg_id
         self.has_subscription = has_subscription
         self.free_seconds_per_day = free_seconds_per_day
         self.used_seconds_today = used_seconds_today
@@ -152,6 +154,7 @@ async def build_limits_context(
     bonus = await repo.get_bonus_seconds_today(user.id)
     return LimitsContext(
         user_db_id=user.id,
+        tg_id=tg_id,
         has_subscription=has_sub,
         free_seconds_per_day=free_seconds,
         used_seconds_today=used,
