@@ -61,6 +61,23 @@ async function request<T>(
 }
 
 // ─── Types (зеркало backend/app/admin.py) ────────────────────────────────────
+export interface BattleMetrics {
+  total: number;
+  open: number;
+  in_play: number;
+  judged: number;
+  judged_today: number;
+  expired: number;
+}
+
+export interface QuestMetrics {
+  assigned_total: number;
+  completed_total: number;
+  completed_today: number;
+  active_now: number;
+  completion_rate: number;
+}
+
 export interface Metrics {
   total_users: number;
   active_subscriptions: number;
@@ -70,6 +87,9 @@ export interface Metrics {
   mau: number;
   minutes_today: number;
   total_revenue_rub: number;
+  new_users_today: number;
+  battles: BattleMetrics;
+  quests: QuestMetrics;
 }
 
 export interface UserBrief {
@@ -84,12 +104,33 @@ export interface UserBrief {
   created_at: string;
 }
 
+export interface UserBattleStats {
+  total: number;
+  won: number;
+  lost: number;
+  draw: number;
+  in_progress: number;
+  last_at: string | null;
+}
+
+export interface UserQuestStats {
+  completed_total: number;
+  completed_7d: number;
+  active_key: string | null;
+  active_title_ru: string | null;
+  active_assigned_at: string | null;
+}
+
 export interface UserDetail extends UserBrief {
   language_code: string | null;
   reminder_enabled: boolean;
   reminder_hour_msk: number;
   used_seconds_today: number;
   free_seconds_per_day: number;
+  bonus_seconds_today: number;
+  used_seconds_total: number;
+  battles: UserBattleStats;
+  quests: UserQuestStats;
 }
 
 export interface MaintenanceSettings {

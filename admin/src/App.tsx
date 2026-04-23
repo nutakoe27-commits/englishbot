@@ -234,6 +234,7 @@ function Dashboard() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [payments, setPayments] = useState<PaymentRecord[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [_dashRoute, dashNavigate] = useRoute();
 
   const load = async () => {
     setErr(null);
@@ -262,6 +263,7 @@ function Dashboard() {
     (v == null ? 0 : v).toString();
   const items: { label: string; value: string }[] = [
     { label: "Всего юзеров", value: num(metrics.total_users) },
+    { label: "Новых сегодня", value: num(metrics.new_users_today) },
     { label: "Активных подписок", value: num(metrics.active_subscriptions) },
     { label: "Заблокировано", value: num(metrics.blocked_users) },
     { label: "DAU (сегодня)", value: num(metrics.dau) },
@@ -269,6 +271,35 @@ function Dashboard() {
     { label: "MAU (30 дн.)", value: num(metrics.mau) },
     { label: "Минут сегодня", value: num(metrics.minutes_today) },
     { label: "Выручка всего", value: fmtRub(metrics.total_revenue_rub ?? 0) },
+  ];
+
+  // Battle-блок.
+  const b = metrics.battles ?? {
+    total: 0, open: 0, in_play: 0, judged: 0, judged_today: 0, expired: 0,
+  };
+  const battleItems: { label: string; value: string }[] = [
+    { label: "Всего батлов", value: num(b.total) },
+    { label: "Открытые", value: num(b.open) },
+    { label: "В игре", value: num(b.in_play) },
+    { label: "Судейство всего", value: num(b.judged) },
+    { label: "Судейство сегодня", value: num(b.judged_today) },
+    { label: "Просрочено", value: num(b.expired) },
+  ];
+
+  // Quest-блок.
+  const q = metrics.quests ?? {
+    assigned_total: 0, completed_total: 0, completed_today: 0,
+    active_now: 0, completion_rate: 0,
+  };
+  const ratePct = (q.completion_rate ?? 0) <= 1
+    ? Math.round((q.completion_rate ?? 0) * 100)
+    : Math.round(q.completion_rate ?? 0);
+  const questItems: { label: string; value: string }[] = [
+    { label: "Выдано всего", value: num(q.assigned_total) },
+    { label: "Выполнено всего", value: num(q.completed_total) },
+    { label: "Выполнено сегодня", value: num(q.completed_today) },
+    { label: "Активных сейчас", value: num(q.active_now) },
+    { label: "Completion rate", value: `${ratePct}%` },
   ];
 
   return (
@@ -281,6 +312,60 @@ function Dashboard() {
             <p style={S.metricLabel}>{it.label}</p>
           </div>
         ))}
+      </div>
+
+      <div style={{ ...S.card, marginTop: 20 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 12,
+          }}
+        >
+          <h3 style={{ ...S.h3, margin: 0 }}>Батлы</h3>
+          <button
+            style={S.btnSecondary}
+            onClick={() => dashNavigate("/battles")}
+          >
+            Подробнее
+          </button>
+        </div>
+        <div style={S.metricsGrid}>
+          {battleItems.map((it) => (
+            <div key={it.label} style={S.metricCard}>
+              <p style={S.metricValue}>{it.value}</p>
+              <p style={S.metricLabel}>{it.label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ ...S.card, marginTop: 20 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 12,
+          }}
+        >
+          <h3 style={{ ...S.h3, margin: 0 }}>Квесты</h3>
+          <button
+            style={S.btnSecondary}
+            onClick={() => dashNavigate("/quests")}
+          >
+            Подробнее
+          </button>
+        </div>
+        <div style={S.metricsGrid}>
+          {questItems.map((it) => (
+            <div key={it.label} style={S.metricCard}>
+              <p style={S.metricValue}>{it.value}</p>
+              <p style={S.metricLabel}>{it.label}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div style={{ ...S.card, marginTop: 20 }}>
@@ -508,6 +593,16 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
             tone="muted"
           />
           <StatusPill
+            label="Бонус сегодня"
+            value={fmtSeconds(u.bonus_seconds_today ?? 0)}
+            tone={(u.bonus_seconds_today ?? 0) > 0 ? "success" : "muted"}
+          />
+          <StatusPill
+            label="Практика всего"
+            value={fmtSeconds(u.used_seconds_total ?? 0)}
+            tone="muted"
+          />
+          <StatusPill
             label="Напоминание"
             value={
               u.reminder_enabled
@@ -520,6 +615,74 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
       </div>
 
       {/* ── Подписка ────────────────────── */}
+      {/* Battle-статистика */}
+      <div style={{ ...S.card, marginTop: 16 }}>
+        <h3 style={S.h3}>Battle-статистика</h3>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <StatusPill
+            label="Сыграно"
+            value={(u.battles?.total ?? 0).toString()}
+            tone="muted"
+          />
+          <StatusPill
+            label="Победы"
+            value={(u.battles?.won ?? 0).toString()}
+            tone={(u.battles?.won ?? 0) > 0 ? "success" : "muted"}
+          />
+          <StatusPill
+            label="Ничьи"
+            value={(u.battles?.draw ?? 0).toString()}
+            tone="muted"
+          />
+          <StatusPill
+            label="Поражения"
+            value={(u.battles?.lost ?? 0).toString()}
+            tone={(u.battles?.lost ?? 0) > 0 ? "danger" : "muted"}
+          />
+          <StatusPill
+            label="В процессе"
+            value={(u.battles?.in_progress ?? 0).toString()}
+            tone={(u.battles?.in_progress ?? 0) > 0 ? "success" : "muted"}
+          />
+          <StatusPill
+            label="Последний батл"
+            value={u.battles?.last_at ? fmtDate(u.battles.last_at) : "—"}
+            tone="muted"
+          />
+        </div>
+      </div>
+
+      {/* Квесты */}
+      <div style={{ ...S.card, marginTop: 16 }}>
+        <h3 style={S.h3}>Квесты</h3>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <StatusPill
+            label="Выполнено всего"
+            value={(u.quests?.completed_total ?? 0).toString()}
+            tone={(u.quests?.completed_total ?? 0) > 0 ? "success" : "muted"}
+          />
+          <StatusPill
+            label="За 7 дней"
+            value={(u.quests?.completed_7d ?? 0).toString()}
+            tone={(u.quests?.completed_7d ?? 0) > 0 ? "success" : "muted"}
+          />
+          <StatusPill
+            label="Активный квест"
+            value={u.quests?.active_title_ru ?? "нет"}
+            tone={u.quests?.active_title_ru ? "success" : "muted"}
+          />
+          <StatusPill
+            label="Выдан"
+            value={
+              u.quests?.active_assigned_at
+                ? fmtDate(u.quests.active_assigned_at)
+                : "—"
+            }
+            tone="muted"
+          />
+        </div>
+      </div>
+
       <GrantCard userId={u.id} onDone={(nu) => setU(nu)} />
 
       {/* ── Написать сообщение ───────────── */}
