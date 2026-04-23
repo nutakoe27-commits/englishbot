@@ -21,6 +21,7 @@ End-of-utterance (EOU) управляется клиентом:
 import asyncio
 import json
 import logging
+import re
 from typing import Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -43,6 +44,35 @@ MAX_HISTORY_TURNS = 6
 
 # Период «тика» учёта времени для бесплатных юзеров (секунды).
 USAGE_HEARTBEAT_SECONDS = 5
+
+# ─── Language guard: отказ принимать русскую речь ─────────────────────
+# Whisper при language="en" в большинстве случаев переводит/транслитерирует
+# русскую речь, но иногда возвращает кириллицу. Проверяем долю кириллических
+# букв среди всех букв фразы — если получилась, блокируем.
+_CYRILLIC_RE = re.compile(r"[Ѐ-ӿԀ-ԯ]")
+_LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
+
+RUSSIAN_REMINDER_EN = (
+    "Let's stick to English here — I won't understand Russian. "
+    "Try saying it in English, even with mistakes, that's fine."
+)
+
+
+def _is_russian_utterance(text: str) -> bool:
+    """Есть ли значимая доля кириллицы в тексте.
+
+    Порог: хотя бы 3 кириллические буквы И доля ≥ 30% от всех букв.
+    Это исключает ложные срабатывания на редкие вкрапления
+    кириллицы (например имя бренда или случайный символ).
+    """
+    if not text:
+        return False
+    cyr = _CYRILLIC_RE.findall(text)
+    letters = _LETTER_RE.findall(text)
+    if len(cyr) < 3:
+        return False
+    total = len(letters) if letters else len(cyr)
+    return total > 0 and (len(cyr) / total) >= 0.3
 
 
 async def _usage_watchdog(websocket: WebSocket, limits_ctx) -> None:
@@ -279,8 +309,9 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
 
     # Голосовой режим — нужны STT и TTS.
     try:
-        # Whisper всегда в автодетекте (язык речи определяется моделью самостоятельно).
-        stt = get_stt_provider(language="")
+        # Принудительно английский: бот для практики английского,
+        # автодетект пускает в LLM русскую речь — это ломает сценарий.
+        stt = get_stt_provider(language="en")
     except Exception as exc:
         logger.error("Не удалось создать STT-провайдера: %s", exc)
         await websocket.close(code=1011, reason="Server misconfiguration: STT provider")
@@ -381,6 +412,27 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
 
     async def handle_user_utterance(text: str) -> None:
         """Для готовой реплики пользователя: LLM в ответ и озвучка."""
+        # Language guard: если Whisper всё же распознал кириллицу —
+        # не отдаём в LLM, но показываем всплывающую подсказку на английском.
+        if _is_russian_utterance(text):
+            logger.warning("[lang-guard] дропаем русскую реплику: %r", text[:120])
+            if websocket.client_state == WebSocketState.CONNECTED:
+                # Показываем, что услышал — для обратной связи (как и обычно).
+                await websocket.send_json({
+                    "type": "text",
+                    "role": "user",
+                    "text": text,
+                })
+                # Реплику тьютора на английском — без LLM, фиксированную.
+                await websocket.send_json({
+                    "type": "text",
+                    "role": "tutor",
+                    "text": RUSSIAN_REMINDER_EN,
+                })
+            # Историю не трогаем — LLM не должен видеть русскую реплику в контексте.
+            await send_tts(RUSSIAN_REMINDER_EN)
+            return
+
         if websocket.client_state == WebSocketState.CONNECTED:
             await websocket.send_json({
                 "type": "text",
