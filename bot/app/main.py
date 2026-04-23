@@ -1117,11 +1117,16 @@ async def cb_battle_accept(callback: CallbackQuery) -> None:
 
     await callback.answer("Вызов принят — лови задание в личке.")
 
+    # Тянем ники участников — покажем их в карточке и в DM-ах.
+    initiator_display = await _display_name_for(result.initiator_tg_id)
+    opponent_display = await _display_name_for(result.opponent_tg_id)
+
     # Редактируем chat-сообщение: битва принята, оба получили задание
     topic_line = f"<b>Тема:</b> {result.topic_title_ru}"
     chat_text = (
         f"⚔️ <b>Вызов принят</b>\n\n"
-        f"{topic_line}\n\n"
+        f"{topic_line}\n"
+        f"<b>Участники:</b> {initiator_display} vs {opponent_display}\n\n"
         f"Оба участника получили задание в ЛС. После записи обоих "
         f"ответов ИИ-судья объявит победителя прямо здесь."
     )
@@ -1150,6 +1155,7 @@ async def cb_battle_accept(callback: CallbackQuery) -> None:
             chat_id=result.initiator_tg_id,
             text=(
                 dm_text_common
+                + f"<b>Соперник:</b> {opponent_display}\n"
                 + f"<b>Твоя позиция:</b> {result.side_a_ru}\n\n"
                 + "Открывай Mini App и записывай 60-секундный аргумент."
             ),
@@ -1166,6 +1172,7 @@ async def cb_battle_accept(callback: CallbackQuery) -> None:
             chat_id=result.opponent_tg_id,
             text=(
                 dm_text_common
+                + f"<b>Соперник:</b> {initiator_display}\n"
                 + f"<b>Твоя позиция:</b> {result.side_b_ru}\n\n"
                 + "Открывай Mini App и записывай 60-секундный аргумент."
             ),
@@ -1177,6 +1184,22 @@ async def cb_battle_accept(callback: CallbackQuery) -> None:
             "[battle] не удалось отправить DM оппоненту %s: %s",
             result.opponent_tg_id, exc,
         )
+
+
+async def _display_name_for(tg_id: int) -> str:
+    """Возвращает красивое имя для показа: @username > First Last > Player <id>."""
+    if not tg_id:
+        return "Player"
+    try:
+        chat = await bot.get_chat(tg_id)
+        if getattr(chat, "username", None):
+            return f"@{chat.username}"
+        parts = [p for p in (getattr(chat, "first_name", None), getattr(chat, "last_name", None)) if p]
+        if parts:
+            return " ".join(parts)
+    except Exception as exc:
+        logger.debug("[battle] get_chat(%s) failed: %s", tg_id, exc)
+    return f"Player {tg_id}"
 
 
 @dp.callback_query(lambda c: c.data == "battle:noop")

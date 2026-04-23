@@ -33,6 +33,8 @@ interface BattleState {
   other_recorded: boolean;
   winner: string | null; // "a" | "b" | "draw" | null
   judge_comment: string | null;
+  initiator_name: string | null;
+  opponent_name: string | null;
 }
 
 type Phase =
@@ -250,21 +252,24 @@ export function BattleScreen({ battleId, side }: Props) {
   }
 
   const myPosition = state.my_side === "a" ? state.side_a_ru : state.side_b_ru;
+  const opponentDisplayName =
+    state.my_side === "a" ? state.opponent_name : state.initiator_name;
 
   if (phase === "judged") {
     return <JudgedView state={state} />;
   }
 
   if (phase === "waiting-opponent") {
+    const waitingLine = state.other_recorded
+      ? "Оба аргумента записаны — ждём вердикта ИИ-судьи…"
+      : opponentDisplayName
+      ? `Ждём, пока ${opponentDisplayName} запишет свой ответ. Результат придёт в чат, где был брошен вызов.`
+      : "Ждём, пока соперник запишет свой ответ. Результат придёт в чат, где был брошен вызов.";
     return (
       <Center>
         <div style={{ textAlign: "center", maxWidth: 360 }}>
           <h2 style={{ color: "#fff" }}>Запись отправлена</h2>
-          <p style={{ color: "#bbb", marginTop: 16 }}>
-            {state.other_recorded
-              ? "Оба аргумента записаны — ждём вердикта ИИ-судьи…"
-              : "Ждём, пока соперник запишет свой ответ. Результат придёт в чат, где был брошен вызов."}
-          </p>
+          <p style={{ color: "#bbb", marginTop: 16 }}>{waitingLine}</p>
           <div style={{ marginTop: 24, color: "#888", fontSize: 13 }}>
             Можно закрыть — бот напишет, когда всё готово.
           </div>
@@ -282,6 +287,11 @@ export function BattleScreen({ battleId, side }: Props) {
         <div style={{ fontSize: 20, fontWeight: 600, color: "#fff" }}>
           {state.topic_title_ru}
         </div>
+        {state.initiator_name && state.opponent_name && (
+          <div style={{ marginTop: 6, fontSize: 13, color: "#9aa4b8" }}>
+            {state.initiator_name} vs {state.opponent_name}
+          </div>
+        )}
         <div
           style={{
             marginTop: 14,
@@ -306,6 +316,11 @@ export function BattleScreen({ battleId, side }: Props) {
           <div style={{ fontSize: 15, color: "#fff", fontWeight: 500 }}>
             {myPosition}
           </div>
+          {opponentDisplayName && (
+            <div style={{ marginTop: 10, fontSize: 12, color: "#89a" }}>
+              Соперник: <span style={{ color: "#ddd" }}>{opponentDisplayName}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -366,6 +381,11 @@ function JudgedView({ state }: { state: BattleState }) {
           {draw ? "🤝" : iWon ? "🏆" : "💔"}
         </div>
         <h2 style={{ color }}>{title}</h2>
+        {state.initiator_name && state.opponent_name && (
+          <div style={{ fontSize: 14, color: "#9aa4b8", marginTop: 4 }}>
+            {state.initiator_name} vs {state.opponent_name}
+          </div>
+        )}
         <div style={{ fontSize: 13, color: "#888", marginTop: 8 }}>
           {state.topic_title_ru}
         </div>

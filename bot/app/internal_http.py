@@ -56,9 +56,10 @@ async def _handle_battle_judged(request: web.Request) -> web.Response:
     if state.get("status") != "judged":
         return web.json_response({"error": "battle not judged yet"}, status=409)
 
-    # Узнаём имена участников через Telegram (chat=user_id ⇒ получим профиль).
-    a_name = await _name_of(bot, state.get("initiator_tg_id"))
-    b_name = await _name_of(bot, state.get("opponent_tg_id"))
+    # Сначала пробуем имя из backend-state (там username из базы, собранный при
+    # первом /start), иначе дотягиваем через bot.get_chat.
+    a_name = state.get("initiator_name") or await _name_of(bot, state.get("initiator_tg_id"))
+    b_name = state.get("opponent_name") or await _name_of(bot, state.get("opponent_tg_id"))
 
     # Рендерим сообщение. Скоры приходят как dict, считаем total сами.
     text = _render_judge_message(state, a_name=a_name, b_name=b_name)

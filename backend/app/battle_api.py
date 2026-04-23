@@ -130,6 +130,10 @@ class BattleStateOut(BaseModel):
     topic_title_ru: str
     initiator_tg_id: int
     opponent_tg_id: Optional[int]
+    # Человекочитаемые имена участников (для Mini App и любых UI-поверхностей).
+    # Формат: "@username" если есть username, иначе "First Last", иначе "Player <tg_id>".
+    initiator_name: Optional[str] = None
+    opponent_name: Optional[str] = None
     a_recorded: bool
     b_recorded: bool
     winner: Optional[str]
@@ -262,13 +266,40 @@ async def api_get_battle(battle_id: int) -> BattleStateOut:
     return await _load_battle_state(battle_id)
 
 
+def _format_user_display_name(user: Optional[User], tg_id: Optional[int]) -> Optional[str]:
+    """Красивое имя пользователя для UI: @username > First Last > Player <tg_id>."""
+    if user is None:
+        if tg_id:
+            return f"Player {tg_id}"
+        return None
+    if user.username:
+        return f"@{user.username}"
+    parts = [p for p in (user.first_name, user.last_name) if p]
+    if parts:
+        return " ".join(parts)
+    return f"Player {user.tg_id}"
+
+
 async def _load_battle_state(battle_id: int, *, viewer_tg_id: Optional[int] = None) -> BattleStateOut:
     async with db_session() as s:
         res = await s.execute(select(Battle).where(Battle.id == battle_id))
         b = res.scalar_one_or_none()
-    if b is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "battle not found")
+        if b is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "battle not found")
+        # Тянем профили участников одним запросом (может вернуть 1 или 2 строки).
+        tg_ids = [b.initiator_tg_id]
+        if b.opponent_tg_id:
+            tg_ids.append(b.opponent_tg_id)
+        users_res = await s.execute(select(User).where(User.tg_id.in_(tg_ids)))
+        users_by_tg = {u.tg_id: u for u in users_res.scalars().all()}
     topic = battle_topics.get_by_key(b.topic_key)
+    initiator_name = _format_user_display_name(
+        users_by_tg.get(b.initiator_tg_id), b.initiator_tg_id,
+    )
+    opponent_name = _format_user_display_name(
+        users_by_tg.get(b.opponent_tg_id) if b.opponent_tg_id else None,
+        b.opponent_tg_id,
+    )
 
     my_side: Optional[str] = None
     side_ru: Optional[str] = None
@@ -297,6 +328,8 @@ async def _load_battle_state(battle_id: int, *, viewer_tg_id: Optional[int] = No
         topic_title_ru=topic.title_ru if topic else b.topic_key,
         initiator_tg_id=b.initiator_tg_id,
         opponent_tg_id=b.opponent_tg_id,
+        initiator_name=initiator_name,
+        opponent_name=opponent_name,
         a_recorded=a_rec,
         b_recorded=b_rec,
         winner=b.winner,
