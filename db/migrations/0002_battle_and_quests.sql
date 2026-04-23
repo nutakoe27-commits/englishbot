@@ -84,9 +84,10 @@ CREATE TABLE IF NOT EXISTS quests_catalog (
 
 
 -- ─── user_quests ─────────────────────────────────────────────────────────
+-- ВАЖНО: типы user_id и id в users должны совпадать (bigint unsigned)
 CREATE TABLE IF NOT EXISTS user_quests (
-    id                  BIGINT NOT NULL AUTO_INCREMENT,
-    user_id             BIGINT NOT NULL,
+    id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id             BIGINT UNSIGNED NOT NULL,
     quest_key           VARCHAR(64) NOT NULL,
 
     assigned_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -110,7 +111,7 @@ CREATE TABLE IF NOT EXISTS user_quests (
 -- Не трогаем used_seconds, но даём «крышу» выше обычного лимита.
 -- Логика лимитов в backend/app/limits.py станет: free_seconds + bonus_seconds.
 ALTER TABLE daily_usage
-    ADD COLUMN IF NOT EXISTS bonus_seconds INT NOT NULL DEFAULT 0
+    ADD COLUMN IF NOT EXISTS bonus_seconds INT UNSIGNED NOT NULL DEFAULT 0
         COMMENT 'Бонус от выполненного квеста (сбрасывается вместе с usage_date)';
 
 
