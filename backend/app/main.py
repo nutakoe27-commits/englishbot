@@ -21,6 +21,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .admin import router as admin_router
+from .battle_api import router as battle_router
 from .config import settings
 from .db import db_session, init_db
 from .limits import LimitsContext, build_limits_context
@@ -117,6 +118,7 @@ def validate_telegram_init_data(init_data_raw: str, bot_token: str) -> Optional[
 # ─── Healthcheck ──────────────────────────────────────────────────────────────
 
 app.include_router(admin_router)
+app.include_router(battle_router)
 
 
 @app.get("/health", tags=["System"])
