@@ -406,6 +406,100 @@ async def credit_subscription_payment(
 
 # ─── Фоновая корутина рассылки ────────────────────────────────────────────────
 
+# ─── Утренний push квеста ────────────────────────────────────────────────
+# Правило: если у юзера reminder_enabled=TRUE, квест уходит в тот же час,
+# что и напоминание (совмещённое сообщение). Если reminder выключен — шлём
+# в 9:00 МСК отдельно. Подписка не требуется — квест даёт +30 минут к лимиту,
+# это как раз мотивация для free-юзеров.
+
+QUEST_DEFAULT_PUSH_HOUR_MSK = 9  # для юзеров, у которых reminder выключен
+
+
+def _quest_push_text(title_ru: str, description_ru: str, reward_seconds: int) -> str:
+    reward_min = max(1, reward_seconds // 60)
+    return (
+        f"🎯 <b>Квест дня: {title_ru}</b>\n\n"
+        f"{description_ru}\n\n"
+        f"<b>Награда:</b> +{reward_min} мин к дневному лимиту.\n"
+        f"Проверяется автоматически по разговору в Mini App."
+    )
+
+
+async def _send_quest_pushes_for_hour(bot: Bot, hour_msk: int, miniapp_url: str) -> None:
+    """Рассылка квеста на этот час. Импортируем backend_client локально,
+    чтобы не требовать его для тестов reminders.py."""
+    if not is_db_ready():
+        return
+    assert _SessionMaker is not None
+
+    from . import backend_client as _bc
+
+    async with _SessionMaker() as s:
+        from sqlalchemy import func, or_, and_
+        # Кто получает квест в этот час?
+        condition = or_(
+            and_(
+                _User.reminder_enabled.is_(True),
+                func.hour(_User.reminder_time) == hour_msk,
+            ),
+            and_(
+                _User.reminder_enabled.is_(False),
+                hour_msk == QUEST_DEFAULT_PUSH_HOUR_MSK,
+            ),
+        )
+        res = await s.execute(
+            select(_User).where(
+                _User.is_blocked.is_(False),
+                condition,
+            )
+        )
+        users = list(res.scalars().all())
+
+    if not users:
+        return
+    logger.info("[quest-push] hour=%d: %d получателей", hour_msk, len(users))
+
+    sent, failed, blocked, skipped = 0, 0, 0, 0
+    kb_miniapp = _reminder_keyboard(miniapp_url)
+
+    for u in users:
+        try:
+            quest = await _bc.quest_assign(tg_id=u.tg_id, user_level=None)
+        except Exception as exc:
+            logger.warning("[quest-push] quest_assign для %s: %s", u.tg_id, exc)
+            skipped += 1
+            continue
+        if quest is None:
+            skipped += 1
+            continue
+        text = _quest_push_text(quest.title_ru, quest.description_ru, quest.reward_seconds)
+        try:
+            await bot.send_message(
+                chat_id=u.tg_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=kb_miniapp,
+            )
+            sent += 1
+        except TelegramForbiddenError:
+            blocked += 1
+            try:
+                await set_user_reminder(u.tg_id, enabled=False)
+            except Exception:
+                pass
+        except TelegramRetryAfter as exc:
+            await asyncio.sleep(exc.retry_after + 1)
+        except Exception as exc:
+            failed += 1
+            logger.warning("[quest-push] не отправлено tg_id=%s: %s", u.tg_id, exc)
+        await asyncio.sleep(0.05)
+
+    logger.info(
+        "[quest-push] hour=%d итог: sent=%d failed=%d blocked=%d skipped=%d",
+        hour_msk, sent, failed, blocked, skipped,
+    )
+
+
 async def _send_reminders_for_hour(bot: Bot, hour_msk: int, miniapp_url: str) -> None:
     """Один проход: найти всех юзеров для этого часа и разослать."""
     if not is_db_ready():
@@ -480,7 +574,13 @@ async def reminders_loop(bot: Bot, miniapp_url: str) -> None:
             logger.info("[reminders] следующая отправка через %.0f сек", sleep_s)
             await asyncio.sleep(sleep_s)
             now_msk = datetime.now(MSK)
+            # 1. Обычные reminders (кто включил напоминания на этот час).
             await _send_reminders_for_hour(bot, now_msk.hour, miniapp_url)
+            # 2. Квест дня (всем в тот же час + фолбэк 9:00 для выключенных).
+            try:
+                await _send_quest_pushes_for_hour(bot, now_msk.hour, miniapp_url)
+            except Exception as exc:
+                logger.error("[quest-push] цикл: %s", exc, exc_info=True)
         except asyncio.CancelledError:
             logger.info("[reminders] цикл остановлен")
             raise

@@ -8,8 +8,12 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     BotCommand,
     CallbackQuery,
+    ChosenInlineResult,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InlineQuery,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
     LabeledPrice,
     Message,
     PreCheckoutQuery,
@@ -17,6 +21,8 @@ from aiogram.types import (
     WebAppInfo,
 )
 from dotenv import load_dotenv
+
+from . import backend_client
 
 import json
 
@@ -217,6 +223,25 @@ GUIDE_TEXT = (
     "• <i>«Teach me 5 useful phrases for a job interview.»</i>\n"
     "• <i>«Pretend you're a tourist in Moscow and I'm helping you.»</i>\n"
     "• <i>«Let's discuss my favorite movie. I'll tell you about it.»</i>\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "⚔️ <b>Battle Mode — дуэль с другом</b>\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Самый быстрый способ спровоцировать себя говорить на английском.\n\n"
+    "1. В любом чате Telegram пишешь <code>@kmo_ai_english_bot battle</code>.\n"
+    "2. Кликаешь по карточке «Бросить вызов» — она улетает в чат.\n"
+    "3. Друг жмёт «Принять» — обоим в ЛС приходит тема и вопрос.\n"
+    "4. Каждый открывает Mini App и записывает <b>60 секунд</b> аргумента.\n"
+    "5. ИИ-судья оценивает грамматику, беглость и аргументацию — результат прилетает в чат.\n\n"
+    "На принятие вызова у соперника 24 часа. Подписка нужна только инициатору — "
+    "оппонент может быть новичком.\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "🎯 <b>Квест дня</b>\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Каждый день утром я выдаю тебе одну короткую задачу — например, "
+    "«используй 5 phrasal verbs» или «поговори в Past Perfect не меньше 3 раз».\n\n"
+    "Просто открываешь Mini App и разговариваешь как обычно. Я вижу по твоему транскрипту, "
+    "было ли условие выполнено, и начисляю <b>+30 минут</b> к дневному лимиту. Квесты сбрасываются в полночь МСК.\n\n"
+    "Посмотреть актуальный — /quest.\n\n"
     "Готов? Жми «🎤 Начать разговор» из /start. Удачи! 🚀"
 )
 
@@ -252,10 +277,38 @@ async def cmd_help(message: Message) -> None:
             "/profile — твой прогресс и статистика\n"
             "/subscribe — информация о подписке\n"
             "/reminder — настройка ежедневного напоминания\n"
+            "/battle — англо-дуэль с другом (ИИ-судья оценивает ответы)\n"
+            "/quest — твой квест дня (+30 мин к дневному лимиту)\n"
             "/help — эта справка\n\n"
-            "Чтобы начать практику — нажми «🎤 Начать разговор» в /start."
+            "Чтобы начать практику — нажми «🎤 Начать разговор» в /start. "
+            "Для дуэли с другом в любом чате: <code>@kmo_ai_english_bot battle</code>."
         ),
         parse_mode="HTML",
+    )
+
+
+# ─── /quest ──────────────────────────────────────────────────────────────────
+@dp.message(Command("quest"))
+async def cmd_quest(message: Message) -> None:
+    if not message.from_user:
+        return
+    tg_id = message.from_user.id
+    quest = await backend_client.quest_assign(tg_id=tg_id, user_level=None)
+    if quest is None:
+        await message.answer(
+            "Не удалось получить квест. Запусти /start и попробуй ещё раз.",
+        )
+        return
+    reward_min = max(1, quest.reward_seconds // 60)
+    await message.answer(
+        text=(
+            f"🎯 <b>Квест дня: {quest.title_ru}</b>\n\n"
+            f"{quest.description_ru}\n\n"
+            f"<b>Награда:</b> +{reward_min} мин к дневному лимиту.\n"
+            f"Проверяется автоматически по разговору в Mini App."
+        ),
+        parse_mode="HTML",
+        reply_markup=_miniapp_keyboard(),
     )
 
 
@@ -853,6 +906,277 @@ async def on_successful_payment(message: Message) -> None:
     )
 
 
+# ─── Battle Mode ─────────────────────────────────────────────────────────────
+# Как это работает:
+#   1. Юзер в ЛЮБОМ чате пишет `@kmo_ai_english_bot battle` → inline_query.
+#      Мы показываем одну "карточку" — при клике она постится в чат.
+#   2. На chosen_inline_result дёргаем backend.battle_create (получаем id +
+#      тему). Отредактировать уже отправленное inline-сообщение мы можем
+#      через inline_message_id, которое Telegram присылает в этом же апдейте.
+#   3. Кнопка «⚔️ Принять вызов» — callback_data="battle:accept:<id>".
+#      Оппонент жмёт → вызываем battle_accept → даём обоим ссылку на Mini App
+#      с deep-link startapp=battle_<id>_<side>.
+#   4. Оба записывают по 60 сек в Mini App → запись улетает в backend →
+#      LLM-судья → результат постится обратно в чат через edit_message.
+
+BATTLE_INTRO = (
+    "⚔️ <b>Battle Mode</b> — англо-дуэль с другом.\n\n"
+    "Бросай вызов в любом чате — пишешь <code>@kmo_ai_english_bot battle</code>, "
+    "и карточка с темой прилетает в чат. Друг жмёт «Принять», вы оба "
+    "записываете 60-секундный аргумент на английском, а ИИ-судья оценивает "
+    "грамматику, беглость и аргументацию и называет победителя.\n\n"
+    "<b>Что даёт:</b> быстрый способ практиковать speaking без учителя — "
+    "и это реально весело. Приглашай друзей, даже если у них нет подписки "
+    "(оппоненту бот не нужен)."
+)
+
+
+def _battle_chat_keyboard(battle_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⚔️ Принять вызов",
+                    callback_data=f"battle:accept:{battle_id}",
+                )
+            ],
+        ]
+    )
+
+
+def _battle_pending_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура в момент, когда только что отправили инлайн-карточку,
+    но backend ещё не дал id. Telegram требует что-то отрисовать — сделаем
+    заглушку, которая даст «Обновить»."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⏳ Создаём вызов…",
+                    callback_data="battle:noop",
+                )
+            ],
+        ]
+    )
+
+
+def _battle_miniapp_keyboard(battle_id: int, side: str) -> InlineKeyboardMarkup:
+    """Кнопка «Записать ответ» → Mini App со startapp=battle_<id>_<side>.
+
+    Telegram WebAppInfo не поддерживает startapp в прямом виде у инлайн-кнопки
+    (это для t.me-ссылок). Поэтому даём ссылку t.me/<bot>?startapp=... через
+    InlineKeyboardButton.url — Telegram откроет Mini App с нужным payload.
+    """
+    start_param = f"battle_{battle_id}_{side}"
+    url = f"https://t.me/kmo_ai_english_bot?startapp={start_param}"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎤 Записать ответ (60 сек)", url=url)],
+        ]
+    )
+
+
+@dp.message(Command("battle"))
+async def cmd_battle(message: Message) -> None:
+    """Объяснить, как бросить вызов."""
+    await message.answer(
+        text=BATTLE_INTRO,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="⚔️ Бросить вызов другу",
+                        switch_inline_query="battle",
+                    )
+                ],
+            ]
+        ),
+    )
+
+
+@dp.inline_query()
+async def inline_battle(query: InlineQuery) -> None:
+    """Показываем одну карточку — "Бросить вызов"."""
+    q = (query.query or "").strip().lower()
+    # Показываем карточку для любого запроса — чтобы юзер не гадал с синтаксисом.
+    # Если хочется фильтровать — раскомментируй условие.
+    # if q and q != "battle":
+    #     await query.answer(results=[], cache_time=1)
+    #     return
+    _ = q
+
+    article = InlineQueryResultArticle(
+        id="battle:new",
+        title="⚔️ Бросить вызов на англо-дуэль",
+        description="60 сек на английском · ИИ-судья выберет победителя",
+        input_message_content=InputTextMessageContent(
+            message_text=(
+                "⚔️ <b>Вызов на англо-дуэль!</b>\n\n"
+                "Тема придёт сразу после принятия. У каждого будет 60 секунд, "
+                "чтобы записать аргумент на английском. ИИ-судья оценит "
+                "грамматику, беглость и аргументацию.\n\n"
+                "<i>Создаём вызов…</i>"
+            ),
+            parse_mode="HTML",
+        ),
+        reply_markup=_battle_pending_keyboard(),
+    )
+    await query.answer(
+        results=[article],
+        cache_time=1,
+        is_personal=True,
+    )
+
+
+@dp.chosen_inline_result()
+async def on_inline_chosen(chosen: ChosenInlineResult) -> None:
+    """Юзер кликнул по карточке — значит сообщение уже улетело в чат.
+    Создаём battle в backend и редактируем inline-сообщение."""
+    if chosen.result_id != "battle:new":
+        return
+    if not chosen.inline_message_id:
+        # Telegram не дал inline_message_id — нечего редактировать
+        logger.warning("[battle] chosen_inline_result без inline_message_id")
+        return
+    tg_id = chosen.from_user.id
+    result = await backend_client.battle_create(
+        initiator_tg_id=tg_id,
+        chat_id=0,  # у inline нет конкретного chat_id
+        chat_message_id=None,
+    )
+    if result is None:
+        try:
+            await bot.edit_message_text(
+                inline_message_id=chosen.inline_message_id,
+                text=(
+                    "⚔️ <b>Не удалось создать вызов</b>\n\n"
+                    "Возможно, нужна активная подписка или бэкенд недоступен. "
+                    "Напиши мне /battle в личку, чтобы разобраться."
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            logger.warning("[battle] edit_message fail: %s", exc)
+        return
+
+    text = (
+        f"⚔️ <b>Вызов на англо-дуэль</b>\n\n"
+        f"<b>Тема:</b> {result.topic_title_ru}\n\n"
+        f"Правила: у каждого 60 секунд, чтобы записать аргумент на "
+        f"английском. ИИ-судья оценит грамматику, беглость и аргументацию. "
+        f"Призыватель уже в игре — ждём оппонента.\n\n"
+        f"<i>У вас 24 часа на принятие.</i>"
+    )
+    try:
+        await bot.edit_message_text(
+            inline_message_id=chosen.inline_message_id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=_battle_chat_keyboard(result.id),
+        )
+    except Exception as exc:
+        logger.warning("[battle] edit_message_text fail: %s", exc)
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("battle:accept:"))
+async def cb_battle_accept(callback: CallbackQuery) -> None:
+    if not callback.data:
+        await callback.answer()
+        return
+    try:
+        battle_id = int(callback.data.rsplit(":", 1)[-1])
+    except ValueError:
+        await callback.answer("Кривой id", show_alert=True)
+        return
+
+    opponent_tg_id = callback.from_user.id
+    result = await backend_client.battle_accept(
+        battle_id=battle_id, opponent_tg_id=opponent_tg_id,
+    )
+    if result is None:
+        await callback.answer(
+            "Вызов уже принят, просрочен или ты сам его создал.",
+            show_alert=True,
+        )
+        return
+
+    if result.initiator_tg_id == opponent_tg_id:
+        await callback.answer(
+            "Нельзя принимать собственный вызов — позови кого-нибудь.",
+            show_alert=True,
+        )
+        return
+
+    await callback.answer("Вызов принят — лови задание в личке.")
+
+    # Редактируем chat-сообщение: битва принята, оба получили задание
+    topic_line = f"<b>Тема:</b> {result.topic_title_ru}"
+    chat_text = (
+        f"⚔️ <b>Вызов принят</b>\n\n"
+        f"{topic_line}\n\n"
+        f"Оба участника получили задание в ЛС. После записи обоих "
+        f"ответов ИИ-судья объявит победителя прямо здесь."
+    )
+    try:
+        if callback.inline_message_id:
+            await bot.edit_message_text(
+                inline_message_id=callback.inline_message_id,
+                text=chat_text,
+                parse_mode="HTML",
+            )
+        elif callback.message:
+            await callback.message.edit_text(
+                text=chat_text, parse_mode="HTML",
+            )
+    except Exception as exc:
+        logger.warning("[battle] edit accepted msg fail: %s", exc)
+
+    # Шлём задания в ЛС каждому
+    dm_text_common = (
+        f"⚔️ <b>Battle #{result.id}</b>\n\n"
+        f"<b>Тема:</b> {result.topic_title_ru}\n"
+        f"<b>Вопрос:</b> <i>{result.prompt_en}</i>\n\n"
+    )
+    try:
+        await bot.send_message(
+            chat_id=result.initiator_tg_id,
+            text=(
+                dm_text_common
+                + f"<b>Твоя позиция:</b> {result.side_a_ru}\n\n"
+                + "Открывай Mini App и записывай 60-секундный аргумент."
+            ),
+            parse_mode="HTML",
+            reply_markup=_battle_miniapp_keyboard(result.id, "a"),
+        )
+    except Exception as exc:
+        logger.warning(
+            "[battle] не удалось отправить DM инициатору %s: %s",
+            result.initiator_tg_id, exc,
+        )
+    try:
+        await bot.send_message(
+            chat_id=result.opponent_tg_id,
+            text=(
+                dm_text_common
+                + f"<b>Твоя позиция:</b> {result.side_b_ru}\n\n"
+                + "Открывай Mini App и записывай 60-секундный аргумент."
+            ),
+            parse_mode="HTML",
+            reply_markup=_battle_miniapp_keyboard(result.id, "b"),
+        )
+    except Exception as exc:
+        logger.warning(
+            "[battle] не удалось отправить DM оппоненту %s: %s",
+            result.opponent_tg_id, exc,
+        )
+
+
+@dp.callback_query(lambda c: c.data == "battle:noop")
+async def cb_battle_noop(callback: CallbackQuery) -> None:
+    await callback.answer("Секунду, создаю вызов…")
+
+
 async def _set_bot_commands() -> None:
     """Задать список команд, который виден в меню Telegram."""
     await bot.set_my_commands(
@@ -862,6 +1186,8 @@ async def _set_bot_commands() -> None:
             BotCommand(command="profile", description="Мой профиль"),
             BotCommand(command="subscribe", description="Подписка"),
             BotCommand(command="reminder", description="Напоминания"),
+            BotCommand(command="battle", description="Англо-дуэль с другом"),
+            BotCommand(command="quest", description="Мой квест дня"),
             BotCommand(command="help", description="Справка по командам"),
         ]
     )
