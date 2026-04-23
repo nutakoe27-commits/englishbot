@@ -420,15 +420,23 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
 
     # Сегодня
     used_today = profile["used_seconds_today"]
+    bonus_today = int(profile.get("bonus_seconds_today") or 0)
     lines.append("<b>⏱ Сегодня</b>")
     if profile["has_subscription"]:
         lines.append(f"Практика: <b>{_fmt_minutes(used_today)}</b> — без лимитов")
     else:
         limit_min = FREE_DAILY_SECONDS // 60
-        left_sec = max(0, FREE_DAILY_SECONDS - used_today)
-        lines.append(
-            f"Практика: <b>{_fmt_minutes(used_today)}</b> из {limit_min} мин"
-        )
+        total_limit = FREE_DAILY_SECONDS + bonus_today
+        left_sec = max(0, total_limit - used_today)
+        if bonus_today > 0:
+            lines.append(
+                f"Практика: <b>{_fmt_minutes(used_today)}</b> из "
+                f"{limit_min} мин + бонус <b>{_fmt_minutes(bonus_today)}</b>"
+            )
+        else:
+            lines.append(
+                f"Практика: <b>{_fmt_minutes(used_today)}</b> из {limit_min} мин"
+            )
         if left_sec > 0:
             lines.append(
                 f"Осталось: <b>{_fmt_minutes(left_sec)}</b> (сброс в 00:00 МСК)"
@@ -443,6 +451,42 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
     total_sec = profile["used_seconds_total"]
     lines.append("<b>📈 Всего практики</b>")
     lines.append(f"<b>{_fmt_total_practice(total_sec)}</b> за всё время")
+    lines.append("")
+
+    # Battle-статистика
+    b_total = int(profile.get("battles_total") or 0)
+    b_won = int(profile.get("battles_won") or 0)
+    b_draw = int(profile.get("battles_draw") or 0)
+    b_lost = int(profile.get("battles_lost") or 0)
+    b_inprog = int(profile.get("battles_in_progress") or 0)
+    lines.append("<b>🎯 Battle</b>")
+    if b_total == 0 and b_inprog == 0:
+        lines.append(
+            "Ещё не сыграно ни одного батла. Попробуй /battle — "
+            "брось вызов другу."
+        )
+    else:
+        lines.append(
+            f"Сыграно: <b>{b_total}</b> · побед <b>{b_won}</b> · "
+            f"ничьих <b>{b_draw}</b> · поражений <b>{b_lost}</b>"
+        )
+        if b_inprog > 0:
+            lines.append(f"В процессе: <b>{b_inprog}</b>")
+    lines.append("")
+
+    # Квесты
+    q_total = int(profile.get("quests_completed_total") or 0)
+    q_week = int(profile.get("quests_completed_7d") or 0)
+    q_active = profile.get("quest_active_title")
+    lines.append("<b>✨ Квесты</b>")
+    if q_total == 0 and not q_active:
+        lines.append("Пока ни одного. Попробуй /quest — получи бонусные минуты.")
+    else:
+        lines.append(
+            f"Выполнено всего: <b>{q_total}</b> · за неделю: <b>{q_week}</b>"
+        )
+        if q_active:
+            lines.append(f"Активный: <b>{q_active}</b>")
     lines.append("")
 
     # Напоминания

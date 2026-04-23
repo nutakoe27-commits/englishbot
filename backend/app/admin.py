@@ -56,6 +56,23 @@ async def require_admin_token(
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
 
+class BattleMetrics(BaseModel):
+    total: int = 0
+    open: int = 0
+    in_play: int = 0  # accepted + recording
+    judged: int = 0
+    judged_today: int = 0
+    expired: int = 0
+
+
+class QuestMetrics(BaseModel):
+    assigned_total: int = 0
+    completed_total: int = 0
+    completed_today: int = 0
+    active_now: int = 0  # выданные сегодня, ещё не выполнены/не протухли
+    completion_rate: float = 0.0
+
+
 class MetricsResponse(BaseModel):
     total_users: int
     active_subscriptions: int
@@ -65,6 +82,9 @@ class MetricsResponse(BaseModel):
     mau: int = Field(description="За последние 30 дней")
     minutes_today: int = Field(description="Суммарное время за сегодня (минуты)")
     total_revenue_rub: float
+    new_users_today: int = 0
+    battles: BattleMetrics = BattleMetrics()
+    quests: QuestMetrics = QuestMetrics()
 
 
 class UserBrief(BaseModel):
@@ -79,12 +99,33 @@ class UserBrief(BaseModel):
     created_at: str
 
 
+class UserBattleStats(BaseModel):
+    total: int = 0
+    won: int = 0
+    lost: int = 0
+    draw: int = 0
+    in_progress: int = 0
+    last_at: Optional[str] = None
+
+
+class UserQuestStats(BaseModel):
+    completed_total: int = 0
+    completed_7d: int = 0
+    active_key: Optional[str] = None
+    active_title_ru: Optional[str] = None
+    active_assigned_at: Optional[str] = None
+
+
 class UserDetail(UserBrief):
     language_code: Optional[str]
     reminder_enabled: bool
     reminder_hour_msk: int
     used_seconds_today: int
     free_seconds_per_day: int
+    bonus_seconds_today: int = 0
+    used_seconds_total: int = 0
+    battles: UserBattleStats = UserBattleStats()
+    quests: UserQuestStats = UserQuestStats()
 
 
 class GrantRequest(BaseModel):
@@ -137,9 +178,88 @@ class BroadcastStartRequest(BaseModel):
 
 async def _user_to_detail(repo: Repo, u) -> UserDetail:
     """Полный профиль юзера — вернуть после POST-действия, чтобы фронт сразу обновился."""
+    from sqlalchemy import select, func, and_, or_
+    from .db.models import Battle, UserQuest, QuestCatalog, DailyUsage
+
     brief = await _user_to_brief(repo, u)
     used = await repo.get_used_seconds_today(u.id)
     free_seconds = await repo.get_kv_int("free_seconds_per_day", 600)
+    bonus = await repo.get_bonus_seconds_today(u.id)
+
+    # Всего практики за всё время.
+    total_used_res = await repo.s.execute(
+        select(func.coalesce(func.sum(DailyUsage.used_seconds), 0)).where(
+            DailyUsage.user_id == u.id,
+        )
+    )
+    used_total = int(total_used_res.scalar() or 0)
+
+    # Battle-статистика.
+    battles_stats = UserBattleStats()
+    tg_id = u.tg_id
+    battles_res = await repo.s.execute(
+        select(Battle).where(
+            or_(Battle.initiator_tg_id == tg_id, Battle.opponent_tg_id == tg_id)
+        ).order_by(Battle.created_at.desc())
+    )
+    user_battles = battles_res.scalars().all()
+    battles_stats.total = len(user_battles)
+    if user_battles:
+        battles_stats.last_at = (
+            user_battles[0].created_at.isoformat() if user_battles[0].created_at else None
+        )
+    for b in user_battles:
+        if b.status in ("open", "accepted", "recording"):
+            battles_stats.in_progress += 1
+            continue
+        if b.status != "judged":
+            continue
+        is_a = b.initiator_tg_id == tg_id
+        if b.winner == "tie":
+            battles_stats.draw += 1
+        elif (is_a and b.winner == "a") or (not is_a and b.winner == "b"):
+            battles_stats.won += 1
+        elif b.winner in ("a", "b"):
+            battles_stats.lost += 1
+
+    # Quest-статистика.
+    quests_stats = UserQuestStats()
+    completed_total_res = await repo.s.execute(
+        select(func.count(UserQuest.id)).where(
+            UserQuest.user_id == u.id,
+            UserQuest.completed_at.is_not(None),
+        )
+    )
+    quests_stats.completed_total = int(completed_total_res.scalar() or 0)
+    week_ago = msk_today() - timedelta(days=6)
+    completed_7d_res = await repo.s.execute(
+        select(func.count(UserQuest.id)).where(
+            UserQuest.user_id == u.id,
+            UserQuest.completed_at.is_not(None),
+            UserQuest.assigned_at >= week_ago,
+        )
+    )
+    quests_stats.completed_7d = int(completed_7d_res.scalar() or 0)
+    # Активный квест (сегодняшний, незавершённый).
+    active_res = await repo.s.execute(
+        select(UserQuest, QuestCatalog)
+        .join(QuestCatalog, QuestCatalog.key == UserQuest.quest_key)
+        .where(
+            UserQuest.user_id == u.id,
+            UserQuest.assigned_at >= msk_today(),
+            UserQuest.completed_at.is_(None),
+            UserQuest.expired_at.is_(None),
+        )
+        .order_by(UserQuest.assigned_at.desc())
+        .limit(1)
+    )
+    active_row = active_res.first()
+    if active_row is not None:
+        uq, qc = active_row
+        quests_stats.active_key = uq.quest_key
+        quests_stats.active_title_ru = qc.title_ru if qc else None
+        quests_stats.active_assigned_at = uq.assigned_at.isoformat() if uq.assigned_at else None
+
     return UserDetail(
         **brief.model_dump(),
         language_code=u.language_code,
@@ -147,6 +267,10 @@ async def _user_to_detail(repo: Repo, u) -> UserDetail:
         reminder_hour_msk=u.reminder_time.hour if u.reminder_time else 19,
         used_seconds_today=used,
         free_seconds_per_day=free_seconds,
+        bonus_seconds_today=bonus,
+        used_seconds_total=used_total,
+        battles=battles_stats,
+        quests=quests_stats,
     )
 
 
@@ -180,6 +304,10 @@ async def me() -> dict:
     dependencies=[Depends(require_admin_token)],
 )
 async def metrics() -> MetricsResponse:
+    from datetime import datetime
+    from sqlalchemy import select, func
+    from .db.models import Battle, UserQuest, User as UserModel
+
     today = msk_today()
     async with db_session() as s:
         repo = Repo(s)
@@ -191,6 +319,66 @@ async def metrics() -> MetricsResponse:
         mau = await repo.count_active_users_since(today - timedelta(days=29))
         seconds_today = await repo.total_used_seconds_today()
         revenue = await repo.total_revenue_rub()
+
+        # Новые сегодня: по created_at ≥ начало дня МСК (today-дата в колонке сохраняется UTC,
+        # но для счётчика достаточно «UTC-день назад»: сравниваем с today в UTC)
+        day_start_utc = datetime.combine(today, datetime.min.time())
+        new_today_res = await s.execute(
+            select(func.count(UserModel.id)).where(UserModel.created_at >= day_start_utc)
+        )
+        new_users_today = int(new_today_res.scalar() or 0)
+
+        # Battle metrics.
+        bm = BattleMetrics()
+        battle_rows = await s.execute(
+            select(Battle.status, func.count(Battle.id)).group_by(Battle.status)
+        )
+        for status_val, cnt in battle_rows.all():
+            cnt = int(cnt or 0)
+            bm.total += cnt
+            if status_val == "open":
+                bm.open = cnt
+            elif status_val in ("accepted", "recording"):
+                bm.in_play += cnt
+            elif status_val == "judged":
+                bm.judged = cnt
+            elif status_val == "expired":
+                bm.expired = cnt
+        judged_today_res = await s.execute(
+            select(func.count(Battle.id)).where(
+                Battle.status == "judged",
+                Battle.updated_at >= day_start_utc,
+            )
+        )
+        bm.judged_today = int(judged_today_res.scalar() or 0)
+
+        # Quest metrics.
+        qm = QuestMetrics()
+        assigned_res = await s.execute(select(func.count(UserQuest.id)))
+        qm.assigned_total = int(assigned_res.scalar() or 0)
+        completed_res = await s.execute(
+            select(func.count(UserQuest.id)).where(UserQuest.completed_at.is_not(None))
+        )
+        qm.completed_total = int(completed_res.scalar() or 0)
+        completed_today_res = await s.execute(
+            select(func.count(UserQuest.id)).where(
+                UserQuest.completed_at.is_not(None),
+                UserQuest.completed_at >= day_start_utc,
+            )
+        )
+        qm.completed_today = int(completed_today_res.scalar() or 0)
+        active_res = await s.execute(
+            select(func.count(UserQuest.id)).where(
+                UserQuest.assigned_at >= day_start_utc,
+                UserQuest.completed_at.is_(None),
+                UserQuest.expired_at.is_(None),
+            )
+        )
+        qm.active_now = int(active_res.scalar() or 0)
+        qm.completion_rate = (
+            round(qm.completed_total / qm.assigned_total, 3) if qm.assigned_total else 0.0
+        )
+
         return MetricsResponse(
             total_users=total,
             active_subscriptions=subs,
@@ -200,6 +388,9 @@ async def metrics() -> MetricsResponse:
             mau=mau,
             minutes_today=seconds_today // 60,
             total_revenue_rub=revenue,
+            new_users_today=new_users_today,
+            battles=bm,
+            quests=qm,
         )
 
 

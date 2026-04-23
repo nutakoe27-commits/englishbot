@@ -63,7 +63,40 @@ class _DailyUsage(_Base):
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
     used_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bonus_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class _Battle(_Base):
+    """Минимальное зеркало backend Battle (только нужные колонки)."""
+    __tablename__ = "battles"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    initiator_tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    opponent_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    winner: Mapped[Optional[str]] = mapped_column(String(8))
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class _UserQuest(_Base):
+    __tablename__ = "user_quests"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    quest_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    expired_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class _QuestCatalog(_Base):
+    __tablename__ = "quests_catalog"
+
+    key: Mapped[str] = mapped_column("key", String(64), primary_key=True)
+    title_ru: Mapped[str] = mapped_column(String(200), nullable=False)
+    reward_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class _SettingKV(_Base):
@@ -264,6 +297,15 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
         reminder_hour: int
         used_seconds_today: int
         used_seconds_total: int
+        bonus_seconds_today: int
+        battles_total: int
+        battles_won: int
+        battles_lost: int
+        battles_draw: int
+        battles_in_progress: int
+        quests_completed_total: int
+        quests_completed_7d: int
+        quest_active_title: Optional[str]
     """
     if not is_db_ready():
         return None
@@ -286,12 +328,18 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
             # Использование сегодня
             today = _msk_today()
             r_today = await s.execute(
-                select(_DailyUsage.used_seconds).where(
+                select(_DailyUsage.used_seconds, _DailyUsage.bonus_seconds).where(
                     _DailyUsage.user_id == u.id,
                     _DailyUsage.usage_date == today,
                 )
             )
-            used_today = int(r_today.scalar() or 0)
+            row_today = r_today.first()
+            if row_today is not None:
+                used_today = int(row_today[0] or 0)
+                bonus_today = int(row_today[1] or 0)
+            else:
+                used_today = 0
+                bonus_today = 0
 
             # Всего за всё время
             r_total = await s.execute(
@@ -300,6 +348,66 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
                 )
             )
             used_total = int(r_total.scalar() or 0)
+
+            # Battle-статистика: сыграно / победы / поражения / ничьи / в процессе.
+            # winner хранится как 'a'/'b'/'tie'; инициатор = сторона A, оппонент = сторона B.
+            tg = int(u.tg_id)
+            r_battles = await s.execute(
+                select(_Battle).where(
+                    (_Battle.initiator_tg_id == tg) | (_Battle.opponent_tg_id == tg)
+                )
+            )
+            battles_total = 0
+            battles_won = 0
+            battles_lost = 0
+            battles_draw = 0
+            battles_in_progress = 0
+            for b in r_battles.scalars().all():
+                status = (b.status or "").lower()
+                if status == "judged":
+                    battles_total += 1
+                    winner = (b.winner or "").lower()
+                    is_side_a = (b.initiator_tg_id == tg)
+                    if winner == "tie":
+                        battles_draw += 1
+                    elif (winner == "a" and is_side_a) or (winner == "b" and not is_side_a):
+                        battles_won += 1
+                    elif winner in ("a", "b"):
+                        battles_lost += 1
+                elif status in ("open", "accepted", "recording"):
+                    battles_in_progress += 1
+                # expired / canceled — не учитываем
+
+            # Квесты: выполнено всего и за последние 7 дней.
+            week_ago = datetime.utcnow() - timedelta(days=7)
+            r_q_total = await s.execute(
+                select(func.count(_UserQuest.id)).where(
+                    _UserQuest.user_id == u.id,
+                    _UserQuest.completed_at.isnot(None),
+                )
+            )
+            quests_completed_total = int(r_q_total.scalar() or 0)
+
+            r_q_week = await s.execute(
+                select(func.count(_UserQuest.id)).where(
+                    _UserQuest.user_id == u.id,
+                    _UserQuest.completed_at.isnot(None),
+                    _UserQuest.completed_at >= week_ago,
+                )
+            )
+            quests_completed_7d = int(r_q_week.scalar() or 0)
+
+            # Активный квест (назначен, не выполнен, не просрочен).
+            r_q_active = await s.execute(
+                select(_QuestCatalog.title_ru).select_from(_UserQuest).join(
+                    _QuestCatalog, _QuestCatalog.key == _UserQuest.quest_key
+                ).where(
+                    _UserQuest.user_id == u.id,
+                    _UserQuest.completed_at.is_(None),
+                    _UserQuest.expired_at.is_(None),
+                ).order_by(_UserQuest.assigned_at.desc()).limit(1)
+            )
+            quest_active_title = r_q_active.scalar_one_or_none()
 
             return {
                 "user_db_id": int(u.id),
@@ -312,6 +420,15 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
                 "reminder_hour": int(u.reminder_time.hour if u.reminder_time else 19),
                 "used_seconds_today": used_today,
                 "used_seconds_total": used_total,
+                "bonus_seconds_today": bonus_today,
+                "battles_total": battles_total,
+                "battles_won": battles_won,
+                "battles_lost": battles_lost,
+                "battles_draw": battles_draw,
+                "battles_in_progress": battles_in_progress,
+                "quests_completed_total": quests_completed_total,
+                "quests_completed_7d": quests_completed_7d,
+                "quest_active_title": quest_active_title,
             }
     except Exception as exc:
         logger.warning("[profile] get_user_profile упал: %s", exc)
