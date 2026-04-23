@@ -186,9 +186,10 @@ export function BattleScreen({ battleId, side }: Props) {
       try {
         const form = new FormData();
         form.append("audio", blob, "battle.webm");
-        const url = `${API_BASE}/api/battles/${battleId}/record-miniapp?side=${side}&init_data=${encodeURIComponent(
-          initData
-        )}`;
+        // init_data и side — как Form-поля (сервер принимает init_data = Form(...))
+        form.append("init_data", initData);
+        form.append("side", side);
+        const url = `${API_BASE}/api/battles/${battleId}/record-miniapp`;
         const res = await fetch(url, { method: "POST", body: form });
         if (!res.ok) {
           throw new Error(`upload failed: HTTP ${res.status}`);
