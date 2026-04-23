@@ -141,6 +141,11 @@ class BattleStateOut(BaseModel):
     my_side: Optional[str] = None  # "a" | "b" | None
     prompt_en: Optional[str] = None
     side_ru: Optional[str] = None
+    # Удобство для Mini App: с точки зрения текущего участника.
+    my_recorded: bool = False
+    other_recorded: bool = False
+    side_a_ru: Optional[str] = None
+    side_b_ru: Optional[str] = None
     # Мета для бота: куда отправить результат после судьи.
     chat_id: Optional[int] = None
     chat_message_id: Optional[int] = None
@@ -280,6 +285,11 @@ async def _load_battle_state(battle_id: int, *, viewer_tg_id: Optional[int] = No
                 side_ru = topic.side_b_ru
                 prompt_en = topic.prompt_en
 
+    a_rec = bool(b.a_audio_path)
+    b_rec = bool(b.b_audio_path)
+    my_rec = (my_side == "a" and a_rec) or (my_side == "b" and b_rec)
+    other_rec = (my_side == "a" and b_rec) or (my_side == "b" and a_rec)
+
     return BattleStateOut(
         id=b.id,
         status=b.status,
@@ -287,8 +297,8 @@ async def _load_battle_state(battle_id: int, *, viewer_tg_id: Optional[int] = No
         topic_title_ru=topic.title_ru if topic else b.topic_key,
         initiator_tg_id=b.initiator_tg_id,
         opponent_tg_id=b.opponent_tg_id,
-        a_recorded=bool(b.a_audio_path),
-        b_recorded=bool(b.b_audio_path),
+        a_recorded=a_rec,
+        b_recorded=b_rec,
         winner=b.winner,
         judge_comment=b.judge_comment,
         a_score=b.a_score,
@@ -296,6 +306,10 @@ async def _load_battle_state(battle_id: int, *, viewer_tg_id: Optional[int] = No
         my_side=my_side,
         side_ru=side_ru,
         prompt_en=prompt_en,
+        my_recorded=my_rec,
+        other_recorded=other_rec,
+        side_a_ru=topic.side_a_ru if topic else None,
+        side_b_ru=topic.side_b_ru if topic else None,
         chat_id=b.chat_id,
         chat_message_id=b.chat_message_id,
         inline_message_id=b.inline_message_id,
@@ -305,6 +319,38 @@ async def _load_battle_state(battle_id: int, *, viewer_tg_id: Optional[int] = No
 # ─── Mini App endpoints (валидация через initData) ────────────────────
 
 _BATTLE_AUDIO_DIR = pathlib.Path("/app/data/battles")
+
+
+def _looks_like_english(text: str) -> bool:
+    """Эвристика: True если текст похож на английский.
+
+    - Нет кириллицы / иврита / арабского / CJK / hangul.
+    - Доля латинских букв среди всех букв ≥ 0.6.
+    - Есть хотя бы одно "слово" (2+ latin-букв подряд) — отсекает "1, 2, 3".
+    """
+    if not text:
+        return False
+    for ch in text:
+        cp = ord(ch)
+        if (
+            0x0400 <= cp <= 0x052F or   # Cyrillic + supplement
+            0x0590 <= cp <= 0x05FF or   # Hebrew
+            0x0600 <= cp <= 0x06FF or   # Arabic
+            0x4E00 <= cp <= 0x9FFF or   # CJK Unified Ideographs
+            0x3040 <= cp <= 0x30FF or   # Hiragana + Katakana
+            0xAC00 <= cp <= 0xD7AF      # Hangul
+        ):
+            return False
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    latin = sum(1 for c in letters if "a" <= c.lower() <= "z")
+    if latin / len(letters) < 0.6:
+        return False
+    import re as _re
+    if not _re.search(r"[a-zA-Z]{2,}", text):
+        return False
+    return True
 
 
 @router.get("/battles/{battle_id}/state-miniapp", response_model=BattleStateOut)
@@ -377,9 +423,32 @@ async def api_record_battle_miniapp(
         log.error("[battle_api] STT failed battle=%s: %s", battle_id, exc)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"STT failed: {exc}")
     if not transcript.strip():
+        # Тишина / не распозналось: отклоняем с понятной ошибкой (аудио не сохраняем в battle)
         log.warning("[battle_api] empty transcript battle=%s side=%s", battle_id, side)
-        # Даём LLM хотя бы пустой маркер, чтобы судья мог судить
-        transcript = "(no speech detected)"
+        try:
+            audio_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "no_speech: не удалось распознать речь. Говори громче и чётче, попробуй ещё раз.",
+        )
+
+    # Проверка языка: Battle Mode — только английский. Отклоняем если в тексте
+    # есть кириллица или доля латинских букв < 0.6.
+    if not _looks_like_english(transcript):
+        log.warning(
+            "[battle_api] non-English transcript battle=%s side=%s text=%r",
+            battle_id, side, transcript[:200],
+        )
+        try:
+            audio_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "non_english: в Battle Mode ответ принимается только на английском. Попробуй записать заново.",
+        )
 
     # attach + judge.
     async with db_session() as s:

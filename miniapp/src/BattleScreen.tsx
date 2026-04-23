@@ -192,7 +192,15 @@ export function BattleScreen({ battleId, side }: Props) {
         const url = `${API_BASE}/api/battles/${battleId}/record-miniapp`;
         const res = await fetch(url, { method: "POST", body: form });
         if (!res.ok) {
-          throw new Error(`upload failed: HTTP ${res.status}`);
+          // Сервер отдаёт понятные сообщения (no_speech / non_english) — покажем.
+          let detail = `HTTP ${res.status}`;
+          try {
+            const body = await res.json();
+            if (typeof body?.detail === "string") detail = body.detail;
+          } catch {
+            /* ignore */
+          }
+          throw new Error(detail);
         }
         await loadState();
       } catch (e) {
@@ -210,13 +218,27 @@ export function BattleScreen({ battleId, side }: Props) {
   }
 
   if (phase === "error") {
+    // Отличаем recoverable-ошибки (не англ/не распозналось) — можно перезаписать.
+    const canRetryRecord = /no_speech|non_english/i.test(err);
     return (
       <Center>
-        <div style={{ textAlign: "center", maxWidth: 320 }}>
-          <h2 style={{ color: "#e74c3c" }}>Ошибка</h2>
+        <div style={{ textAlign: "center", maxWidth: 340 }}>
+          <h2 style={{ color: "#e74c3c" }}>
+            {canRetryRecord ? "Запись не принята" : "Ошибка"}
+          </h2>
           <p style={{ color: "#bbb" }}>{err || "Что-то пошло не так."}</p>
-          <button style={btnPrimary} onClick={loadState}>
-            Попробовать снова
+          <button
+            style={btnPrimary}
+            onClick={() => {
+              setErr("");
+              if (canRetryRecord) {
+                setPhase("ready");
+              } else {
+                loadState();
+              }
+            }}
+          >
+            {canRetryRecord ? "Записать заново" : "Попробовать снова"}
           </button>
         </div>
       </Center>
