@@ -78,10 +78,15 @@ async def create_battle(
     s: AsyncSession,
     *,
     initiator_tg_id: int,
-    chat_id: int,
+    chat_id: Optional[int] = None,
     chat_message_id: Optional[int] = None,
+    inline_message_id: Optional[str] = None,
 ) -> BattleCreated:
-    """Создать открытый battle для inline-вызова."""
+    """Создать открытый battle.
+
+    Для inline-вызовов chat_id обычно None, вместо этого приходит inline_message_id.
+    Для вызовов через /battle в личке/чате идёт chat_id и chat_message_id.
+    """
     topic = battle_topics.pick_random()
     now = utcnow()
     battle = Battle(
@@ -89,6 +94,7 @@ async def create_battle(
         opponent_tg_id=None,
         chat_id=chat_id,
         chat_message_id=chat_message_id,
+        inline_message_id=inline_message_id,
         topic_key=topic.key,
         status="open",
         created_at=now,

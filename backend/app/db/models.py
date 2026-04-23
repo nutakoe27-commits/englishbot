@@ -125,8 +125,10 @@ class Battle(Base):
     initiator_tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     opponent_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger)
 
-    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    chat_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     chat_message_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    # id inline-сообщения (строка, т.к. Telegram даёт его как str). Нужен для edit.
+    inline_message_id: Mapped[Optional[str]] = mapped_column(String(128))
 
     topic_key: Mapped[str] = mapped_column(String(64), nullable=False)
 

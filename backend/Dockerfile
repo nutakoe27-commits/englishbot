@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         build-essential \
         libffi-dev \
+        ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем зависимости и устанавливаем

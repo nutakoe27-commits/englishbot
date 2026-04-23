@@ -23,6 +23,7 @@ from aiogram.types import (
 from dotenv import load_dotenv
 
 from . import backend_client
+from .internal_http import start_internal_server
 
 import json
 
@@ -1042,8 +1043,9 @@ async def on_inline_chosen(chosen: ChosenInlineResult) -> None:
     tg_id = chosen.from_user.id
     result = await backend_client.battle_create(
         initiator_tg_id=tg_id,
-        chat_id=0,  # у inline нет конкретного chat_id
+        chat_id=None,  # у inline нет конкретного chat_id
         chat_message_id=None,
+        inline_message_id=chosen.inline_message_id,
     )
     if result is None:
         try:
@@ -1206,6 +1208,12 @@ async def main() -> None:
         logger.warning(
             "Reminders loop NOT started — DATABASE_URL not set or DB not reachable"
         )
+    # Внутренний HTTP-сервер (слушает backend).
+    internal_port = int(os.getenv("BOT_INTERNAL_PORT", "8080"))
+    try:
+        await start_internal_server(bot, port=internal_port)
+    except Exception as exc:
+        logger.error("Internal HTTP server failed to start: %s", exc)
     await dp.start_polling(bot, skip_updates=True)
 
 

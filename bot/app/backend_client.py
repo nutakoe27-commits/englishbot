@@ -76,7 +76,11 @@ class DailyQuestResult:
 # ─── Battle ─────────────────────────────────────────────────────────────
 
 async def battle_create(
-    *, initiator_tg_id: int, chat_id: int, chat_message_id: Optional[int] = None,
+    *,
+    initiator_tg_id: int,
+    chat_id: Optional[int] = None,
+    chat_message_id: Optional[int] = None,
+    inline_message_id: Optional[str] = None,
 ) -> Optional[BattleCreateResult]:
     c = _client()
     if c is None:
@@ -89,6 +93,7 @@ async def battle_create(
                     "initiator_tg_id": initiator_tg_id,
                     "chat_id": chat_id,
                     "chat_message_id": chat_message_id,
+                    "inline_message_id": inline_message_id,
                 },
             )
             r.raise_for_status()
