@@ -96,6 +96,11 @@ async def battle_create(
                     "inline_message_id": inline_message_id,
                 },
             )
+            if r.status_code >= 400:
+                log.error(
+                    "[backend_client] battle_create HTTP %s: %s",
+                    r.status_code, r.text[:500],
+                )
             r.raise_for_status()
             d = r.json()
             return BattleCreateResult(
@@ -120,6 +125,11 @@ async def battle_accept(
             )
             if r.status_code == 400:
                 return None
+            if r.status_code >= 400:
+                log.error(
+                    "[backend_client] battle_accept HTTP %s: %s",
+                    r.status_code, r.text[:500],
+                )
             r.raise_for_status()
             d = r.json()
             return BattleAcceptResult(
