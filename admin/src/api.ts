@@ -195,4 +195,66 @@ export const api = {
       "/api/admin/broadcast/cancel",
       { method: "POST" }
     ),
+
+  // ─── Battle Mode & Daily Quests ────────────────────────
+  battlesList: (limit = 50, status?: string) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (status) qs.set("status", status);
+    return request<BattleRow[]>(`/api/admin/battles?${qs.toString()}`);
+  },
+  battlesStats: () =>
+    request<BattlesStats>("/api/admin/battles/stats"),
+  questsStats: () =>
+    request<QuestsStats>("/api/admin/quests/stats"),
 };
+
+// ─── Типы Battle & Quest ───────────────────────────────
+
+export interface BattleRow {
+  id: number;
+  status: string;
+  topic_key: string;
+  initiator_tg_id: number | null;
+  opponent_tg_id: number | null;
+  initiator_name: string | null;
+  opponent_name: string | null;
+  a_recorded: boolean;
+  b_recorded: boolean;
+  a_score_total: number | null;
+  b_score_total: number | null;
+  winner: string | null;
+  judge_comment: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  expires_at: string | null;
+}
+
+export interface BattlesStats {
+  open: number;
+  accepted: number;
+  recording: number;
+  judged: number;
+  expired: number;
+  canceled: number;
+  total: number;
+}
+
+export interface QuestStatRow {
+  key: string;
+  title_ru: string;
+  type: string;
+  difficulty: string;
+  target_level: string;
+  assigned: number;
+  completed: number;
+  expired: number;
+  completion_rate: number;
+}
+
+export interface QuestsStats {
+  total_assigned: number;
+  total_completed: number;
+  total_expired: number;
+  completion_rate: number;
+  per_quest: QuestStatRow[];
+}

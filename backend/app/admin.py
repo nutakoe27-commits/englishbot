@@ -456,3 +456,156 @@ async def recent_payments(limit: int = Query(default=20, ge=1, le=100)) -> list[
                 }
             )
         return out
+
+
+# ─── Battle & Quest (админка) ────────────────────────────────────────────────
+
+@router.get(
+    "/battles",
+    dependencies=[Depends(require_admin_token)],
+)
+async def admin_battles(
+    limit: int = Query(50, ge=1, le=500),
+    status_filter: Optional[str] = Query(None, alias="status"),
+) -> list[dict]:
+    """Список последних battle'ов. Фильтр по статусу опционален."""
+    from sqlalchemy import select, desc
+    from .db.models import Battle, User
+
+    async with db_session() as s:
+        stmt = select(Battle).order_by(desc(Battle.created_at)).limit(limit)
+        if status_filter:
+            stmt = stmt.where(Battle.status == status_filter)
+        res = await s.execute(stmt)
+        battles = res.scalars().all()
+
+        # Подтянем имена участников одним запросом
+        tg_ids: set[int] = set()
+        for b in battles:
+            if b.initiator_tg_id:
+                tg_ids.add(b.initiator_tg_id)
+            if b.opponent_tg_id:
+                tg_ids.add(b.opponent_tg_id)
+        users_by_tg: dict[int, User] = {}
+        if tg_ids:
+            urs = await s.execute(select(User).where(User.tg_id.in_(tg_ids)))
+            for u in urs.scalars().all():
+                users_by_tg[u.tg_id] = u
+
+        def _name(tg_id: Optional[int]) -> Optional[str]:
+            if not tg_id:
+                return None
+            u = users_by_tg.get(tg_id)
+            if not u:
+                return f"tg:{tg_id}"
+            name = " ".join(x for x in (u.first_name, u.last_name) if x)
+            return name.strip() or (f"@{u.username}" if u.username else f"tg:{tg_id}")
+
+        out = []
+        for b in battles:
+            a_sum = sum(int(v) for v in (b.a_score or {}).values()) if b.a_score else None
+            b_sum = sum(int(v) for v in (b.b_score or {}).values()) if b.b_score else None
+            out.append({
+                "id": b.id,
+                "status": b.status,
+                "topic_key": b.topic_key,
+                "initiator_tg_id": b.initiator_tg_id,
+                "opponent_tg_id": b.opponent_tg_id,
+                "initiator_name": _name(b.initiator_tg_id),
+                "opponent_name": _name(b.opponent_tg_id),
+                "a_recorded": bool(b.a_audio_path),
+                "b_recorded": bool(b.b_audio_path),
+                "a_score_total": a_sum,
+                "b_score_total": b_sum,
+                "winner": b.winner,
+                "judge_comment": b.judge_comment,
+                "created_at": b.created_at.isoformat() if b.created_at else None,
+                "updated_at": b.updated_at.isoformat() if b.updated_at else None,
+                "expires_at": b.expires_at.isoformat() if b.expires_at else None,
+            })
+        return out
+
+
+@router.get(
+    "/battles/stats",
+    dependencies=[Depends(require_admin_token)],
+)
+async def admin_battles_stats() -> dict:
+    """Счётчики по статусам battle."""
+    from sqlalchemy import select, func
+    from .db.models import Battle
+
+    async with db_session() as s:
+        res = await s.execute(
+            select(Battle.status, func.count(Battle.id)).group_by(Battle.status)
+        )
+        rows = res.all()
+    out = {"open": 0, "accepted": 0, "recording": 0,
+           "judged": 0, "expired": 0, "canceled": 0, "total": 0}
+    for status_val, cnt in rows:
+        out[status_val] = int(cnt)
+        out["total"] += int(cnt)
+    return out
+
+
+@router.get(
+    "/quests/stats",
+    dependencies=[Depends(require_admin_token)],
+)
+async def admin_quests_stats() -> dict:
+    """Агрегация user_quests по quest_key: сколько выдано / выполнено / протухло."""
+    from sqlalchemy import select, func
+    from .db.models import UserQuest, QuestCatalog
+
+    async with db_session() as s:
+        # По каждому key — assigned, completed, expired.
+        res = await s.execute(
+            select(
+                UserQuest.quest_key,
+                func.count(UserQuest.id).label("total"),
+                func.sum(
+                    func.if_(UserQuest.completed_at.is_not(None), 1, 0)
+                ).label("completed"),
+                func.sum(
+                    func.if_(UserQuest.expired_at.is_not(None), 1, 0)
+                ).label("expired"),
+            ).group_by(UserQuest.quest_key)
+        )
+        rows = res.all()
+
+        # Также тянем каталог для отображения заголовков/типов.
+        cat_res = await s.execute(select(QuestCatalog))
+        catalog = {q.key: q for q in cat_res.scalars().all()}
+
+    per_quest = []
+    total_assigned = 0
+    total_completed = 0
+    total_expired = 0
+    for key, total, completed, expired in rows:
+        completed = int(completed or 0)
+        expired = int(expired or 0)
+        total = int(total or 0)
+        total_assigned += total
+        total_completed += completed
+        total_expired += expired
+        q = catalog.get(key)
+        per_quest.append({
+            "key": key,
+            "title_ru": q.title_ru if q else key,
+            "type": q.type if q else "?",
+            "difficulty": q.difficulty if q else "?",
+            "target_level": q.target_level if q else "?",
+            "assigned": total,
+            "completed": completed,
+            "expired": expired,
+            "completion_rate": round(completed / total, 3) if total else 0.0,
+        })
+    per_quest.sort(key=lambda r: -r["assigned"])
+
+    return {
+        "total_assigned": total_assigned,
+        "total_completed": total_completed,
+        "total_expired": total_expired,
+        "completion_rate": round(total_completed / total_assigned, 3) if total_assigned else 0.0,
+        "per_quest": per_quest,
+    }

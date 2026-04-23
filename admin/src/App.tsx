@@ -5,9 +5,12 @@ import {
   clearToken,
   getToken,
   setToken,
+  type BattleRow,
+  type BattlesStats,
   type BroadcastJobStatus,
   type Metrics,
   type PaymentRecord,
+  type QuestsStats,
   type UserBrief,
   type UserDetail,
 } from "./api";
@@ -181,6 +184,10 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     view = <BroadcastPage />;
   } else if (route === "/settings") {
     view = <SettingsPage />;
+  } else if (route === "/battles") {
+    view = <BattlesPage />;
+  } else if (route === "/quests") {
+    view = <QuestsPage />;
   } else {
     view = <Dashboard />;
   }
@@ -209,6 +216,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           {navBtn("/dashboard", "Метрики")}
           {navBtn("/users", "Пользователи")}
           {navBtn("/broadcast", "Массовые")}
+          {navBtn("/battles", "Battle")}
+          {navBtn("/quests", "Quests")}
           {navBtn("/settings", "Настройки")}
         </nav>
         <button style={S.btnSecondary} onClick={logout}>
@@ -1428,6 +1437,246 @@ function BroadcastCard() {
                 {starting ? "Запускаем…" : "Да, отправить всем"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ─── BattlesPage ─────────────────────────────────────────────────────────────
+
+function BattlesPage() {
+  const [stats, setStats] = useState<BattlesStats | null>(null);
+  const [battles, setBattles] = useState<BattleRow[] | null>(null);
+  const [filter, setFilter] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [s, rows] = await Promise.all([
+          api.battlesStats(),
+          api.battlesList(100, filter || undefined),
+        ]);
+        if (cancelled) return;
+        setStats(s);
+        setBattles(rows);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Ошибка");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [filter]);
+
+  return (
+    <div>
+      <h2 style={{ marginTop: 0 }}>⚔️ Battle Mode</h2>
+
+      {stats && (
+        <div style={S.metricsGrid}>
+          <div style={S.metricCard}>
+            <div style={S.metricValue}>{stats.total}</div>
+            <div style={S.metricLabel}>Всего</div>
+          </div>
+          <div style={S.metricCard}>
+            <div style={{ ...S.metricValue, color: colors.primary }}>{stats.open}</div>
+            <div style={S.metricLabel}>Открыты</div>
+          </div>
+          <div style={S.metricCard}>
+            <div style={{ ...S.metricValue, color: colors.warning }}>
+              {stats.accepted + stats.recording}
+            </div>
+            <div style={S.metricLabel}>В игре</div>
+          </div>
+          <div style={S.metricCard}>
+            <div style={{ ...S.metricValue, color: colors.success }}>{stats.judged}</div>
+            <div style={S.metricLabel}>Отсуждены</div>
+          </div>
+          <div style={S.metricCard}>
+            <div style={{ ...S.metricValue, color: colors.textMuted }}>{stats.expired}</div>
+            <div style={S.metricLabel}>Протухли</div>
+          </div>
+        </div>
+      )}
+
+      <div style={S.card}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+          <label style={S.label}>Фильтр по статусу:</label>
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            style={{ ...S.input, width: 200 }}
+          >
+            <option value="">— все —</option>
+            <option value="open">open</option>
+            <option value="accepted">accepted</option>
+            <option value="recording">recording</option>
+            <option value="judged">judged</option>
+            <option value="expired">expired</option>
+            <option value="canceled">canceled</option>
+          </select>
+        </div>
+
+        {error && <div style={S.error}>{error}</div>}
+
+        {battles && (
+          <div style={{ overflowX: "auto" }}>
+            <table style={S.table}>
+              <thead>
+                <tr>
+                  <th style={S.th}>#</th>
+                  <th style={S.th}>Статус</th>
+                  <th style={S.th}>Тема</th>
+                  <th style={S.th}>Инициатор</th>
+                  <th style={S.th}>Соперник</th>
+                  <th style={S.th}>Счёт</th>
+                  <th style={S.th}>Победитель</th>
+                  <th style={S.th}>Создан</th>
+                </tr>
+              </thead>
+              <tbody>
+                {battles.map((b) => (
+                  <tr key={b.id}>
+                    <td style={S.td}>{b.id}</td>
+                    <td style={S.td}>
+                      <span style={S.badge}>{b.status}</span>
+                    </td>
+                    <td style={S.td}>{b.topic_key}</td>
+                    <td style={S.td}>
+                      {b.initiator_name || "—"}
+                      {b.a_recorded && <span style={{ color: colors.success }}> ✓</span>}
+                    </td>
+                    <td style={S.td}>
+                      {b.opponent_name || "—"}
+                      {b.b_recorded && <span style={{ color: colors.success }}> ✓</span>}
+                    </td>
+                    <td style={S.td}>
+                      {b.a_score_total !== null && b.b_score_total !== null
+                        ? `${b.a_score_total} : ${b.b_score_total}`
+                        : "—"}
+                    </td>
+                    <td style={S.td}>{b.winner || "—"}</td>
+                    <td style={S.td}>
+                      {b.created_at ? fmtDate(b.created_at) : "—"}
+                    </td>
+                  </tr>
+                ))}
+                {battles.length === 0 && (
+                  <tr>
+                    <td style={S.td} colSpan={8}>
+                      <div style={S.muted}>Ничего не найдено.</div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ─── QuestsPage ──────────────────────────────────────────────────────────────
+
+function QuestsPage() {
+  const [stats, setStats] = useState<QuestsStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await api.questsStats();
+        if (!cancelled) setStats(s);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Ошибка");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div>
+      <h2 style={{ marginTop: 0 }}>🎯 Daily Quests</h2>
+
+      {stats && (
+        <div style={S.metricsGrid}>
+          <div style={S.metricCard}>
+            <div style={S.metricValue}>{stats.total_assigned}</div>
+            <div style={S.metricLabel}>Выдано всего</div>
+          </div>
+          <div style={S.metricCard}>
+            <div style={{ ...S.metricValue, color: colors.success }}>
+              {stats.total_completed}
+            </div>
+            <div style={S.metricLabel}>Выполнено</div>
+          </div>
+          <div style={S.metricCard}>
+            <div style={{ ...S.metricValue, color: colors.textMuted }}>
+              {stats.total_expired}
+            </div>
+            <div style={S.metricLabel}>Протухло</div>
+          </div>
+          <div style={S.metricCard}>
+            <div style={{ ...S.metricValue, color: colors.primary }}>
+              {(stats.completion_rate * 100).toFixed(1)}%
+            </div>
+            <div style={S.metricLabel}>Completion rate</div>
+          </div>
+        </div>
+      )}
+
+      {error && <div style={S.error}>{error}</div>}
+
+      {stats && (
+        <div style={S.card}>
+          <h3 style={{ marginTop: 0 }}>По каждому квесту</h3>
+          <div style={{ overflowX: "auto" }}>
+            <table style={S.table}>
+              <thead>
+                <tr>
+                  <th style={S.th}>Квест</th>
+                  <th style={S.th}>Тип</th>
+                  <th style={S.th}>Сложность</th>
+                  <th style={S.th}>Уровень</th>
+                  <th style={S.th}>Выдано</th>
+                  <th style={S.th}>Выполнено</th>
+                  <th style={S.th}>Протухло</th>
+                  <th style={S.th}>%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.per_quest.map((q) => (
+                  <tr key={q.key}>
+                    <td style={S.td}>
+                      <div>{q.title_ru}</div>
+                      <div style={S.muted}>
+                        <code>{q.key}</code>
+                      </div>
+                    </td>
+                    <td style={S.td}>{q.type}</td>
+                    <td style={S.td}>{q.difficulty}</td>
+                    <td style={S.td}>{q.target_level}</td>
+                    <td style={S.td}>{q.assigned}</td>
+                    <td style={S.td}>{q.completed}</td>
+                    <td style={S.td}>{q.expired}</td>
+                    <td style={S.td}>{(q.completion_rate * 100).toFixed(1)}%</td>
+                  </tr>
+                ))}
+                {stats.per_quest.length === 0 && (
+                  <tr>
+                    <td style={S.td} colSpan={8}>
+                      <div style={S.muted}>Пока нет данных — квесты никому не выдавались.</div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
