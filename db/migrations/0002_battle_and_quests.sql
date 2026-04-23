@@ -110,9 +110,21 @@ CREATE TABLE IF NOT EXISTS user_quests (
 -- ─── daily_usage: бонус от квеста ────────────────────────────────────────
 -- Не трогаем used_seconds, но даём «крышу» выше обычного лимита.
 -- Логика лимитов в backend/app/limits.py станет: free_seconds + bonus_seconds.
-ALTER TABLE daily_usage
-    ADD COLUMN IF NOT EXISTS bonus_seconds INT UNSIGNED NOT NULL DEFAULT 0
-        COMMENT 'Бонус от выполненного квеста (сбрасывается вместе с usage_date)';
+-- MySQL 8 не поддерживает ADD COLUMN IF NOT EXISTS — делаем через information_schema + PREPARE
+SET @col_exists := (
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'daily_usage'
+      AND COLUMN_NAME = 'bonus_seconds'
+);
+SET @ddl := IF(
+    @col_exists = 0,
+    'ALTER TABLE daily_usage ADD COLUMN bonus_seconds INT UNSIGNED NOT NULL DEFAULT 0 COMMENT ''Бонус от выполненного квеста (сбрасывается вместе с usage_date)''',
+    'SELECT ''bonus_seconds already exists'' AS msg'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 
 -- ─── каталог квестов: 20 штук для MVP ────────────────────────────────────
