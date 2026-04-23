@@ -999,6 +999,7 @@ async def cmd_battle(message: Message) -> None:
 @dp.inline_query()
 async def inline_battle(query: InlineQuery) -> None:
     """Показываем одну карточку — "Бросить вызов"."""
+    logger.info("[battle] inline_query from tg_id=%s query=%r", query.from_user.id, query.query)
     q = (query.query or "").strip().lower()
     # Показываем карточку для любого запроса — чтобы юзер не гадал с синтаксисом.
     # Если хочется фильтровать — раскомментируй условие.
@@ -1034,6 +1035,10 @@ async def inline_battle(query: InlineQuery) -> None:
 async def on_inline_chosen(chosen: ChosenInlineResult) -> None:
     """Юзер кликнул по карточке — значит сообщение уже улетело в чат.
     Создаём battle в backend и редактируем inline-сообщение."""
+    logger.info(
+        "[battle] chosen_inline_result: result_id=%s tg_id=%s inline_msg_id=%s",
+        chosen.result_id, chosen.from_user.id, chosen.inline_message_id,
+    )
     if chosen.result_id != "battle:new":
         return
     if not chosen.inline_message_id:
@@ -1214,7 +1219,14 @@ async def main() -> None:
         await start_internal_server(bot, port=internal_port)
     except Exception as exc:
         logger.error("Internal HTTP server failed to start: %s", exc)
-    await dp.start_polling(bot, skip_updates=True)
+    # Явно запрашиваем все типы апдейтов — критично для chosen_inline_result,
+    # который Telegram не шлёт по умолчанию без явного указания.
+    allowed = [
+        "message", "edited_message", "callback_query",
+        "inline_query", "chosen_inline_result",
+        "pre_checkout_query", "my_chat_member",
+    ]
+    await dp.start_polling(bot, skip_updates=True, allowed_updates=allowed)
 
 
 if __name__ == "__main__":
