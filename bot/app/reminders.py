@@ -166,6 +166,20 @@ REMINDER_TEXT = (
     "Жми кнопку ниже и начнём."
 )
 
+REMINDER_TEXT_FREE_PERIOD = (
+    "👋 Привет! Время для практики английского.\n\n"
+    "Сейчас бот открыт <b>полностью бесплатно и без лимитов</b> — "
+    "заходи хоть на 10 минут, хоть на час. Регулярность важнее длительности. "
+    "Жми кнопку ниже и начнём."
+)
+
+
+def _render_reminder_text() -> str:
+    """Текст напоминания в зависимости от режима (Free Period vs обычный)."""
+    if os.getenv("FREE_PERIOD", "0") == "1":
+        return REMINDER_TEXT_FREE_PERIOD
+    return REMINDER_TEXT
+
 
 def _reminder_keyboard(miniapp_url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -643,7 +657,8 @@ async def _send_reminders_for_hour(bot: Bot, hour_msk: int, miniapp_url: str) ->
         try:
             await bot.send_message(
                 chat_id=u.tg_id,
-                text=REMINDER_TEXT,
+                text=_render_reminder_text(),
+                parse_mode="HTML",
                 reply_markup=kb,
             )
             sent += 1

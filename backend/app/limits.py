@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from .config import settings
 from .db import Repo
 
 log = logging.getLogger(__name__)
@@ -147,6 +148,9 @@ async def build_limits_context(
         language_code=language_code,
     )
     has_sub = await repo.has_active_subscription(user)
+    # Free Period: открываем всем доступ как подписчикам, не трогая БД.
+    if settings.FREE_PERIOD:
+        has_sub = True
     free_seconds = await repo.get_kv_int(
         "free_seconds_per_day", DEFAULT_FREE_SECONDS_PER_DAY
     )

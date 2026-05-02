@@ -80,6 +80,16 @@ class Settings(BaseSettings):
     # Скорость речи Kokoro (0.5 — медленно, 1.0 — обычно, 2.0 — быстро).
     KOKORO_TTS_SPEED: float = 1.0
 
+    # ─── Free Period (промо без оплаты) ──────────────────────────────────
+    # Когда True — все юзеры считаются подписчиками, дневной лимит 10 мин
+    # снят, кнопка подписки и /subscribe в боте скрыты.
+    FREE_PERIOD: bool = False
+
+    # ─── LLM таймаут на один turn (секунды) ──────────────────────────────
+    # Защищает WS-сессию от зависшего vLLM. При превышении — отдаём fallback
+    # и продолжаем сессию. 0 = без таймаута (не рекомендуется).
+    LLM_TIMEOUT_SEC: int = 30
+
     @property
     def admin_url(self) -> str:
         return f"https://{self.ADMIN_HOST}"
