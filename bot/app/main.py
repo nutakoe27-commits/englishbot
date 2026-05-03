@@ -4,6 +4,7 @@ import os
 from typing import Optional
 
 from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     BotCommand,
@@ -1187,6 +1188,28 @@ async def on_inline_chosen(chosen: ChosenInlineResult) -> None:
         logger.warning("[battle] edit_message_text fail: %s", exc)
 
 
+async def _try_send_battle_dm(
+    *, tg_id: int, text: str, reply_markup: InlineKeyboardMarkup,
+) -> bool:
+    """Шлём ЛС участнику battle. True — доставлено, False — юзер не открывал
+    бота / заблокировал / chat not found.
+
+    TelegramForbiddenError — бот заблокирован или не запущен.
+    TelegramBadRequest — chat not found / bot can't initiate conversation.
+    """
+    try:
+        await bot.send_message(
+            chat_id=tg_id, text=text, parse_mode="HTML", reply_markup=reply_markup,
+        )
+        return True
+    except (TelegramForbiddenError, TelegramBadRequest) as exc:
+        logger.warning("[battle] DM to %s blocked/unreachable: %s", tg_id, exc)
+        return False
+    except Exception as exc:
+        logger.warning("[battle] DM to %s failed: %s", tg_id, exc)
+        return False
+
+
 @dp.callback_query(lambda c: c.data and c.data.startswith("battle:accept:"))
 async def cb_battle_accept(callback: CallbackQuery) -> None:
     if not callback.data:
@@ -1216,17 +1239,65 @@ async def cb_battle_accept(callback: CallbackQuery) -> None:
         )
         return
 
-    await callback.answer("Вызов принят — лови задание в личке.")
-
     # Тянем ники участников — покажем их в карточке и в DM-ах.
     initiator_display = await _display_name_for(result.initiator_tg_id)
     opponent_display = await _display_name_for(result.opponent_tg_id)
 
-    # Редактируем chat-сообщение: битва принята, оба получили задание
-    topic_line = f"<b>Тема:</b> {result.topic_title_ru}"
+    dm_text_common = (
+        f"⚔️ <b>Battle #{result.id}</b>\n\n"
+        f"<b>Тема:</b> {result.topic_title_ru}\n"
+        f"<b>Вопрос:</b> <i>{result.prompt_en}</i>\n\n"
+    )
+    dm_to_opponent = (
+        dm_text_common
+        + f"<b>Соперник:</b> {initiator_display}\n"
+        + f"<b>Твоя позиция:</b> {result.side_b_ru}\n\n"
+        + "Открывай Mini App и записывай 60-секундный аргумент."
+    )
+
+    # 1) Сначала пробуем ЛС оппоненту — самая хрупкая точка (он мог не запускать бота).
+    #    Если не доставилось — откатываем accept в backend, чтобы кнопка «Принять»
+    #    в чате осталась рабочей и оппонент мог нажать снова после /start.
+    ok_opp = await _try_send_battle_dm(
+        tg_id=result.opponent_tg_id,
+        text=dm_to_opponent,
+        reply_markup=_battle_miniapp_keyboard(result.id, "b"),
+    )
+    if not ok_opp:
+        await backend_client.battle_revert_accept(
+            battle_id=battle_id, opponent_tg_id=opponent_tg_id,
+        )
+        await callback.answer(
+            "Сначала запусти бота: открой @kmo_ai_english_bot, нажми Start — "
+            "и возвращайся сюда, чтобы снова нажать «Принять».",
+            show_alert=True,
+        )
+        return
+
+    # 2) ЛС оппоненту ушло. Шлём инициатору и редактируем сообщение в чате.
+    dm_to_initiator = (
+        dm_text_common
+        + f"<b>Соперник:</b> {opponent_display}\n"
+        + f"<b>Твоя позиция:</b> {result.side_a_ru}\n\n"
+        + "Открывай Mini App и записывай 60-секундный аргумент."
+    )
+    ok_init = await _try_send_battle_dm(
+        tg_id=result.initiator_tg_id,
+        text=dm_to_initiator,
+        reply_markup=_battle_miniapp_keyboard(result.id, "a"),
+    )
+    if not ok_init:
+        # Редкий случай — инициатор сам бросал вызов через inline_query, бот
+        # должен был быть запущен. Логируем и идём дальше: оппонент уже играет.
+        logger.warning(
+            "[battle] инициатор %s не получил DM — продолжаем без него",
+            result.initiator_tg_id,
+        )
+
+    # Редактируем chat-сообщение: «принято».
     chat_text = (
         f"⚔️ <b>Вызов принят</b>\n\n"
-        f"{topic_line}\n"
+        f"<b>Тема:</b> {result.topic_title_ru}\n"
         f"<b>Участники:</b> {initiator_display} vs {opponent_display}\n\n"
         f"Оба участника получили задание в ЛС. После записи обоих "
         f"ответов ИИ-судья объявит победителя прямо здесь."
@@ -1239,52 +1310,11 @@ async def cb_battle_accept(callback: CallbackQuery) -> None:
                 parse_mode="HTML",
             )
         elif callback.message:
-            await callback.message.edit_text(
-                text=chat_text, parse_mode="HTML",
-            )
+            await callback.message.edit_text(text=chat_text, parse_mode="HTML")
     except Exception as exc:
         logger.warning("[battle] edit accepted msg fail: %s", exc)
 
-    # Шлём задания в ЛС каждому
-    dm_text_common = (
-        f"⚔️ <b>Battle #{result.id}</b>\n\n"
-        f"<b>Тема:</b> {result.topic_title_ru}\n"
-        f"<b>Вопрос:</b> <i>{result.prompt_en}</i>\n\n"
-    )
-    try:
-        await bot.send_message(
-            chat_id=result.initiator_tg_id,
-            text=(
-                dm_text_common
-                + f"<b>Соперник:</b> {opponent_display}\n"
-                + f"<b>Твоя позиция:</b> {result.side_a_ru}\n\n"
-                + "Открывай Mini App и записывай 60-секундный аргумент."
-            ),
-            parse_mode="HTML",
-            reply_markup=_battle_miniapp_keyboard(result.id, "a"),
-        )
-    except Exception as exc:
-        logger.warning(
-            "[battle] не удалось отправить DM инициатору %s: %s",
-            result.initiator_tg_id, exc,
-        )
-    try:
-        await bot.send_message(
-            chat_id=result.opponent_tg_id,
-            text=(
-                dm_text_common
-                + f"<b>Соперник:</b> {initiator_display}\n"
-                + f"<b>Твоя позиция:</b> {result.side_b_ru}\n\n"
-                + "Открывай Mini App и записывай 60-секундный аргумент."
-            ),
-            parse_mode="HTML",
-            reply_markup=_battle_miniapp_keyboard(result.id, "b"),
-        )
-    except Exception as exc:
-        logger.warning(
-            "[battle] не удалось отправить DM оппоненту %s: %s",
-            result.opponent_tg_id, exc,
-        )
+    await callback.answer("Вызов принят — лови задание в личке.")
 
 
 async def _display_name_for(tg_id: int) -> str:
