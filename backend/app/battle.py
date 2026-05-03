@@ -188,25 +188,48 @@ async def attach_recording(
         return False
 
     if tg_id == battle.initiator_tg_id:
-        if battle.a_audio_path:
-            log.info("[battle] attach: side A already has recording id=%s", battle_id)
-            return False
-        battle.a_audio_path = audio_path
-        battle.a_transcript = transcript
+        side = "a"
+        upd = (
+            update(Battle)
+            .where(
+                Battle.id == battle_id,
+                Battle.a_audio_path.is_(None),
+                Battle.status.in_(("accepted", "recording")),
+            )
+            .values(
+                a_audio_path=audio_path,
+                a_transcript=transcript,
+                status="recording",
+                updated_at=utcnow(),
+            )
+        )
     elif tg_id == battle.opponent_tg_id:
-        if battle.b_audio_path:
-            log.info("[battle] attach: side B already has recording id=%s", battle_id)
-            return False
-        battle.b_audio_path = audio_path
-        battle.b_transcript = transcript
+        side = "b"
+        upd = (
+            update(Battle)
+            .where(
+                Battle.id == battle_id,
+                Battle.b_audio_path.is_(None),
+                Battle.status.in_(("accepted", "recording")),
+            )
+            .values(
+                b_audio_path=audio_path,
+                b_transcript=transcript,
+                status="recording",
+                updated_at=utcnow(),
+            )
+        )
     else:
         log.warning("[battle] attach: tg_id=%s not a participant in battle %s", tg_id, battle_id)
         return False
 
-    battle.status = "recording"
-    battle.updated_at = utcnow()
+    res = await s.execute(upd)
+    if res.rowcount == 0:
+        # Гонка/повтор: либо запись уже была, либо статус ушёл в judged.
+        log.info("[battle] attach: side %s skipped (already recorded or wrong status) id=%s", side.upper(), battle_id)
+        return False
     await s.flush()
-    log.info("[battle] recording attached id=%s side=%s", battle_id, "a" if tg_id == battle.initiator_tg_id else "b")
+    log.info("[battle] recording attached id=%s side=%s", battle_id, side)
     return True
 
 

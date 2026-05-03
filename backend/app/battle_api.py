@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import pathlib
+import time
 import uuid
 from typing import Optional
 
@@ -77,6 +78,15 @@ def _validate_init_data_and_get_tg_id(init_data: str) -> int:
     validated = validate_telegram_init_data(init_data, settings.BOT_TOKEN)
     if not validated:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid initData")
+    # Anti-replay: Telegram WebApp initData подписан, но не имеет TTL.
+    # Принимаем подпись не старше 24 часов — это типовое окно, в котором
+    # WebApp реально живёт у юзера в Telegram.
+    try:
+        auth_date = int(validated.get("auth_date") or 0)
+    except (TypeError, ValueError):
+        auth_date = 0
+    if auth_date == 0 or (time.time() - auth_date) > 24 * 3600:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "init_data expired")
     user_raw = validated.get("user")
     if not user_raw:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "initData has no user")

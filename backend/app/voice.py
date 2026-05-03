@@ -27,6 +27,7 @@ from typing import Optional
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from .config import settings as app_settings
 from .llm_providers import get_llm_provider
 from .stt_providers import get_stt_provider
 from .tts_providers import get_tts_provider
@@ -56,6 +57,24 @@ RUSSIAN_REMINDER_EN = (
     "Let's stick to English here — I won't understand Russian. "
     "Try saying it in English, even with mistakes, that's fine."
 )
+
+# Fallback, если LLM не уложился в LLM_TIMEOUT_SEC.
+LLM_TIMEOUT_FALLBACK_EN = (
+    "Sorry, I'm thinking too long right now. Could you say that again?"
+)
+
+
+async def _llm_complete_with_timeout(llm, *, user_text, history, system_prompt):
+    """Зовёт llm.complete с таймаутом из настроек. На таймаут — fallback."""
+    timeout = app_settings.LLM_TIMEOUT_SEC
+    coro = llm.complete(
+        user_text=user_text,
+        history=history,
+        system_prompt=system_prompt,
+    )
+    if timeout and timeout > 0:
+        return await asyncio.wait_for(coro, timeout=timeout)
+    return await coro
 
 
 def _is_russian_utterance(text: str) -> bool:
@@ -213,11 +232,18 @@ async def _run_chat_session(
                     pass
 
             try:
-                reply = await llm.complete(
+                reply = await _llm_complete_with_timeout(
+                    llm,
                     user_text=user_text,
                     history=history,
                     system_prompt=system_prompt,
                 )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "[chat] LLM timeout %dс",
+                    app_settings.LLM_TIMEOUT_SEC,
+                )
+                reply = LLM_TIMEOUT_FALLBACK_EN
             except Exception as exc:
                 logger.error("[chat] LLM сбой: %s", exc, exc_info=True)
                 reply = "I'm having trouble right now. Let's try again in a moment."
@@ -441,11 +467,15 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
             })
 
         try:
-            reply = await llm.complete(
+            reply = await _llm_complete_with_timeout(
+                llm,
                 user_text=text,
                 history=history,
                 system_prompt=system_prompt,
             )
+        except asyncio.TimeoutError:
+            logger.error("LLM timeout %dс", app_settings.LLM_TIMEOUT_SEC)
+            reply = LLM_TIMEOUT_FALLBACK_EN
         except Exception as exc:
             logger.error("LLM сбой: %s", exc, exc_info=True)
             reply = "I'm having trouble right now. Let's try again in a moment."

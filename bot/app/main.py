@@ -48,6 +48,20 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN: str = os.environ["BOT_TOKEN"]
 MINIAPP_URL: str = os.getenv("MINIAPP_URL", "https://englishbot.krichigindocs.ru")
 
+# Free Period — промо-период без оплаты. При FREE_PERIOD=1 бот скрывает
+# кнопки подписки, /subscribe возвращает уведомление вместо инвойса,
+# в /profile нет блока «оформить подписку», лимит 10 минут не показывается.
+# Платёжные обработчики (pre_checkout/successful_payment) остаются активными,
+# чтобы корректно обработать уже отправленные инвойсы и ручные выдачи.
+FREE_PERIOD: bool = os.getenv("FREE_PERIOD", "0") == "1"
+
+FREE_PERIOD_TEXT = (
+    "🎁 <b>Сейчас всё бесплатно!</b>\n\n"
+    "Доступ к голосовому тьютору, Battle Mode и Daily Quest — без лимитов "
+    "и без подписки. Просто открой /start и нажми «🎤 Начать разговор».\n\n"
+    "Когда промо-период закончится — мы напишем заранее."
+)
+
 # Цены синхронизированы с settings_kv (DB) и LockScreen в mini app.
 # Источник истины сейчас — эти константы (бот не ходит в DB).
 PRICE_MONTHLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_MONTHLY_RUB", "699"))
@@ -141,14 +155,22 @@ def _miniapp_keyboard() -> InlineKeyboardMarkup:
 # ─── /start ──────────────────────────────────────────────────────────────────
 @dp.message(Command("start"))
 async def cmd_start(message: Message, command: CommandObject) -> None:
-    # Deep-link из mini app: «/start subscribe» — сразу показываем экран подписки
+    # Deep-link из mini app: «/start subscribe» — сразу показываем экран подписки.
+    # В Free Period подписка не нужна — отдаём промо-сообщение.
     payload = (command.args or "").strip().lower()
     if payload == "subscribe":
-        await message.answer(
-            text=SUBSCRIBE_TEXT,
-            parse_mode="HTML",
-            reply_markup=_subscribe_keyboard(),
-        )
+        if FREE_PERIOD:
+            await message.answer(
+                text=FREE_PERIOD_TEXT,
+                parse_mode="HTML",
+                reply_markup=_miniapp_keyboard(),
+            )
+        else:
+            await message.answer(
+                text=SUBSCRIBE_TEXT,
+                parse_mode="HTML",
+                reply_markup=_subscribe_keyboard(),
+            )
         return
 
     user_name = message.from_user.first_name if message.from_user else "друг"
@@ -270,22 +292,25 @@ async def cb_show_guide(callback) -> None:
 # ─── /help ───────────────────────────────────────────────────────────────────
 @dp.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(
-        text=(
-            "ℹ️ <b>Доступные команды</b>\n\n"
-            "/start — главное меню и кнопка запуска разговора\n"
-            "/guide — <b>как правильно заниматься</b> (прочитай обязательно)\n"
-            "/profile — твой прогресс и статистика\n"
-            "/subscribe — информация о подписке\n"
-            "/reminder — настройка ежедневного напоминания\n"
-            "/battle — англо-дуэль с другом (ИИ-судья оценивает ответы)\n"
-            "/quest — твой квест дня (+30 мин к дневному лимиту)\n"
-            "/help — эта справка\n\n"
-            "Чтобы начать практику — нажми «🎤 Начать разговор» в /start. "
-            "Для дуэли с другом в любом чате: <code>@kmo_ai_english_bot battle</code>."
-        ),
-        parse_mode="HTML",
-    )
+    lines = [
+        "ℹ️ <b>Доступные команды</b>",
+        "",
+        "/start — главное меню и кнопка запуска разговора",
+        "/guide — <b>как правильно заниматься</b> (прочитай обязательно)",
+        "/profile — твой прогресс и статистика",
+    ]
+    if not FREE_PERIOD:
+        lines.append("/subscribe — информация о подписке")
+    lines += [
+        "/reminder — настройка ежедневного напоминания",
+        "/battle — англо-дуэль с другом (ИИ-судья оценивает ответы)",
+        "/quest — твой квест дня (+30 мин к дневному лимиту)",
+        "/help — эта справка",
+        "",
+        "Чтобы начать практику — нажми «🎤 Начать разговор» в /start. "
+        "Для дуэли с другом в любом чате: <code>@kmo_ai_english_bot battle</code>.",
+    ]
+    await message.answer(text="\n".join(lines), parse_mode="HTML")
 
 
 # ─── /quest ──────────────────────────────────────────────────────────────────
@@ -346,35 +371,35 @@ def _fmt_subscription_until(dt) -> str:
 
 
 def _profile_keyboard(has_sub: bool) -> InlineKeyboardMarkup:
-    sub_text = "⭐ Продлить подписку" if has_sub else "⭐ Оформить подписку"
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🎤 Начать разговор",
-                    web_app=WebAppInfo(url=MINIAPP_URL),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=sub_text,
-                    callback_data="profile:subscribe",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⏰ Настроить напоминание",
-                    callback_data="reminder:settings",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📘 Как правильно заниматься",
-                    callback_data="show_guide",
-                )
-            ],
-        ]
-    )
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="🎤 Начать разговор",
+                web_app=WebAppInfo(url=MINIAPP_URL),
+            )
+        ],
+    ]
+    # В Free Period кнопку подписки не показываем — она просто не нужна.
+    if not FREE_PERIOD:
+        sub_text = "⭐ Продлить подписку" if has_sub else "⭐ Оформить подписку"
+        rows.append([
+            InlineKeyboardButton(text=sub_text, callback_data="profile:subscribe")
+        ])
+    rows += [
+        [
+            InlineKeyboardButton(
+                text="⏰ Настроить напоминание",
+                callback_data="reminder:settings",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📘 Как правильно заниматься",
+                callback_data="show_guide",
+            )
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
@@ -407,22 +432,26 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
         return "\n".join(lines)
 
     # Подписка
-    lines.append("<b>⭐ Подписка</b>")
-    if profile["has_subscription"]:
-        until = _fmt_subscription_until(profile["subscription_until"])
-        days = profile["days_left"]
-        lines.append(f"Premium — активна до <b>{until}</b>")
-        if days > 0:
-            lines.append(f"Осталось: <b>{days}</b> дн.")
+    if FREE_PERIOD:
+        lines.append("<b>🎁 Бесплатный период</b>")
+        lines.append("Все возможности открыты — без лимитов и без подписки.")
     else:
-        lines.append("Free — бесплатный тариф")
+        lines.append("<b>⭐ Подписка</b>")
+        if profile["has_subscription"]:
+            until = _fmt_subscription_until(profile["subscription_until"])
+            days = profile["days_left"]
+            lines.append(f"Premium — активна до <b>{until}</b>")
+            if days > 0:
+                lines.append(f"Осталось: <b>{days}</b> дн.")
+        else:
+            lines.append("Free — бесплатный тариф")
     lines.append("")
 
     # Сегодня
     used_today = profile["used_seconds_today"]
     bonus_today = int(profile.get("bonus_seconds_today") or 0)
     lines.append("<b>⏱ Сегодня</b>")
-    if profile["has_subscription"]:
+    if FREE_PERIOD or profile["has_subscription"]:
         lines.append(f"Практика: <b>{_fmt_minutes(used_today)}</b> — без лимитов")
     else:
         limit_min = FREE_DAILY_SECONDS // 60
@@ -528,12 +557,20 @@ async def cmd_profile(message: Message) -> None:
 @dp.callback_query(lambda c: c.data == "profile:subscribe")
 async def cb_profile_subscribe(query: CallbackQuery) -> None:
     await query.answer()
-    if query.message:
+    if not query.message:
+        return
+    if FREE_PERIOD:
         await query.message.answer(
-            text=SUBSCRIBE_TEXT,
-            reply_markup=_subscribe_keyboard(),
+            text=FREE_PERIOD_TEXT,
+            reply_markup=_miniapp_keyboard(),
             parse_mode="HTML",
         )
+        return
+    await query.message.answer(
+        text=SUBSCRIBE_TEXT,
+        reply_markup=_subscribe_keyboard(),
+        parse_mode="HTML",
+    )
 
 
 # ─── /subscribe ──────────────────────────────────────────────────────────────
@@ -576,6 +613,13 @@ def _subscribe_keyboard() -> InlineKeyboardMarkup:
 
 @dp.message(Command("subscribe"))
 async def cmd_subscribe(message: Message) -> None:
+    if FREE_PERIOD:
+        await message.answer(
+            text=FREE_PERIOD_TEXT,
+            parse_mode="HTML",
+            reply_markup=_miniapp_keyboard(),
+        )
+        return
     await message.answer(
         text=SUBSCRIBE_TEXT,
         parse_mode="HTML",
@@ -824,6 +868,19 @@ def _build_provider_data(plan_key: str, plan: dict) -> Optional[str]:
 @dp.callback_query(lambda c: c.data and c.data.startswith("subscribe:"))
 async def cb_subscribe(callback: CallbackQuery) -> None:
     """При клике на тариф — посылаем sendInvoice с provider_token ЮКассы."""
+    # Free Period: инвойс не отправляем. Это safety-net на случай, если у юзера
+    # остался старый экран /subscribe в Telegram (под флагом эти кнопки не
+    # рисуются, но callback из истории чата может прилететь).
+    if FREE_PERIOD:
+        await callback.answer("Сейчас всё бесплатно — подписка не нужна.", show_alert=True)
+        if callback.message:
+            await callback.message.answer(
+                text=FREE_PERIOD_TEXT,
+                parse_mode="HTML",
+                reply_markup=_miniapp_keyboard(),
+            )
+        return
+
     plan_key = (callback.data or "").split(":", 1)[-1]
     plan = _PLAN_CATALOG.get(plan_key)
     if not plan:
@@ -1253,18 +1310,20 @@ async def cb_battle_noop(callback: CallbackQuery) -> None:
 
 async def _set_bot_commands() -> None:
     """Задать список команд, который виден в меню Telegram."""
-    await bot.set_my_commands(
-        commands=[
-            BotCommand(command="start", description="Главное меню"),
-            BotCommand(command="guide", description="Как заниматься (инструкция)"),
-            BotCommand(command="profile", description="Мой профиль"),
-            BotCommand(command="subscribe", description="Подписка"),
-            BotCommand(command="reminder", description="Напоминания"),
-            BotCommand(command="battle", description="Англо-дуэль с другом"),
-            BotCommand(command="quest", description="Мой квест дня"),
-            BotCommand(command="help", description="Справка по командам"),
-        ]
-    )
+    commands = [
+        BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="guide", description="Как заниматься (инструкция)"),
+        BotCommand(command="profile", description="Мой профиль"),
+    ]
+    if not FREE_PERIOD:
+        commands.append(BotCommand(command="subscribe", description="Подписка"))
+    commands += [
+        BotCommand(command="reminder", description="Напоминания"),
+        BotCommand(command="battle", description="Англо-дуэль с другом"),
+        BotCommand(command="quest", description="Мой квест дня"),
+        BotCommand(command="help", description="Справка по командам"),
+    ]
+    await bot.set_my_commands(commands=commands)
 
 
 # ─── Точка входа ─────────────────────────────────────────────────────────────
