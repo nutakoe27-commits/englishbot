@@ -191,19 +191,17 @@ async def assign_daily_quest(
     """Выдать юзеру новый квест, если нет активного.
 
     Логика подбора:
-      1. Если уже есть активный (не completed, не expired) — вернуть его, новый не выдаём.
-      2. Исключить квесты, которые юзер уже выполнил (completed_at не NULL).
-      3. Фильтр по уровню: совпадающий или any.
-      4. Случайный из оставшихся.
+      1. Сначала expire'им любые висящие квесты старше 24ч (completed_at IS NULL,
+         expired_at IS NULL, assigned_at < now-24h). Без этого шаг 2 видел бы
+         старый зависший квест и навсегда возвращал его.
+      2. Если уже есть свежий активный (не completed, не expired) — вернуть его.
+      3. Исключить квесты, которые юзер уже выполнил.
+      4. Фильтр по уровню: совпадающий или any.
+      5. Случайный из оставшихся.
 
     Возвращает ActiveQuest, либо None если пул исчерпан.
     """
-    # 1) Активный
-    existing = await get_active_quest(s, user_id)
-    if existing is not None:
-        return existing
-
-    # 2) Помечаем старые незавершённые как expired (assigned > 24ч назад)
+    # 1) Просрочиваем висящие старше 24ч.
     cutoff = utcnow() - timedelta(hours=24)
     await s.execute(
         update(UserQuest)
@@ -215,6 +213,11 @@ async def assign_daily_quest(
         )
         .values(expired_at=utcnow())
     )
+
+    # 2) Свежий активный — отдаём как есть.
+    existing = await get_active_quest(s, user_id)
+    if existing is not None:
+        return existing
 
     # 3) Список ключей, которые юзер УЖЕ выполнил
     done_res = await s.execute(
@@ -251,8 +254,14 @@ async def assign_daily_quest(
         quest_key=chosen.key,
         assigned_at=now,
     )
-    # Не трогаем если ключ уже выдавался (UNIQUE user_id+quest_key)
-    stmt = stmt.on_duplicate_key_update(assigned_at=UserQuest.assigned_at)
+    # UNIQUE(user_id, quest_key): если эту пару уже выдавали (и она была expired),
+    # «оживляем» row — иначе у неё остаётся expired_at и get_active_quest её не
+    # увидит, юзер останется без активного квеста.
+    stmt = stmt.on_duplicate_key_update(
+        assigned_at=now,
+        expired_at=None,
+        verification_data=None,
+    )
     await s.execute(stmt)
     await s.flush()
 

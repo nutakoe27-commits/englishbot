@@ -147,6 +147,35 @@ async def battle_accept(
         return None
 
 
+async def battle_revert_accept(
+    *, battle_id: int, opponent_tg_id: int,
+) -> bool:
+    """Откатить accept (например, если бот не смог доставить ЛС оппоненту).
+
+    Возвращает True при успехе. False при любой ошибке/отказе backend'а —
+    выше этого вызова критично только то, что мы попытались.
+    """
+    c = _client()
+    if c is None:
+        return False
+    try:
+        async with c as client:
+            r = await client.post(
+                f"/api/battles/{battle_id}/revert-accept",
+                json={"opponent_tg_id": opponent_tg_id},
+            )
+            if r.status_code >= 400:
+                log.warning(
+                    "[backend_client] battle_revert_accept HTTP %s: %s",
+                    r.status_code, r.text[:300],
+                )
+                return False
+            return True
+    except Exception as exc:
+        log.error("[backend_client] battle_revert_accept failed: %s", exc)
+        return False
+
+
 async def battle_state(battle_id: int) -> Optional[dict]:
     """Полное состояние battle — для кнопки «Показать результат»."""
     c = _client()

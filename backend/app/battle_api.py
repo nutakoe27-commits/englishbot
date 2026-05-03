@@ -243,6 +243,24 @@ async def api_accept_battle(battle_id: int, body: AcceptBattleIn) -> AcceptBattl
 
 
 @router.post(
+    "/battles/{battle_id}/revert-accept",
+    dependencies=[Depends(_require_bot_secret)],
+)
+async def api_revert_accept(battle_id: int, body: AcceptBattleIn) -> dict:
+    """Бот зовёт сюда, если не смог доставить ЛС оппоненту: возвращаем
+    battle в статус 'open', чтобы оппонент мог нажать «Принять» снова после /start.
+    """
+    async with db_session() as s:
+        ok = await battle_mod.revert_accept(
+            s, battle_id=battle_id, opponent_tg_id=body.opponent_tg_id,
+        )
+        await s.commit()
+    if not ok:
+        raise HTTPException(status.HTTP_409_CONFLICT, "cannot revert accept")
+    return {"ok": True}
+
+
+@router.post(
     "/battles/{battle_id}/record",
     response_model=BattleStateOut,
     dependencies=[Depends(_require_bot_secret)],

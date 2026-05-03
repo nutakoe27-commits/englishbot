@@ -166,6 +166,40 @@ async def accept_battle(
     )
 
 
+async def revert_accept(
+    s: AsyncSession,
+    *,
+    battle_id: int,
+    opponent_tg_id: int,
+) -> bool:
+    """Откатить accept до 'open': бот не смог доставить ЛС оппоненту,
+    значит делаем вид, что accept не случился.
+
+    Безопасно только если:
+      - battle в статусе 'accepted'
+      - opponent_tg_id совпадает с тем, кто принимал
+      - никто ещё не записал аудио (a_audio_path/b_audio_path пустые)
+
+    Возвращает True если откатили, False если нечего откатывать.
+    """
+    res = await s.execute(select(Battle).where(Battle.id == battle_id))
+    battle = res.scalar_one_or_none()
+    if battle is None:
+        return False
+    if battle.status != "accepted":
+        return False
+    if battle.opponent_tg_id != opponent_tg_id:
+        return False
+    if battle.a_audio_path or battle.b_audio_path:
+        return False
+    battle.status = "open"
+    battle.opponent_tg_id = None
+    battle.updated_at = utcnow()
+    await s.flush()
+    log.info("[battle] revert_accept id=%s opp=%s", battle_id, opponent_tg_id)
+    return True
+
+
 async def attach_recording(
     s: AsyncSession,
     *,
