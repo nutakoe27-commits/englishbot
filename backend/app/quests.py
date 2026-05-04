@@ -22,10 +22,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select, update
@@ -36,6 +37,32 @@ from .db.models import DailyUsage, QuestCatalog, User, UserQuest
 from .db.repo import msk_today, utcnow
 
 log = logging.getLogger(__name__)
+
+# Час МСК, на котором начинается новый «квестовый цикл». Совпадает с
+# QUEST_DEFAULT_PUSH_HOUR_MSK в bot/app/reminders.py — это время утреннего
+# push'а с новым квестом. Квест, выданный в любой момент дня, живёт до
+# наступления этого часа на следующий день — а не «ровно 24ч от выдачи».
+QUEST_RESET_HOUR_MSK = int(os.getenv("QUEST_RESET_HOUR_MSK", "9"))
+
+_MSK = timezone(timedelta(hours=3))
+
+
+def _last_quest_cutoff(now_utc: datetime) -> datetime:
+    """UTC-момент последнего наступления QUEST_RESET_HOUR_MSK МСК.
+
+    Если now_msk >= reset_hour сегодня — возвращаем сегодня в reset_hour МСК.
+    Иначе вчера в reset_hour МСК. Квесты с assigned_at < этого момента
+    считаются «прошлой смены» и должны expire.
+    """
+    # naive UTC → aware UTC → MSK
+    now_aware = now_utc.replace(tzinfo=timezone.utc) if now_utc.tzinfo is None else now_utc
+    now_msk = now_aware.astimezone(_MSK)
+    today_reset_msk = now_msk.replace(
+        hour=QUEST_RESET_HOUR_MSK, minute=0, second=0, microsecond=0,
+    )
+    cutoff_msk = today_reset_msk if now_msk >= today_reset_msk else today_reset_msk - timedelta(days=1)
+    cutoff_utc = cutoff_msk.astimezone(timezone.utc).replace(tzinfo=None)
+    return cutoff_utc
 
 
 # ─── Эвристики проверки по транскрипту ────────────────────────────────
@@ -191,9 +218,9 @@ async def assign_daily_quest(
     """Выдать юзеру новый квест, если нет активного.
 
     Логика подбора:
-      1. Сначала expire'им любые висящие квесты старше 24ч (completed_at IS NULL,
-         expired_at IS NULL, assigned_at < now-24h). Без этого шаг 2 видел бы
-         старый зависший квест и навсегда возвращал его.
+      1. Сначала expire'им любые висящие квесты, выданные до последнего
+         утреннего push'а (QUEST_RESET_HOUR_MSK МСК). Так квест живёт до
+         следующего утреннего цикла, а не «ровно 24ч от выдачи».
       2. Если уже есть свежий активный (не completed, не expired) — вернуть его.
       3. Исключить квесты, которые юзер уже выполнил.
       4. Фильтр по уровню: совпадающий или any.
@@ -201,8 +228,8 @@ async def assign_daily_quest(
 
     Возвращает ActiveQuest, либо None если пул исчерпан.
     """
-    # 1) Просрочиваем висящие старше 24ч.
-    cutoff = utcnow() - timedelta(hours=24)
+    # 1) Просрочиваем висящие квесты прошлого «утреннего цикла».
+    cutoff = _last_quest_cutoff(utcnow())
     await s.execute(
         update(UserQuest)
         .where(

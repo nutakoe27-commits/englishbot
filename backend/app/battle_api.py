@@ -125,6 +125,12 @@ class AcceptBattleOut(BaseModel):
     prompt_en: str
     side_a_ru: str
     side_b_ru: str
+    # Где было исходное chat-сообщение «Бросить вызов» — бот использует это,
+    # чтобы перерисовать его в «Вызов принят» даже если accept происходит
+    # не через callback в чате (а, например, через /start deep-link).
+    inline_message_id: Optional[str] = None
+    chat_id: Optional[int] = None
+    chat_message_id: Optional[int] = None
 
 
 class RecordIn(BaseModel):
