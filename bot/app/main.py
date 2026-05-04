@@ -49,6 +49,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN: str = os.environ["BOT_TOKEN"]
 MINIAPP_URL: str = os.getenv("MINIAPP_URL", "https://englishbot.krichigindocs.ru")
 
+# Username бота без @ — для построения deep-link'ов t.me/<bot>?start=...
+BOT_USERNAME: str = os.getenv("BOT_USERNAME", "kmo_ai_english_bot").lstrip("@")
+
 # Free Period — промо-период без оплаты. При FREE_PERIOD=1 бот скрывает
 # кнопки подписки, /subscribe возвращает уведомление вместо инвойса,
 # в /profile нет блока «оформить подписку», лимит 10 минут не показывается.
@@ -173,6 +176,17 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
                 reply_markup=_subscribe_keyboard(),
             )
         return
+
+    # Deep-link из callback'а в чате: «/start battle_accept_<id>» — оппонент
+    # не открывал бота, был перенаправлен сюда; принимаем вызов от его имени.
+    if payload.startswith("battle_accept_"):
+        try:
+            battle_id = int(payload[len("battle_accept_"):])
+        except ValueError:
+            battle_id = 0
+        if battle_id > 0:
+            await _handle_start_battle_accept(message, battle_id)
+            return
 
     user_name = message.from_user.first_name if message.from_user else "друг"
 
@@ -1071,7 +1085,7 @@ def _battle_miniapp_keyboard(battle_id: int, side: str) -> InlineKeyboardMarkup:
     InlineKeyboardButton.url — Telegram откроет Mini App с нужным payload.
     """
     start_param = f"battle_{battle_id}_{side}"
-    url = f"https://t.me/kmo_ai_english_bot?startapp={start_param}"
+    url = f"https://t.me/{BOT_USERNAME}?startapp={start_param}"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🎤 Записать ответ (60 сек)", url=url)],
@@ -1210,36 +1224,20 @@ async def _try_send_battle_dm(
         return False
 
 
-@dp.callback_query(lambda c: c.data and c.data.startswith("battle:accept:"))
-async def cb_battle_accept(callback: CallbackQuery) -> None:
-    if not callback.data:
-        await callback.answer()
-        return
-    try:
-        battle_id = int(callback.data.rsplit(":", 1)[-1])
-    except ValueError:
-        await callback.answer("Кривой id", show_alert=True)
-        return
+async def _send_battle_dms_and_render_chat(
+    result: backend_client.BattleAcceptResult,
+    *,
+    inline_message_id: Optional[str] = None,
+    chat_id: Optional[int] = None,
+    chat_message_id: Optional[int] = None,
+) -> bool:
+    """Общий хвост успешного accept: DM оппоненту → DM инициатору (best-effort)
+    → перерисовать chat-сообщение «принят». Используется и из callback'а
+    в чате, и из /start deep-link обработчика.
 
-    opponent_tg_id = callback.from_user.id
-    result = await backend_client.battle_accept(
-        battle_id=battle_id, opponent_tg_id=opponent_tg_id,
-    )
-    if result is None:
-        await callback.answer(
-            "Вызов уже принят, просрочен или ты сам его создал.",
-            show_alert=True,
-        )
-        return
-
-    if result.initiator_tg_id == opponent_tg_id:
-        await callback.answer(
-            "Нельзя принимать собственный вызов — позови кого-нибудь.",
-            show_alert=True,
-        )
-        return
-
-    # Тянем ники участников — покажем их в карточке и в DM-ах.
+    Возвращает True если ЛС оппоненту доставлено (вызов «жив»), False иначе —
+    тогда вызывающая сторона должна откатить accept.
+    """
     initiator_display = await _display_name_for(result.initiator_tg_id)
     opponent_display = await _display_name_for(result.opponent_tg_id)
 
@@ -1254,47 +1252,32 @@ async def cb_battle_accept(callback: CallbackQuery) -> None:
         + f"<b>Твоя позиция:</b> {result.side_b_ru}\n\n"
         + "Открывай Mini App и записывай 60-секундный аргумент."
     )
-
-    # 1) Сначала пробуем ЛС оппоненту — самая хрупкая точка (он мог не запускать бота).
-    #    Если не доставилось — откатываем accept в backend, чтобы кнопка «Принять»
-    #    в чате осталась рабочей и оппонент мог нажать снова после /start.
-    ok_opp = await _try_send_battle_dm(
-        tg_id=result.opponent_tg_id,
-        text=dm_to_opponent,
-        reply_markup=_battle_miniapp_keyboard(result.id, "b"),
-    )
-    if not ok_opp:
-        await backend_client.battle_revert_accept(
-            battle_id=battle_id, opponent_tg_id=opponent_tg_id,
-        )
-        await callback.answer(
-            "Сначала запусти бота: открой @kmo_ai_english_bot, нажми Start — "
-            "и возвращайся сюда, чтобы снова нажать «Принять».",
-            show_alert=True,
-        )
-        return
-
-    # 2) ЛС оппоненту ушло. Шлём инициатору и редактируем сообщение в чате.
     dm_to_initiator = (
         dm_text_common
         + f"<b>Соперник:</b> {opponent_display}\n"
         + f"<b>Твоя позиция:</b> {result.side_a_ru}\n\n"
         + "Открывай Mini App и записывай 60-секундный аргумент."
     )
+
+    ok_opp = await _try_send_battle_dm(
+        tg_id=result.opponent_tg_id,
+        text=dm_to_opponent,
+        reply_markup=_battle_miniapp_keyboard(result.id, "b"),
+    )
+    if not ok_opp:
+        return False
+
     ok_init = await _try_send_battle_dm(
         tg_id=result.initiator_tg_id,
         text=dm_to_initiator,
         reply_markup=_battle_miniapp_keyboard(result.id, "a"),
     )
     if not ok_init:
-        # Редкий случай — инициатор сам бросал вызов через inline_query, бот
-        # должен был быть запущен. Логируем и идём дальше: оппонент уже играет.
         logger.warning(
             "[battle] инициатор %s не получил DM — продолжаем без него",
             result.initiator_tg_id,
         )
 
-    # Редактируем chat-сообщение: «принято».
     chat_text = (
         f"⚔️ <b>Вызов принят</b>\n\n"
         f"<b>Тема:</b> {result.topic_title_ru}\n"
@@ -1303,18 +1286,135 @@ async def cb_battle_accept(callback: CallbackQuery) -> None:
         f"ответов ИИ-судья объявит победителя прямо здесь."
     )
     try:
-        if callback.inline_message_id:
+        if inline_message_id:
             await bot.edit_message_text(
-                inline_message_id=callback.inline_message_id,
+                inline_message_id=inline_message_id,
                 text=chat_text,
                 parse_mode="HTML",
             )
-        elif callback.message:
-            await callback.message.edit_text(text=chat_text, parse_mode="HTML")
+        elif chat_id is not None and chat_message_id is not None:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=chat_message_id,
+                text=chat_text,
+                parse_mode="HTML",
+            )
     except Exception as exc:
         logger.warning("[battle] edit accepted msg fail: %s", exc)
 
+    return True
+
+
+async def _accept_battle_for_user(
+    *,
+    battle_id: int,
+    opponent_tg_id: int,
+) -> tuple[Optional[backend_client.BattleAcceptResult], Optional[str]]:
+    """Дёргает backend.battle_accept + базовая валидация. Возвращает
+    (result, error_message). Если result не None — accept на стороне
+    backend'а прошёл, остаётся доставить DMs."""
+    result = await backend_client.battle_accept(
+        battle_id=battle_id, opponent_tg_id=opponent_tg_id,
+    )
+    if result is None:
+        return None, "Вызов уже принят, просрочен или ты сам его создал."
+    if result.initiator_tg_id == opponent_tg_id:
+        return None, "Нельзя принимать собственный вызов — позови кого-нибудь."
+    return result, None
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("battle:accept:"))
+async def cb_battle_accept(callback: CallbackQuery) -> None:
+    if not callback.data:
+        await callback.answer()
+        return
+    try:
+        battle_id = int(callback.data.rsplit(":", 1)[-1])
+    except ValueError:
+        await callback.answer("Кривой id", show_alert=True)
+        return
+
+    opponent_tg_id = callback.from_user.id
+    result, err = await _accept_battle_for_user(
+        battle_id=battle_id, opponent_tg_id=opponent_tg_id,
+    )
+    if err is not None:
+        await callback.answer(err, show_alert=True)
+        return
+    assert result is not None
+
+    ok = await _send_battle_dms_and_render_chat(
+        result,
+        inline_message_id=callback.inline_message_id,
+        chat_id=callback.message.chat.id if callback.message else None,
+        chat_message_id=callback.message.message_id if callback.message else None,
+    )
+    if not ok:
+        # Оппоненту не доставилось → откатываем accept в backend и
+        # перебрасываем юзера в чат с ботом через deep-link. После /start
+        # cmd_start примет вызов автоматически.
+        await backend_client.battle_revert_accept(
+            battle_id=battle_id, opponent_tg_id=opponent_tg_id,
+        )
+        deep_link = f"https://t.me/{BOT_USERNAME}?start=battle_accept_{battle_id}"
+        try:
+            await callback.answer(
+                text="Открываю бота — нажми Start, и вызов сразу примется.",
+                url=deep_link,
+            )
+        except Exception:
+            # Защитный fallback: если по какой-то причине callback с url
+            # не поддержан клиентом — показываем alert с подсказкой.
+            await callback.answer(
+                f"Открой @{BOT_USERNAME}, нажми Start — и возвращайся к "
+                "кнопке «Принять».",
+                show_alert=True,
+            )
+        return
+
     await callback.answer("Вызов принят — лови задание в личке.")
+
+
+async def _handle_start_battle_accept(message: Message, battle_id: int) -> None:
+    """Юзер пришёл по deep-link `/start battle_accept_<id>` — принимаем
+    вызов от его имени и шлём задание в этот же DM."""
+    if not message.from_user:
+        return
+    opponent_tg_id = message.from_user.id
+
+    result, err = await _accept_battle_for_user(
+        battle_id=battle_id, opponent_tg_id=opponent_tg_id,
+    )
+    if err is not None:
+        await message.answer(
+            err + "\n\nМожешь бросить новый вызов: /battle.",
+            reply_markup=_miniapp_keyboard(),
+        )
+        return
+    assert result is not None
+
+    ok = await _send_battle_dms_and_render_chat(
+        result,
+        inline_message_id=result.inline_message_id,
+        chat_id=result.chat_id,
+        chat_message_id=result.chat_message_id,
+    )
+    if not ok:
+        # Маловероятно — мы только что в его DM, бот может писать. Откатываем.
+        await backend_client.battle_revert_accept(
+            battle_id=battle_id, opponent_tg_id=opponent_tg_id,
+        )
+        await message.answer(
+            "Не удалось доставить задание. Попробуй ещё раз — открой чат "
+            "с другом и нажми «Принять» снова.",
+        )
+        return
+
+    await message.answer(
+        "✅ <b>Вызов принят!</b> Задание уже выше — открывай Mini App "
+        "и записывай ответ.",
+        parse_mode="HTML",
+    )
 
 
 async def _display_name_for(tg_id: int) -> str:

@@ -63,6 +63,11 @@ class BattleAcceptResult:
     prompt_en: str
     side_a_ru: str
     side_b_ru: str
+    # Координаты исходного chat-сообщения с кнопкой «Принять» — нужны, чтобы
+    # перерисовать его в «Вызов принят» из любого пути (callback / deep-link).
+    inline_message_id: Optional[str] = None
+    chat_id: Optional[int] = None
+    chat_message_id: Optional[int] = None
 
 
 @dataclass
@@ -141,6 +146,9 @@ async def battle_accept(
                 prompt_en=d["prompt_en"],
                 side_a_ru=d["side_a_ru"],
                 side_b_ru=d["side_b_ru"],
+                inline_message_id=d.get("inline_message_id"),
+                chat_id=d.get("chat_id"),
+                chat_message_id=d.get("chat_message_id"),
             )
     except Exception as exc:
         log.error("[backend_client] battle_accept failed: %s", exc)

@@ -56,6 +56,12 @@ class BattleAccepted:
     side_a_ru: str   # что делать юзеру A
     side_b_ru: str   # что делать юзеру B
     prompt_en: str   # инструкция на английском (одинаковая)
+    # Куда было отправлено исходное chat-сообщение с кнопкой «Принять» —
+    # нужно, чтобы бот мог его перерисовать, в т.ч. когда accept происходит
+    # не через callback в чате (например, через /start deep-link).
+    inline_message_id: Optional[str] = None
+    chat_id: Optional[int] = None
+    chat_message_id: Optional[int] = None
 
 
 @dataclass
@@ -163,6 +169,9 @@ async def accept_battle(
         side_a_ru=topic.side_a_ru,
         side_b_ru=topic.side_b_ru,
         prompt_en=topic.prompt_en,
+        inline_message_id=battle.inline_message_id,
+        chat_id=battle.chat_id,
+        chat_message_id=battle.chat_message_id,
     )
 
 
