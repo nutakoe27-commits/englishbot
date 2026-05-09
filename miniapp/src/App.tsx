@@ -141,6 +141,10 @@ export default function App() {
   // Защита от параллельных/повторных вызовов openConnection: пока идёт
   // хэндшейк нового WS или ожидание закрытия старого — дубликаты игнорируем.
   const openingRef = useRef<boolean>(false);
+  // True между handleSettingsSave и завершением reconnect'а — нужен, чтобы
+  // НЕ показывать SessionSummary в момент когда юзер просто сменил настройки
+  // и WS пересоздаётся прозрачно. Сбрасывается в maybeTriggerSummary.
+  const settingsReconnectRef = useRef<boolean>(false);
   // Флаг — идёт ли сейчас запись (ref для доступа из замыканий без stale closure)
   const isRecordingRef = useRef<boolean>(false);
   // Флаг — палец сейчас зажат на кнопке (критично для синхронизации с async WS)
@@ -381,6 +385,10 @@ export default function App() {
           setTimeout(resolve, 1000);
         });
       }
+      // Если предыдущая сессия была осмысленной (≥ 30 сек) — показываем
+      // SessionSummary. Это и foreground-resume из background (Telegram
+      // свернуло Mini App), и любой автоматический reconnect.
+      maybeTriggerSummary();
       wsRef.current = null;
 
       setAppState("connecting");
@@ -539,20 +547,12 @@ export default function App() {
             setLockState((cur) => cur ?? "maintenance");
           } else if (code === 4003) {
             setLockState((cur) => cur ?? "blocked");
-          } else if (!wsClosingRef.current) {
-            // Нормальный disconnect (сервер закрыл, мобила свернула, юзер
-            // закрыл MiniApp). Если был осмысленный сеанс — показываем
-            // SessionSummary, как при End session. Не показываем при
-            // settings save / reconnect — там wsClosingRef.current=true.
-            const startedAt = sessionStartRef.current;
-            if (startedAt !== null) {
-              const sec = Math.floor((Date.now() - startedAt) / 1000);
-              if (sec >= SUMMARY_MIN_SECONDS) {
-                setSummarySeconds((prev) => prev ?? sec);
-              }
-              sessionStartRef.current = null;
-            }
           }
+          // НЕ триггерим summary здесь — это делает maybeTriggerSummary()
+          // в openConnection или closeConnection. ws.onclose может прийти
+          // после того, как openConnection уже обернул его собственным
+          // .onclose-хэндлером (см. раздел "Дожидаемся закрытия старого WS"
+          // выше), и наш inline-код мог пропуститься из-за гонки.
           wsRef.current = null;
           if (!wsClosingRef.current) {
             setAppState("idle");
@@ -639,6 +639,29 @@ export default function App() {
     }
   }, []);
 
+  // ── SessionSummary trigger ────────────────────────────────────────────────
+  // Зовётся при ЛЮБОМ завершении сессии: явный End session, авто-reconnect
+  // из background, переоткрытие при sendChatMessage и т.д. Если сессия была
+  // ≥ 30 сек — показываем оверлей, иначе тихо чистим sessionStartRef.
+  // settingsReconnectRef==true → юзер только что нажал Apply в настройках,
+  // overlay показывать НЕ нужно (это прозрачный reconnect посреди работы).
+  const maybeTriggerSummary = useCallback((): boolean => {
+    if (settingsReconnectRef.current) {
+      settingsReconnectRef.current = false;
+      sessionStartRef.current = null;
+      return false;
+    }
+    const startedAt = sessionStartRef.current;
+    sessionStartRef.current = null;
+    if (startedAt === null) return false;
+    const sec = Math.floor((Date.now() - startedAt) / 1000);
+    if (sec >= SUMMARY_MIN_SECONDS) {
+      setSummarySeconds((prev) => prev ?? sec);
+      return true;
+    }
+    return false;
+  }, []);
+
   // ── Разрыв соединения ─────────────────────────────────────────────────────
   const closeConnection = useCallback(() => {
     stopRecording();
@@ -649,24 +672,19 @@ export default function App() {
     }
     // Если сессия была достаточно длинной — показываем post-session summary
     // до того как сбросить лог. После него юзер жмёт «Готово» и UI чистится.
-    const startedAt = sessionStartRef.current;
-    sessionStartRef.current = null;
-    if (startedAt !== null) {
-      const sec = Math.floor((Date.now() - startedAt) / 1000);
-      if (sec >= SUMMARY_MIN_SECONDS) {
-        setSummarySeconds(sec);
-        setAppState("idle");
-        setStatusText("Ready to talk");
-        return;
-      }
-    }
+    const triggered = maybeTriggerSummary();
     setAppState("idle");
     setStatusText("Ready to talk");
+    if (triggered) {
+      // Лог и лимиты оставляем — почистим в dismissSummary, чтобы юзер
+      // мог увидеть свои реплики во время просмотра summary.
+      return;
+    }
     setDialogLog([]);
     setLimits(null);
     setLockState(null);
     setLockMessage("");
-  }, [stopRecording]);
+  }, [stopRecording, maybeTriggerSummary]);
 
   // Закрыть SessionSummary и почистить UI.
   const dismissSummary = useCallback(() => {
@@ -681,6 +699,9 @@ export default function App() {
   const handleSettingsSave = useCallback(
     (next: TutorSettings) => {
       const prevMode = settingsRef.current.mode;
+      // Помечаем флаг — чтобы maybeTriggerSummary не открыл оверлей в момент
+      // пересоздания WS из-за смены настроек. Сбрасывается в самом helper'е.
+      settingsReconnectRef.current = true;
       setSettings(next);
       saveSettings(next);
       settingsRef.current = next;
