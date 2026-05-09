@@ -297,7 +297,12 @@ async def _run_chat_session(
                 logger.error("[chat] LLM сбой: %s", exc, exc_info=True)
                 reply = "I'm having trouble right now. Let's try again in a moment."
 
+            # Debug: видим что отдал LLM до парсинга — без этого непонятно,
+            # выводит ли он "Correction:" вообще или нет.
+            logger.warning("[chat] llm_reply_raw: %s", (reply or "")[:200])
             correction, body = _split_correction(reply)
+            if correction:
+                logger.warning("[chat] correction extracted: %s", correction)
 
             history.append({"role": "user", "text": user_text})
             history.append({"role": "assistant", "text": body})
@@ -541,9 +546,13 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
             logger.error("LLM сбой: %s", exc, exc_info=True)
             reply = "I'm having trouble right now. Let's try again in a moment."
 
+        # Debug: видим что отдал LLM до парсинга.
+        logger.warning("[voice] llm_reply_raw: %s", (reply or "")[:200])
         # «Correction: <fixed>\n\n<body>» → выделяем correction и тело отдельно.
         # В историю / TTS отдаём только body (correction — мета-информация).
         correction, body = _split_correction(reply)
+        if correction:
+            logger.warning("[voice] correction extracted: %s", correction)
 
         history.append({"role": "user", "text": text})
         history.append({"role": "assistant", "text": body})

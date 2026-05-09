@@ -539,6 +539,19 @@ export default function App() {
             setLockState((cur) => cur ?? "maintenance");
           } else if (code === 4003) {
             setLockState((cur) => cur ?? "blocked");
+          } else if (!wsClosingRef.current) {
+            // Нормальный disconnect (сервер закрыл, мобила свернула, юзер
+            // закрыл MiniApp). Если был осмысленный сеанс — показываем
+            // SessionSummary, как при End session. Не показываем при
+            // settings save / reconnect — там wsClosingRef.current=true.
+            const startedAt = sessionStartRef.current;
+            if (startedAt !== null) {
+              const sec = Math.floor((Date.now() - startedAt) / 1000);
+              if (sec >= SUMMARY_MIN_SECONDS) {
+                setSummarySeconds((prev) => prev ?? sec);
+              }
+              sessionStartRef.current = null;
+            }
           }
           wsRef.current = null;
           if (!wsClosingRef.current) {
