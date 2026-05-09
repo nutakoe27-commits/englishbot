@@ -61,9 +61,12 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 
 -- ─── 2. user_vocabulary ────────────────────────────────────────────────
+-- ВАЖНО: user_id должен быть BIGINT UNSIGNED, чтобы совпадать с users.id
+-- (см. 0001_init.sql:15). Иначе MySQL отвергает FK с ошибкой:
+-- "Referencing column ... and referenced column ... are incompatible".
 CREATE TABLE IF NOT EXISTS user_vocabulary (
-    id              BIGINT NOT NULL AUTO_INCREMENT,
-    user_id         BIGINT NOT NULL,
+    id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id         BIGINT UNSIGNED NOT NULL,
     word            VARCHAR(64) NOT NULL,
     first_seen_at   DATETIME NOT NULL,
     last_seen_at    DATETIME NOT NULL,
@@ -80,8 +83,8 @@ CREATE TABLE IF NOT EXISTS user_vocabulary (
 
 -- ─── 3. user_mistakes ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS user_mistakes (
-    id              BIGINT NOT NULL AUTO_INCREMENT,
-    user_id         BIGINT NOT NULL,
+    id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id         BIGINT UNSIGNED NOT NULL,
     category        VARCHAR(32) NOT NULL COMMENT 'article|tense|preposition|word_choice|phrasal|other',
     bad_phrase      VARCHAR(255) NOT NULL,
     good_phrase     VARCHAR(255) NOT NULL,
