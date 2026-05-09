@@ -55,6 +55,11 @@ class _User(_Base):
     reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # Миграция 0004 — стрик и онбординг-цель.
+    streak_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    best_streak_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_practice_date: Mapped[Optional[date]] = mapped_column(Date)
+    learning_goal: Mapped[Optional[str]] = mapped_column(String(32))
 
 
 class _DailyUsage(_Base):
@@ -443,6 +448,10 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
                 "quests_completed_total": quests_completed_total,
                 "quests_completed_7d": quests_completed_7d,
                 "quest_active_title": quest_active_title,
+                "streak_days": int(u.streak_days or 0),
+                "best_streak_days": int(u.best_streak_days or 0),
+                "last_practice_date": u.last_practice_date,
+                "learning_goal": u.learning_goal,
             }
     except Exception as exc:
         logger.warning("[profile] get_user_profile упал: %s", exc)

@@ -276,6 +276,9 @@ async def _run_chat_session(
             except asyncio.CancelledError:
                 pass
         duration_sec = int(asyncio.get_event_loop().time() - chat_session_start)
+        asyncio.create_task(_bump_streak_after_session(
+            limits_ctx=limits_ctx, duration_sec=duration_sec,
+        ))
         if limits_ctx is not None:
             asyncio.create_task(_check_quest_after_session(
                 limits_ctx=limits_ctx,
@@ -607,6 +610,10 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
         await asyncio.gather(*pending, return_exceptions=True)
     finally:
         duration_sec = int(asyncio.get_event_loop().time() - session_start)
+        # Streak: фиксируем сегодняшнюю практику.
+        asyncio.create_task(_bump_streak_after_session(
+            limits_ctx=limits_ctx, duration_sec=duration_sec,
+        ))
         # Daily Quest: проверяем выполнение квеста по транскрипту сессии.
         if limits_ctx is not None:
             asyncio.create_task(_check_quest_after_session(
@@ -616,6 +623,44 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                 duration_sec=duration_sec,
             ))
         logger.warning("[voice] сессия завершена для %s (%dс)", websocket.client, duration_sec)
+
+
+# ─── Hook после сессии: streak ────────────────────────────────────────
+
+# Минимальная длительность сессии, чтобы засчитать день для стрика.
+# Защищает от накрутки секундными подключениями.
+STREAK_MIN_DURATION_SEC = 30
+
+
+async def _bump_streak_after_session(*, limits_ctx, duration_sec: int) -> None:
+    """Зафиксировать сегодняшнюю практику и обновить стрик. Вызывается
+    из finally в run_voice_session / _run_chat_session.
+
+    Тихо завершается, если:
+      - limits_ctx None (нет привязки к юзеру в БД);
+      - сессия была короче STREAK_MIN_DURATION_SEC;
+      - БД недоступна.
+    """
+    if limits_ctx is None:
+        return
+    if duration_sec < STREAK_MIN_DURATION_SEC:
+        return
+    try:
+        from .db import Repo, db_session
+    except Exception as exc:
+        logger.warning("[voice][streak] не могу импортировать БД: %s", exc)
+        return
+    try:
+        async with db_session() as session:
+            repo = Repo(session)
+            current, best = await repo.bump_streak(limits_ctx.user_db_id)
+            await session.commit()
+        logger.info(
+            "[voice][streak] user_db_id=%s streak=%d best=%d",
+            limits_ctx.user_db_id, current, best,
+        )
+    except Exception as exc:
+        logger.warning("[voice][streak] bump failed: %s", exc)
 
 
 # ─── Hook после сессии: проверка Daily Quest ─────────────────────────────

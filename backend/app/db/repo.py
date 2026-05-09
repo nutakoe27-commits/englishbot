@@ -155,6 +155,53 @@ class Repo:
         await self.s.execute(stmt)
         return await self.get_used_seconds_today(user_id)
 
+    # ─── streak ─────────────────────────────────────────────────────────
+    async def bump_streak(self, user_id: int) -> tuple[int, int]:
+        """Зафиксировать практику сегодня и обновить стрик.
+
+        Логика:
+          - Если уже занимались сегодня → ничего не меняем (no-op).
+          - Если занимались вчера → streak_days += 1.
+          - Иначе (пропустили день или первый раз) → streak_days = 1.
+          - best_streak_days тянется как max(best, current).
+
+        Возвращает (current_streak, best_streak) после апдейта. Если юзер
+        не найден — (0, 0).
+        """
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            return (0, 0)
+
+        today = msk_today()
+        if user.last_practice_date == today:
+            # Уже зачли стрик сегодня.
+            return (user.streak_days, user.best_streak_days)
+
+        if user.last_practice_date == today - timedelta(days=1):
+            new_streak = user.streak_days + 1
+        else:
+            # Пропуск или первый раз.
+            new_streak = 1
+
+        new_best = max(user.best_streak_days, new_streak)
+        await self.s.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(
+                streak_days=new_streak,
+                best_streak_days=new_best,
+                last_practice_date=today,
+            )
+        )
+        return (new_streak, new_best)
+
+    async def get_streak(self, user_id: int) -> tuple[int, int, Optional[date]]:
+        """Текущий стрик / лучший / дата последней практики (МСК)."""
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            return (0, 0, None)
+        return (user.streak_days, user.best_streak_days, user.last_practice_date)
+
     # ─── sessions ───────────────────────────────────────────────────────
     async def open_session(
         self,
