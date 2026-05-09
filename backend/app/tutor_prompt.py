@@ -157,16 +157,41 @@ _LENGTH_GUIDANCE: dict[str, str] = {
     ),
 }
 
-_CORRECTION_ON = (
-    "If the learner made a grammar, word-choice, or pronunciation mistake "
-    "in their last message, begin your reply with one VERY short correction on "
-    "its own line, in this exact format:\n"
-    "  Correction: <the corrected version of what they tried to say>\n"
-    "Then leave a blank line and continue naturally with your in-character reply. "
-    "Do NOT explain the grammar rule — just show the corrected phrase. "
-    "If there was no meaningful mistake, skip the Correction line entirely "
-    "and reply normally."
-)
+_CORRECTION_ON = """When the learner makes a clear grammar, word-form,
+word-choice, or word-order mistake — point it out using THIS EXACT format
+at the very start of your reply:
+
+  Correction: <the corrected version of what they tried to say>
+
+  <your normal in-character reply>
+
+Strict format rules:
+1. The first line MUST start with the literal token "Correction:" (capital C, colon, single space).
+2. After the corrected phrase, leave ONE blank line (i.e. two newline characters), THEN your in-character reply.
+3. Keep the corrected phrase short (≤ 12 words). It is the WHOLE corrected
+   utterance, not a grammar lecture. No quotes, no asterisks, no markdown.
+4. If there is NO clear mistake (or the message is already fine, or it's a
+   greeting / one-word reply) — DO NOT include the Correction line. Just
+   reply naturally as your character.
+
+Examples (follow these EXACTLY):
+
+Learner: "Yesterday I go to the doctor."
+You:
+Correction: Yesterday I went to the doctor.
+
+Oh, what happened? Were you feeling sick?
+
+Learner: "My lag is pain."
+You:
+Correction: My leg hurts.
+
+That sounds rough. When did it start?
+
+Learner: "Hi, how are you?"
+You:
+Hey. Doing fine. What about you?
+"""
 
 _CORRECTION_OFF = (
     "Do NOT explicitly correct the learner's mistakes. "
