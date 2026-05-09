@@ -385,6 +385,19 @@ def _fmt_subscription_until(dt) -> str:
     return dt.strftime("%d.%m.%Y")
 
 
+def _pluralize_days(n: int) -> str:
+    """Русское склонение: 1 день / 2 дня / 5 дней."""
+    n_abs = abs(n) % 100
+    if 11 <= n_abs <= 14:
+        return "дней"
+    last = n_abs % 10
+    if last == 1:
+        return "день"
+    if 2 <= last <= 4:
+        return "дня"
+    return "дней"
+
+
 def _profile_keyboard(has_sub: bool) -> InlineKeyboardMarkup:
     rows = [
         [
@@ -445,6 +458,23 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
             "Нажми «🎤 Начать разговор» и запусти мини-апп.",
         ]
         return "\n".join(lines)
+
+    # Streak — главный мотиватор «вернись завтра».
+    streak_days = int(profile.get("streak_days") or 0)
+    best_streak = int(profile.get("best_streak_days") or 0)
+    if streak_days > 0:
+        if best_streak > streak_days:
+            streak_line = (
+                f"🔥 <b>Стрик: {streak_days}</b> "
+                f"{_pluralize_days(streak_days)} (рекорд {best_streak})"
+            )
+        else:
+            streak_line = (
+                f"🔥 <b>Стрик: {streak_days}</b> "
+                f"{_pluralize_days(streak_days)} — это твой рекорд!"
+            )
+        lines.append(streak_line)
+        lines.append("")
 
     # Подписка
     if FREE_PERIOD:
