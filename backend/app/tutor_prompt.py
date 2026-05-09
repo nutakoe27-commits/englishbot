@@ -200,6 +200,43 @@ _CORRECTION_OFF = (
 )
 
 
+_GOAL_HINTS: dict[str, str] = {
+    "travel": (
+        "When the topic naturally allows, weave in travel-relevant vocabulary "
+        "(airports, hotels, ordering food abroad, navigating cities, asking "
+        "for help in a new place). Don't force it — only when it fits."
+    ),
+    "work": (
+        "When the topic naturally allows, lean into work-context vocabulary "
+        "(meetings, deadlines, polite disagreement, professional small talk, "
+        "feedback). Don't force it — only when it fits."
+    ),
+    "daily": (
+        "Lean into everyday small-talk vocabulary (weekend plans, weather, "
+        "food, household, friends, opinions on light topics). Keep it casual."
+    ),
+    "exam": (
+        "The learner is preparing for an English exam (IELTS/TOEFL-style). "
+        "When fitting, use exam-style topics (education, environment, society, "
+        "technology) and richer phrasing — but stay conversational, not formal."
+    ),
+    "fun": (
+        "The learner is just curious. Keep things light and varied — bring "
+        "interesting topics yourself if conversation stalls (films, hobbies, "
+        "weird news, opinions). Don't be too utilitarian."
+    ),
+}
+
+
+def _build_goal_block(learning_goal: Optional[str]) -> Optional[str]:
+    if not learning_goal:
+        return None
+    hint = _GOAL_HINTS.get(learning_goal.strip().lower())
+    if not hint:
+        return None
+    return "Learner goal: " + hint
+
+
 def _build_learner_context_block(learner_context: Optional[dict]) -> Optional[str]:
     """Опциональная секция в системном промпте: словарь и ошибки последних
     сессий. Тьютор должен мягко переиспользовать слова и подкидывать
@@ -251,11 +288,13 @@ def build_system_prompt(
     s: SessionSettings,
     *,
     learner_context: Optional[dict] = None,
+    learning_goal: Optional[str] = None,
 ) -> str:
     """Собирает финальный system-промпт из настроек сессии.
 
     `learner_context` — опциональный dict {recent_vocab, recent_mistakes}
     из Repo.get_learner_context(). Подмешивается отдельной секцией если есть.
+    `learning_goal` — `users.learning_goal` ("travel"|"work"|"daily"|"exam"|"fun").
     """
     parts: list[str] = []
 
@@ -267,6 +306,10 @@ def build_system_prompt(
     parts.append(_LEVEL_GUIDANCE[s.level])
     parts.append(_LENGTH_GUIDANCE[s.length])
     parts.append(_CORRECTION_ON if s.corrections else _CORRECTION_OFF)
+
+    goal_block = _build_goal_block(learning_goal)
+    if goal_block:
+        parts.append(goal_block)
 
     learner_block = _build_learner_context_block(learner_context)
     if learner_block:

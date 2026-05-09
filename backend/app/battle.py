@@ -175,6 +175,81 @@ async def accept_battle(
     )
 
 
+async def revanche(
+    s: AsyncSession,
+    *,
+    old_battle_id: int,
+    requester_tg_id: int,
+) -> Optional[BattleAccepted]:
+    """Реванш: создать новый battle с теми же двумя участниками сразу
+    в статусе 'accepted'. requester_tg_id становится initiator'ом нового
+    battle (это и логично — кто инициировал реванш).
+
+    Условия:
+      - Старый battle существует и в статусе 'judged'.
+      - requester_tg_id — один из двух участников.
+      - Новая тема выбирается случайно (как и при обычном create).
+
+    Возвращает BattleAccepted (с новой темой) или None при отказе.
+    """
+    res = await s.execute(select(Battle).where(Battle.id == old_battle_id))
+    old = res.scalar_one_or_none()
+    if old is None:
+        log.warning("[battle] revanche: old not found id=%s", old_battle_id)
+        return None
+    if old.status != "judged":
+        log.info(
+            "[battle] revanche: old not judged id=%s status=%s",
+            old_battle_id, old.status,
+        )
+        return None
+    a, b = old.initiator_tg_id, old.opponent_tg_id
+    if requester_tg_id not in (a, b) or not b:
+        log.warning(
+            "[battle] revanche: requester %s not in old battle %s",
+            requester_tg_id, old_battle_id,
+        )
+        return None
+
+    # Инициатор реванша — тот, кто нажал кнопку.
+    new_initiator = requester_tg_id
+    new_opponent = a if requester_tg_id == b else b
+
+    topic = battle_topics.pick_random()
+    now = utcnow()
+    new_battle = Battle(
+        initiator_tg_id=new_initiator,
+        opponent_tg_id=new_opponent,
+        # Реваншевый battle публикуется в тот же чат, что и оригинал.
+        chat_id=old.chat_id,
+        chat_message_id=None,
+        inline_message_id=None,
+        topic_key=topic.key,
+        status="accepted",  # сразу принят: оба уже играли, accept не нужен
+        created_at=now,
+        updated_at=now,
+        expires_at=now + timedelta(hours=24),
+    )
+    s.add(new_battle)
+    await s.flush()
+    log.info(
+        "[battle] revanche created id=%s from old=%s initiator=%s opponent=%s topic=%s",
+        new_battle.id, old_battle_id, new_initiator, new_opponent, topic.key,
+    )
+    return BattleAccepted(
+        id=new_battle.id,
+        topic_key=topic.key,
+        initiator_tg_id=new_initiator,
+        opponent_tg_id=new_opponent,
+        side_a_ru=topic.side_a_ru,
+        side_b_ru=topic.side_b_ru,
+        prompt_en=topic.prompt_en,
+        inline_message_id=None,
+        chat_id=old.chat_id,
+        chat_message_id=None,
+    )
+
+
 async def revert_accept(
     s: AsyncSession,
     *,
