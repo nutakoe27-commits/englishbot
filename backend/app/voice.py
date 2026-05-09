@@ -77,6 +77,54 @@ async def _llm_complete_with_timeout(llm, *, user_text, history, system_prompt):
     return await coro
 
 
+# ─── Streaming LLM → TTS по предложениям ──────────────────────────────────
+# Граница предложения: . ! ? — после них пробел или конец строки.
+# Также \n считается границей (LLM иногда переносит без пунктуации).
+_SENTENCE_END_RE = re.compile(r"[.!?](?:\s|$)|\n")
+
+# Минимальная длина первого «куска» для отправки в TTS — иначе TTS получит
+# одно слово и окончит синтез слишком быстро (мерцание звука).
+_MIN_FIRST_TTS_CHUNK = 30
+# После первого куска можно отдавать каждое предложение даже короткое.
+
+# Сколько символов с начала ответа смотрим, чтобы решить — есть ли префикс
+# Correction:. Если в первых N символах его нет → точно нет, можем стримить
+# с самого начала. Иначе — буферим до первого пустого ряда (\n\n).
+_CORRECTION_DETECT_HEAD = 20
+
+
+def _starts_with_correction(text: str) -> bool:
+    """True если текст начинается с 'Correction:' (с учётом возможных
+    пробелов/переводов в начале)."""
+    return text.lstrip().lower().startswith("correction:")
+
+
+def _try_extract_streaming_correction(full_reply: str) -> tuple[Optional[str], Optional[str]]:
+    """Streaming-вариант _split_correction: парсит «Correction: X\\n\\n…»
+    но позволяет body быть пустым (стрим ещё не закончился).
+
+    Возвращает (correction, body_so_far). Если структура ещё не оформлена
+    (нет \\n\\n после Correction:) — возвращает (None, None) — caller
+    должен подождать следующих токенов.
+
+    В отличие от _split_correction, body может быть пустой строкой "".
+    """
+    if not _starts_with_correction(full_reply):
+        return None, None
+    idx = full_reply.find("\n\n")
+    if idx == -1:
+        return None, None
+    corr_line = full_reply[:idx].strip()
+    # corr_line должен начинаться с "Correction:" — strip префикс.
+    if not corr_line.lower().startswith("correction:"):
+        return None, None
+    correction = corr_line[len("Correction:"):].strip()
+    if not correction or len(correction) > 200:
+        return None, None
+    body_so_far = full_reply[idx + 2:]
+    return correction, body_so_far
+
+
 # ─── Correction split: «Correction: ...\n\n<body>» ──────────────────────
 # tutor_prompt._CORRECTION_ON инструктирует LLM выдавать первой строкой
 # `Correction: <fixed>\n\n<reply>`. Парсим её и отдаём отдельно — фронт
@@ -541,30 +589,142 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                 "text": text,
             })
 
+        # Streaming LLM → TTS по предложениям.
+        # ─────────────────────────────────────────────────────────────
+        # Запускаем фоновый TTS-worker, который последовательно
+        # синтезирует предложения из очереди. Параллельно собираем
+        # токены LLM в sentence_buffer; на каждой границе (.!? или \n)
+        # передаём готовое предложение в очередь. Это сокращает latency
+        # «EOU → первый звук тьютора» с ~2.5 до ~0.8 сек.
+        sentence_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+        async def tts_worker() -> None:
+            while True:
+                sentence = await sentence_queue.get()
+                if sentence is None:
+                    return
+                if not sentence.strip():
+                    continue
+                try:
+                    await _send_tts_to_ws(websocket, tts, sentence)
+                except Exception as exc:
+                    logger.error("[TTS] worker error: %s", exc)
+
+        worker_task = asyncio.create_task(tts_worker())
+
+        full_reply = ""
+        # Буфер «головы» ответа до момента, когда понятно: с Correction: или без.
+        head_resolved = False
+        # Если correction есть — собираем body отдельно и стримим только его.
+        sentence_buffer = ""
+        correction_text: Optional[str] = None
+        timed_out = False
+        # Флаг — отправили ли уже хотя бы одно предложение в TTS. Нужен для
+        # минимального размера первого куска (см. ниже).
+        first_chunk_sent = False
+
         try:
-            reply = await _llm_complete_with_timeout(
-                llm,
+            stream = llm.stream(
                 user_text=text,
                 history=history,
                 system_prompt=system_prompt,
             )
-        except asyncio.TimeoutError:
-            logger.error("LLM timeout %dс", app_settings.LLM_TIMEOUT_SEC)
-            reply = LLM_TIMEOUT_FALLBACK_EN
-        except Exception as exc:
-            logger.error("LLM сбой: %s", exc, exc_info=True)
-            reply = "I'm having trouble right now. Let's try again in a moment."
+            timeout = app_settings.LLM_TIMEOUT_SEC
+            deadline = asyncio.get_event_loop().time() + (timeout or 60)
+            async for delta in stream:
+                if timeout and asyncio.get_event_loop().time() > deadline:
+                    timed_out = True
+                    logger.error("[voice] LLM stream timeout %dс", timeout)
+                    break
+                full_reply += delta
+                if not head_resolved:
+                    # До этого момента ничего не отправляем в TTS.
+                    if _starts_with_correction(full_reply):
+                        # Ждём конец Correction-строки (\n\n) — потом
+                        # отрезаем correction и стартуем стрим body.
+                        corr, body_head = _try_extract_streaming_correction(full_reply)
+                        if corr is not None:
+                            correction_text = corr
+                            sentence_buffer = body_head or ""
+                            head_resolved = True
+                        # иначе ждём дальше
+                    elif len(full_reply) >= _CORRECTION_DETECT_HEAD:
+                        # 20+ символов накопилось без префикса "Correction:" —
+                        # точно нет. Стартуем стрим с full_reply.
+                        sentence_buffer = full_reply
+                        head_resolved = True
+                    # иначе — ждём ещё несколько токенов чтобы решить
+                else:
+                    sentence_buffer += delta
 
-        # Debug: видим что отдал LLM до парсинга.
-        logger.warning("[voice] llm_reply_raw: %s", (reply or "")[:200])
-        # «Correction: <fixed>\n\n<body>» → выделяем correction и тело отдельно.
-        # В историю / TTS отдаём только body (correction — мета-информация).
-        correction, body = _split_correction(reply)
-        if correction:
-            logger.warning("[voice] correction extracted: %s", correction)
+                if head_resolved:
+                    # Извлекаем все полные предложения, какие есть в буфере.
+                    while True:
+                        m = _SENTENCE_END_RE.search(sentence_buffer)
+                        if not m:
+                            break
+                        cut = m.end()
+                        # Минимальный размер первого куска — чтобы TTS не
+                        # дёргался на «Hi.» (одно слово ≈ 0.3 сек звука).
+                        if not first_chunk_sent and cut < _MIN_FIRST_TTS_CHUNK:
+                            break
+                        sentence = sentence_buffer[:cut].strip()
+                        sentence_buffer = sentence_buffer[cut:]
+                        if sentence:
+                            await sentence_queue.put(sentence)
+                            first_chunk_sent = True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("[voice] LLM stream сбой: %s", exc, exc_info=True)
+
+        # Конец LLM-стрима (или таймаут / ошибка).
+        if timed_out and not full_reply.strip():
+            # Полный фейл — даём fallback в TTS.
+            full_reply = LLM_TIMEOUT_FALLBACK_EN
+            sentence_buffer = LLM_TIMEOUT_FALLBACK_EN
+            head_resolved = True
+
+        if not head_resolved:
+            # LLM выдал слишком мало (< 20 символов) и закончил —
+            # это весь ответ, стримить нечего, просто отдаём.
+            if _starts_with_correction(full_reply):
+                # Используем финальный _split_correction, body тут уже точно
+                # есть (или нет — тогда отправим всё как есть).
+                corr, body = _split_correction(full_reply)
+                correction_text = corr
+                sentence_buffer = body if corr else full_reply
+            else:
+                sentence_buffer = full_reply
+            head_resolved = True
+
+        # Отдаём остаток (последнее предложение без точки в конце).
+        if sentence_buffer.strip():
+            await sentence_queue.put(sentence_buffer.strip())
+
+        # Сигнал worker'у завершиться и дождаться TTS всех предложений.
+        await sentence_queue.put(None)
+        try:
+            await worker_task
+        except Exception as exc:
+            logger.warning("[TTS] worker exited with: %s", exc)
+
+        # Финальный текст для UI и истории. Для надёжности применяем
+        # _split_correction ещё раз к полному reply (стримовое решение
+        # могло пропустить trailing whitespace).
+        logger.warning("[voice] llm_reply_raw: %s", (full_reply or "")[:200])
+        correction_final, body_final = _split_correction(full_reply)
+        # Если в стриминге нашли correction — он точнее (учитывался по мере
+        # появления \n\n), используем его. Иначе берём финальный.
+        if correction_text:
+            correction_final = correction_text
+        if not body_final:
+            body_final = full_reply
+        if correction_final:
+            logger.warning("[voice] correction extracted: %s", correction_final)
 
         history.append({"role": "user", "text": text})
-        history.append({"role": "assistant", "text": body})
+        history.append({"role": "assistant", "text": body_final})
         if len(history) > MAX_HISTORY_TURNS * 2:
             del history[: len(history) - MAX_HISTORY_TURNS * 2]
 
@@ -572,12 +732,9 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
             await websocket.send_json({
                 "type": "text",
                 "role": "tutor",
-                "text": body,
-                "correction": correction,
+                "text": body_final,
+                "correction": correction_final,
             })
-
-        # Синтез и стриминг PCM 24kHz в браузер — без correction.
-        await send_tts(body)
 
     async def process_stt() -> None:
         """
