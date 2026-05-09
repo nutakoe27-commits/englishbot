@@ -135,6 +135,99 @@ async def ping() -> dict:
     return {"pong": True, "version": "0.3.0"}
 
 
+@app.get("/api/learner/recent-context", tags=["Learner"])
+async def learner_recent_context(init_data: str = "") -> dict:
+    """Контекст учащегося для Mini App: для post-session summary экрана.
+
+    Возвращает:
+      - streak: {current, best, last_practice_date}
+      - vocab: [{word, times_used, last_seen_at}, ...] (топ-15 за неделю)
+      - mistakes: [{category, bad, good, occurred_at}, ...] (топ-5 за неделю)
+      - today_used_seconds: сколько юзер сегодня практиковался
+
+    Аутентификация — Telegram WebApp initData.
+    """
+    from fastapi import HTTPException, status
+
+    if not init_data:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "init_data required")
+    if not settings.BOT_TOKEN:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "bot token missing")
+    validated = validate_telegram_init_data(init_data, settings.BOT_TOKEN)
+    if not validated:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid initData")
+
+    # Anti-replay: тот же 24-часовой TTL что и в battle_api.
+    try:
+        auth_date = int(validated.get("auth_date") or 0)
+    except (TypeError, ValueError):
+        auth_date = 0
+    import time as _time
+    if auth_date == 0 or (_time.time() - auth_date) > 24 * 3600:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "init_data expired")
+
+    user_raw = validated.get("user")
+    if not user_raw:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "initData has no user")
+    try:
+        user_obj = json.loads(user_raw)
+        tg_id = int(user_obj["id"])
+    except Exception:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad user payload in initData")
+
+    if not settings.DATABASE_URL:
+        return {
+            "streak": {"current": 0, "best": 0, "last_practice_date": None},
+            "vocab": [],
+            "mistakes": [],
+            "today_used_seconds": 0,
+        }
+
+    from .db import Repo
+
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.get_user_by_tg_id(tg_id)
+        if user is None:
+            return {
+                "streak": {"current": 0, "best": 0, "last_practice_date": None},
+                "vocab": [],
+                "mistakes": [],
+                "today_used_seconds": 0,
+            }
+        ctx = await repo.get_learner_context(user.id)
+        used_today = await repo.get_used_seconds_today(user.id)
+
+    return {
+        "streak": {
+            "current": int(user.streak_days or 0),
+            "best": int(user.best_streak_days or 0),
+            "last_practice_date": (
+                user.last_practice_date.isoformat()
+                if user.last_practice_date else None
+            ),
+        },
+        "vocab": [
+            {
+                "word": v["word"],
+                "times_used": v["times_used"],
+                "last_seen_at": v["last_seen_at"].isoformat() if v["last_seen_at"] else None,
+            }
+            for v in ctx["recent_vocab"]
+        ],
+        "mistakes": [
+            {
+                "category": m["category"],
+                "bad": m["bad"],
+                "good": m["good"],
+                "occurred_at": m["occurred_at"].isoformat() if m["occurred_at"] else None,
+            }
+            for m in ctx["recent_mistakes"]
+        ],
+        "today_used_seconds": int(used_today or 0),
+    }
+
+
 # ─── WebSocket — голосовой диалог ─────────────────────────────────────────────
 
 @app.websocket("/ws/voice")

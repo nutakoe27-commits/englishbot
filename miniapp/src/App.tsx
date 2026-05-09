@@ -17,6 +17,7 @@ import WebApp from "@twa-dev/sdk";
 import "./App.css";
 import { SettingsSheet } from "./SettingsSheet";
 import { LockScreen } from "./LockScreen";
+import { SessionSummary } from "./SessionSummary";
 import {
   loadSettings,
   saveSettings,
@@ -40,13 +41,23 @@ interface DialogEntry {
   id: number;
   role: "user" | "tutor";
   text: string;
+  /**
+   * Если тьютор поправил ошибку — здесь корректная форма (без слова
+   * "Correction:" префикса). Бэкенд парсит её в voice.py::_split_correction
+   * и шлёт отдельным полем; UI рисует жёлтым блоком над основной репликой.
+   */
+  correction?: string | null;
 }
 
 // ─── Константы ────────────────────────────────────────────────────────────────
 
 const WS_URL = "wss://api-english.krichigindocs.ru/ws/voice";
+const API_BASE = "https://api-english.krichigindocs.ru";
 const OUTPUT_SAMPLE_RATE = 24000; // TTS отдаёт 24 kHz PCM
 const MAX_LOG_ENTRIES = 20;
+// Сессия должна продлиться хотя бы столько, чтобы показать summary-экран.
+// Совпадает с STREAK_MIN_DURATION_SEC на бэке (защита от микро-сессий).
+const SUMMARY_MIN_SECONDS = 30;
 // Username бота для deep-link на /subscribe и /start.
 // Пробрасывается на этапе Docker build через VITE_BOT_USERNAME (см. docker-compose.yml).
 // Указывать БЕЗ символа '@'.
@@ -104,6 +115,10 @@ export default function App() {
   // Состояние lock-screen: null = обычный UI; иначе — показываем overlay
   const [lockState, setLockState] = useState<LockKind | null>(null);
   const [lockMessage, setLockMessage] = useState<string>("");
+  // Post-session summary — показываем после нормального End session.
+  const [summarySeconds, setSummarySeconds] = useState<number | null>(null);
+  // Время начала сессии (для подсчёта длительности при End session).
+  const sessionStartRef = useRef<number | null>(null);
   // Реф с актуальными настройками — openConnection читает его без ре-рендера
   const settingsRef = useRef<TutorSettings>(settings);
   useEffect(() => {
@@ -189,17 +204,21 @@ export default function App() {
   }, [dialogLog]);
 
   // ── Добавление реплики в лог ──────────────────────────────────────────────
-  const addLogEntry = useCallback((role: "user" | "tutor", text: string) => {
-    setDialogLog((prev) => {
-      const newEntry: DialogEntry = {
-        id: ++logIdRef.current,
-        role,
-        text,
-      };
-      const updated = [...prev, newEntry];
-      return updated.slice(-MAX_LOG_ENTRIES);
-    });
-  }, []);
+  const addLogEntry = useCallback(
+    (role: "user" | "tutor", text: string, correction?: string | null) => {
+      setDialogLog((prev) => {
+        const newEntry: DialogEntry = {
+          id: ++logIdRef.current,
+          role,
+          text,
+          correction: correction || null,
+        };
+        const updated = [...prev, newEntry];
+        return updated.slice(-MAX_LOG_ENTRIES);
+      });
+    },
+    [],
+  );
 
   // ── Воспроизведение PCM-аудио из бинарного WebSocket-фрейма ──────────────
   const enqueueAudio = useCallback((data: ArrayBuffer) => {
@@ -403,6 +422,8 @@ export default function App() {
         if (wsRef.current !== ws) return;
         setAppState("connected");
         setStatusText("Ready to talk");
+        // Засекаем старт сессии для post-session summary.
+        sessionStartRef.current = Date.now();
       };
 
       ws.onmessage = (event) => {
@@ -435,7 +456,11 @@ export default function App() {
           try {
             const msg = JSON.parse(event.data);
             if (msg.type === "text" && msg.text) {
-              addLogEntry(msg.role as "user" | "tutor", msg.text);
+              addLogEntry(
+                msg.role as "user" | "tutor",
+                msg.text,
+                typeof msg.correction === "string" ? msg.correction : null,
+              );
               if (msg.role === "tutor") setChatThinking(false);
             } else if (msg.type === "thinking") {
               setChatThinking(true);
@@ -609,6 +634,19 @@ export default function App() {
       wsRef.current.close(1000);
       wsRef.current = null;
     }
+    // Если сессия была достаточно длинной — показываем post-session summary
+    // до того как сбросить лог. После него юзер жмёт «Готово» и UI чистится.
+    const startedAt = sessionStartRef.current;
+    sessionStartRef.current = null;
+    if (startedAt !== null) {
+      const sec = Math.floor((Date.now() - startedAt) / 1000);
+      if (sec >= SUMMARY_MIN_SECONDS) {
+        setSummarySeconds(sec);
+        setAppState("idle");
+        setStatusText("Ready to talk");
+        return;
+      }
+    }
     setAppState("idle");
     setStatusText("Ready to talk");
     setDialogLog([]);
@@ -616,6 +654,13 @@ export default function App() {
     setLockState(null);
     setLockMessage("");
   }, [stopRecording]);
+
+  // Закрыть SessionSummary и почистить UI.
+  const dismissSummary = useCallback(() => {
+    setSummarySeconds(null);
+    setDialogLog([]);
+    setLimits(null);
+  }, []);
 
   // ── Применение новых настроек: сохраняем, закрываем текущую сессию и
   // переоткрываем WS с обновлёнными query-параметрами. Тьютор пришлёт
@@ -927,6 +972,14 @@ export default function App() {
               <span className="msg__role">
                 {entry.role === "user" ? "You" : "Tutor"}
               </span>
+              {entry.correction && (
+                <span className="msg__correction" aria-label="correction">
+                  <span className="msg__correction-icon" aria-hidden>
+                    ✏️
+                  </span>
+                  {entry.correction}
+                </span>
+              )}
               <span className="msg__text">{entry.text}</span>
             </div>
           ))
@@ -1110,6 +1163,14 @@ export default function App() {
           kind={lockState}
           message={lockMessage}
           botUsername={BOT_USERNAME}
+        />
+      )}
+
+      {summarySeconds !== null && lockState === null && (
+        <SessionSummary
+          apiBase={API_BASE}
+          sessionSeconds={summarySeconds}
+          onClose={dismissSummary}
         />
       )}
     </div>

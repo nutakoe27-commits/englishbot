@@ -77,6 +77,55 @@ async def _llm_complete_with_timeout(llm, *, user_text, history, system_prompt):
     return await coro
 
 
+# ─── Correction split: «Correction: ...\n\n<body>» ──────────────────────
+# tutor_prompt._CORRECTION_ON инструктирует LLM выдавать первой строкой
+# `Correction: <fixed>\n\n<reply>`. Парсим её и отдаём отдельно — фронт
+# подсвечивает correction жёлтым блоком, а TTS озвучивает только body.
+_CORRECTION_LINE_RE = re.compile(
+    r"^\s*Correction\s*:\s*(.+?)\s*\n\s*\n+(.+)\Z",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _split_correction(reply: str) -> tuple[Optional[str], str]:
+    """Возвращает (correction, body). Если структуры нет — (None, reply)."""
+    if not reply:
+        return None, reply or ""
+    m = _CORRECTION_LINE_RE.match(reply)
+    if not m:
+        return None, reply.strip()
+    correction = m.group(1).strip()
+    body = m.group(2).strip()
+    if not correction or not body:
+        return None, reply.strip()
+    # Защита от вырожденных случаев — если correction слишком длинный,
+    # это, скорее всего, не correction, а первая строка ответа.
+    if len(correction) > 200:
+        return None, reply.strip()
+    return correction, body
+
+
+async def _load_learner_context(limits_ctx) -> Optional[dict]:
+    """Тянем из БД recent_vocab + recent_mistakes для текущего юзера.
+
+    Best-effort: при отсутствии БД / любой ошибке — возвращаем None,
+    тогда build_system_prompt просто не подмешает учительский контекст.
+    """
+    if limits_ctx is None:
+        return None
+    try:
+        from .db import Repo, db_session
+    except Exception:
+        return None
+    try:
+        async with db_session() as session:
+            repo = Repo(session)
+            return await repo.get_learner_context(limits_ctx.user_db_id)
+    except Exception as exc:
+        logger.warning("[voice] не смог загрузить learner_context: %s", exc)
+        return None
+
+
 def _is_russian_utterance(text: str) -> bool:
     """Есть ли значимая доля кириллицы в тексте.
 
@@ -248,8 +297,10 @@ async def _run_chat_session(
                 logger.error("[chat] LLM сбой: %s", exc, exc_info=True)
                 reply = "I'm having trouble right now. Let's try again in a moment."
 
+            correction, body = _split_correction(reply)
+
             history.append({"role": "user", "text": user_text})
-            history.append({"role": "assistant", "text": reply})
+            history.append({"role": "assistant", "text": body})
             if len(history) > MAX_HISTORY_TURNS * 2:
                 del history[: len(history) - MAX_HISTORY_TURNS * 2]
 
@@ -261,9 +312,10 @@ async def _run_chat_session(
                 await websocket.send_json({
                     "type": "text",
                     "role": "tutor",
-                    "text": reply,
+                    "text": body,
+                    "correction": correction,
                 })
-            logger.warning("[chat] tutor: %s", reply[:120])
+            logger.warning("[chat] tutor: %s", body[:120])
     except WebSocketDisconnect:
         pass
     except Exception as exc:
@@ -278,6 +330,9 @@ async def _run_chat_session(
         duration_sec = int(asyncio.get_event_loop().time() - chat_session_start)
         asyncio.create_task(_bump_streak_after_session(
             limits_ctx=limits_ctx, duration_sec=duration_sec,
+        ))
+        asyncio.create_task(_capture_session_recap_hook(
+            limits_ctx=limits_ctx, history=list(history), duration_sec=duration_sec,
         ))
         if limits_ctx is not None:
             asyncio.create_task(_check_quest_after_session(
@@ -304,7 +359,10 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
 
     # Настройки сессии (уровень, роль, длина, исправления) — из query-параметров WS.
     session_settings = SessionSettings.from_query(dict(websocket.query_params))
-    system_prompt = build_system_prompt(session_settings)
+    # Контекст учащегося (recent_vocab + recent_mistakes за неделю) — best-effort.
+    # Если БД нет / запрос упал — сессия идёт без подмеса.
+    learner_context = await _load_learner_context(limits_ctx)
+    system_prompt = build_system_prompt(session_settings, learner_context=learner_context)
     logger.warning(
         "[voice] настройки: level=%s role=%s length=%s corrections=%s mode=%s%s",
         session_settings.level,
@@ -483,8 +541,12 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
             logger.error("LLM сбой: %s", exc, exc_info=True)
             reply = "I'm having trouble right now. Let's try again in a moment."
 
+        # «Correction: <fixed>\n\n<body>» → выделяем correction и тело отдельно.
+        # В историю / TTS отдаём только body (correction — мета-информация).
+        correction, body = _split_correction(reply)
+
         history.append({"role": "user", "text": text})
-        history.append({"role": "assistant", "text": reply})
+        history.append({"role": "assistant", "text": body})
         if len(history) > MAX_HISTORY_TURNS * 2:
             del history[: len(history) - MAX_HISTORY_TURNS * 2]
 
@@ -492,11 +554,12 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
             await websocket.send_json({
                 "type": "text",
                 "role": "tutor",
-                "text": reply,
+                "text": body,
+                "correction": correction,
             })
 
-        # Синтез и стриминг PCM 24kHz в браузер
-        await send_tts(reply)
+        # Синтез и стриминг PCM 24kHz в браузер — без correction.
+        await send_tts(body)
 
     async def process_stt() -> None:
         """
@@ -614,6 +677,10 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
         asyncio.create_task(_bump_streak_after_session(
             limits_ctx=limits_ctx, duration_sec=duration_sec,
         ))
+        # Recap: vocabulary + mistakes из транскрипта (LLM-анализ).
+        asyncio.create_task(_capture_session_recap_hook(
+            limits_ctx=limits_ctx, history=list(history), duration_sec=duration_sec,
+        ))
         # Daily Quest: проверяем выполнение квеста по транскрипту сессии.
         if limits_ctx is not None:
             asyncio.create_task(_check_quest_after_session(
@@ -625,11 +692,39 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
         logger.warning("[voice] сессия завершена для %s (%dс)", websocket.client, duration_sec)
 
 
-# ─── Hook после сессии: streak ────────────────────────────────────────
+# ─── Hook после сессии: streak + recap ────────────────────────────────
 
 # Минимальная длительность сессии, чтобы засчитать день для стрика.
 # Защищает от накрутки секундными подключениями.
 STREAK_MIN_DURATION_SEC = 30
+
+# Минимальная длительность сессии для recap-захвата (LLM-анализ дороже стоит).
+RECAP_MIN_DURATION_SEC = 60
+
+
+async def _capture_session_recap_hook(*, limits_ctx, history: list[dict], duration_sec: int) -> None:
+    """LLM-анализ транскрипта → user_vocabulary + user_mistakes.
+    Best-effort, никогда не пробрасывает исключения."""
+    if limits_ctx is None or duration_sec < RECAP_MIN_DURATION_SEC:
+        return
+    if not history:
+        return
+    try:
+        from . import session_recap
+        from .db import db_session
+    except Exception as exc:
+        logger.warning("[voice][recap] не могу импортировать: %s", exc)
+        return
+    try:
+        async with db_session() as session:
+            await session_recap.capture_session_recap(
+                session,
+                user_db_id=limits_ctx.user_db_id,
+                history=list(history),
+            )
+            await session.commit()
+    except Exception as exc:
+        logger.warning("[voice][recap] capture failed: %s", exc)
 
 
 async def _bump_streak_after_session(*, limits_ctx, duration_sec: int) -> None:
