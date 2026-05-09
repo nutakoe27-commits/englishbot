@@ -22,7 +22,12 @@ interface RecentContext {
 
 interface Props {
   apiBase: string;        // например "https://api-english.krichigindocs.ru"
-  sessionSeconds: number; // длина только что закончившейся сессии
+  /**
+   * Длина только что закончившейся сессии. 0 = «opening» режим — экран
+   * показывается при открытии Mini App как «привет, вот твой прогресс»
+   * (без блока про текущую сессию, кнопка — «Поехали»). > 0 = «итог занятия».
+   */
+  sessionSeconds: number;
   onClose: () => void;
 }
 
@@ -92,27 +97,38 @@ export function SessionSummary({ apiBase, sessionSeconds, onClose }: Props) {
     }
   }
 
+  const isOpening = sessionSeconds <= 0;
   const sessionMin = Math.max(1, Math.round(sessionSeconds / 60));
-  const todayMin =
-    data && data.today_used_seconds > 0
-      ? Math.max(1, Math.round(data.today_used_seconds / 60))
-      : sessionMin;
+  const todaySec = data?.today_used_seconds ?? 0;
+  const todayMin = todaySec > 0 ? Math.max(1, Math.round(todaySec / 60)) : 0;
   const streak = data?.streak.current ?? 0;
   const best = data?.streak.best ?? 0;
 
   return (
     <div className="summary-overlay">
       <div className="summary-card">
-        <h2 className="summary-title">Итог занятия</h2>
+        <h2 className="summary-title">
+          {isOpening ? "👋 Привет, вот твой прогресс" : "Итог занятия"}
+        </h2>
 
         {/* Блок 1: время + стрик */}
         <section className="summary-block">
-          <div className="summary-stat">
-            <div className="summary-stat__value">
-              {sessionMin} {pluralizeMinutes(sessionMin)}
+          {!isOpening && (
+            <div className="summary-stat">
+              <div className="summary-stat__value">
+                {sessionMin} {pluralizeMinutes(sessionMin)}
+              </div>
+              <div className="summary-stat__label">в этой сессии</div>
             </div>
-            <div className="summary-stat__label">в этой сессии</div>
-          </div>
+          )}
+          {isOpening && todayMin > 0 && (
+            <div className="summary-stat">
+              <div className="summary-stat__value">
+                {todayMin} {pluralizeMinutes(todayMin)}
+              </div>
+              <div className="summary-stat__label">сегодня уже наговорил</div>
+            </div>
+          )}
           {streak > 0 && (
             <div className="summary-stat">
               <div className="summary-stat__value">
@@ -123,10 +139,8 @@ export function SessionSummary({ apiBase, sessionSeconds, onClose }: Props) {
               </div>
             </div>
           )}
-          {!streak && (
-            <div className="summary-stat__label">
-              Сегодня: {todayMin} {pluralizeMinutes(todayMin)} практики
-            </div>
+          {!streak && !isOpening && todayMin === 0 && (
+            <div className="summary-stat__label">Поехали — впереди стрик 🔥</div>
           )}
         </section>
 
@@ -185,7 +199,7 @@ export function SessionSummary({ apiBase, sessionSeconds, onClose }: Props) {
         )}
 
         <button className="summary-close" onClick={onClose}>
-          Готово
+          {isOpening ? "Поехали" : "Готово"}
         </button>
       </div>
     </div>

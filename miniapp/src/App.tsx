@@ -115,10 +115,15 @@ export default function App() {
   // Состояние lock-screen: null = обычный UI; иначе — показываем overlay
   const [lockState, setLockState] = useState<LockKind | null>(null);
   const [lockMessage, setLockMessage] = useState<string>("");
-  // Post-session summary — показываем после нормального End session.
+  // Post-session summary — показываем после нормального End session
+  // (sessionSeconds > 0) ИЛИ как «opening» при открытии Mini App
+  // (sessionSeconds = 0). Логика выбора режима в SessionSummary.tsx.
   const [summarySeconds, setSummarySeconds] = useState<number | null>(null);
   // Время начала сессии (для подсчёта длительности при End session).
   const sessionStartRef = useRef<number | null>(null);
+  // Уже показывали opening-summary в этом mount'е Mini App? Чтобы не
+  // открывать его повторно после End session (там — свой, с длительностью).
+  const openingSummaryShownRef = useRef<boolean>(false);
   // Реф с актуальными настройками — openConnection читает его без ре-рендера
   const settingsRef = useRef<TutorSettings>(settings);
   useEffect(() => {
@@ -197,6 +202,40 @@ export default function App() {
     if (user?.first_name) {
       setUserName(user.first_name);
     }
+  }, []);
+
+  // ── Opening summary: при каждом открытии Mini App, если у юзера уже есть
+  // streak/словарь/ошибки — показываем экран «привет, вот твой прогресс».
+  // Это решает проблему «summary не показывается при возврате из background»:
+  // даже если ws.onclose / openConnection не успели поймать момент, на
+  // следующем mount юзер всё равно видит свои итоги.
+  useEffect(() => {
+    if (openingSummaryShownRef.current) return;
+    let cancelled = false;
+    const initData = WebApp.initData || "";
+    if (!initData) return; // вне Telegram (dev) — не показываем
+    fetch(
+      `${API_BASE}/api/learner/recent-context?init_data=${encodeURIComponent(initData)}`,
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        const hasContent =
+          (d.streak?.current ?? 0) > 0 ||
+          (Array.isArray(d.vocab) && d.vocab.length > 0) ||
+          (Array.isArray(d.mistakes) && d.mistakes.length > 0);
+        if (!hasContent) return;
+        // Не открываем, если уже показывается какой-то overlay (lock или
+        // post-session summary только что закрылся).
+        openingSummaryShownRef.current = true;
+        setSummarySeconds((prev) => (prev !== null ? prev : 0));
+      })
+      .catch(() => {
+        // Сеть/ошибка — тихо пропускаем, основной UI работает дальше.
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ── Авто-скролл лога вниз при новой реплике ──────────────────────────────
