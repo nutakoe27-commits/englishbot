@@ -13,7 +13,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import DailyUsage, Payment, SettingKV, Session as SessionRow, User
+from .models import DailyUsage, Payment, SettingKV, Session as SessionRow, User, UserMistake, UserVocabulary
 
 
 # Europe/Moscow без зависимости от системного tz — фикс UTC+3.
@@ -201,6 +201,76 @@ class Repo:
         if user is None:
             return (0, 0, None)
         return (user.streak_days, user.best_streak_days, user.last_practice_date)
+
+    # ─── learner context (vocabulary + mistakes) ───────────────────────
+    async def get_recent_vocabulary(
+        self, user_id: int, *, limit: int = 15, days: int = 7,
+    ) -> list[dict]:
+        """Топ N слов, которые тьютор подкидывал юзеру за последние N дней.
+
+        Возвращает list[{word, times_used, last_seen_at}] — отсортирован
+        по last_seen_at DESC (самые свежие сначала). Используется как для
+        контекста next session, так и для post-session summary в Mini App.
+        """
+        cutoff = utcnow() - timedelta(days=days)
+        res = await self.s.execute(
+            select(
+                UserVocabulary.word,
+                UserVocabulary.times_used,
+                UserVocabulary.last_seen_at,
+            )
+            .where(
+                UserVocabulary.user_id == user_id,
+                UserVocabulary.last_seen_at >= cutoff,
+            )
+            .order_by(UserVocabulary.last_seen_at.desc())
+            .limit(limit)
+        )
+        return [
+            {
+                "word": row[0],
+                "times_used": int(row[1] or 1),
+                "last_seen_at": row[2],
+            }
+            for row in res.all()
+        ]
+
+    async def get_recent_mistakes(
+        self, user_id: int, *, limit: int = 5, days: int = 7,
+    ) -> list[dict]:
+        """Свежие ошибки юзера. Возвращает list[{category, bad, good, occurred_at}]."""
+        cutoff = utcnow() - timedelta(days=days)
+        res = await self.s.execute(
+            select(
+                UserMistake.category,
+                UserMistake.bad_phrase,
+                UserMistake.good_phrase,
+                UserMistake.occurred_at,
+            )
+            .where(
+                UserMistake.user_id == user_id,
+                UserMistake.occurred_at >= cutoff,
+            )
+            .order_by(UserMistake.occurred_at.desc())
+            .limit(limit)
+        )
+        return [
+            {
+                "category": row[0],
+                "bad": row[1],
+                "good": row[2],
+                "occurred_at": row[3],
+            }
+            for row in res.all()
+        ]
+
+    async def get_learner_context(self, user_id: int) -> dict:
+        """Контекст для подмешивания в system_prompt + UI:
+        recent_vocab (топ-15 за неделю) + recent_mistakes (топ-5 за неделю).
+        """
+        vocab = await self.get_recent_vocabulary(user_id, limit=15, days=7)
+        mistakes = await self.get_recent_mistakes(user_id, limit=5, days=7)
+        return {"recent_vocab": vocab, "recent_mistakes": mistakes}
 
     # ─── sessions ───────────────────────────────────────────────────────
     async def open_session(

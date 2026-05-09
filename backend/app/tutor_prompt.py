@@ -14,7 +14,7 @@ WebSocket и определяют поведение собеседника:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 
 # ─── Типы и дефолты ──────────────────────────────────────────────────────────
@@ -175,8 +175,63 @@ _CORRECTION_OFF = (
 )
 
 
-def build_system_prompt(s: SessionSettings) -> str:
-    """Собирает финальный system-промпт из настроек сессии."""
+def _build_learner_context_block(learner_context: Optional[dict]) -> Optional[str]:
+    """Опциональная секция в системном промпте: словарь и ошибки последних
+    сессий. Тьютор должен мягко переиспользовать слова и подкидывать
+    корректные конструкции (без лекции про грамматику).
+
+    Если данных мало (нет ни слов, ни ошибок) — возвращаем None,
+    в промпт ничего не подмешиваем.
+    """
+    if not learner_context:
+        return None
+    vocab = learner_context.get("recent_vocab") or []
+    mistakes = learner_context.get("recent_mistakes") or []
+    if not vocab and not mistakes:
+        return None
+
+    lines: list[str] = ["Learner context (from previous sessions):"]
+    if vocab:
+        words = [v.get("word") for v in vocab if v.get("word")]
+        if words:
+            lines.append(
+                "- Words/phrases recently practised (gently reuse them when natural, "
+                "don't force): " + ", ".join(words[:15])
+            )
+    if mistakes:
+        # Группируем по категории и считаем — даём LLM «patterns to reinforce».
+        from collections import Counter
+        cats = Counter((m.get("category") or "other") for m in mistakes)
+        cat_summary = ", ".join(f"{cat} (×{cnt})" for cat, cnt in cats.most_common())
+        lines.append(f"- Patterns the learner often gets wrong: {cat_summary}")
+        # Конкретные примеры — самые свежие 3.
+        examples = []
+        for m in mistakes[:3]:
+            bad = m.get("bad")
+            good = m.get("good")
+            if bad and good:
+                examples.append(f'  "{bad}" → "{good}"')
+        if examples:
+            lines.append("- Recent miscorrections to gently model again:")
+            lines.extend(examples)
+    lines.append(
+        "Weave these into the conversation when they fit naturally. NEVER lecture "
+        "about grammar or list vocabulary explicitly — just expose the learner to "
+        "correct usage in real speech."
+    )
+    return "\n".join(lines)
+
+
+def build_system_prompt(
+    s: SessionSettings,
+    *,
+    learner_context: Optional[dict] = None,
+) -> str:
+    """Собирает финальный system-промпт из настроек сессии.
+
+    `learner_context` — опциональный dict {recent_vocab, recent_mistakes}
+    из Repo.get_learner_context(). Подмешивается отдельной секцией если есть.
+    """
     parts: list[str] = []
 
     parts.append(
@@ -187,6 +242,10 @@ def build_system_prompt(s: SessionSettings) -> str:
     parts.append(_LEVEL_GUIDANCE[s.level])
     parts.append(_LENGTH_GUIDANCE[s.length])
     parts.append(_CORRECTION_ON if s.corrections else _CORRECTION_OFF)
+
+    learner_block = _build_learner_context_block(learner_context)
+    if learner_block:
+        parts.append(learner_block)
 
     # Ученик может писать/говорить на любом языке (Whisper в auto, текстовый ввод
     # вообще без языковых ограничений). Но тьютор всегда отвечает по-английски.
