@@ -271,6 +271,28 @@ async def get_user_reminder(tg_id: int) -> Optional[tuple[bool, int]]:
         return bool(u.reminder_enabled), int(h)
 
 
+async def set_user_learning_goal(tg_id: int, goal: Optional[str]) -> bool:
+    """Сохранить onboarding-цель (`travel|work|daily|exam|fun`) или None.
+
+    Возвращает True если апдейт прошёл, False если юзер ещё не создан в БД
+    (нужно сначала открыть Mini App один раз для upsert) или БД недоступна.
+    """
+    if not is_db_ready():
+        return False
+    assert _SessionMaker is not None
+    g = (goal or "").strip().lower() or None
+    if g and g not in ("travel", "work", "daily", "exam", "fun"):
+        return False
+    async with _SessionMaker() as s:
+        res = await s.execute(
+            update(_User)
+            .where(_User.tg_id == tg_id)
+            .values(learning_goal=g, updated_at=datetime.utcnow())
+        )
+        await s.commit()
+    return (res.rowcount or 0) > 0
+
+
 async def set_user_reminder(
     tg_id: int,
     *,

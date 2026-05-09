@@ -248,6 +248,41 @@ async def api_accept_battle(battle_id: int, body: AcceptBattleIn) -> AcceptBattl
     )
 
 
+class RevancheIn(BaseModel):
+    requester_tg_id: int
+
+
+@router.post(
+    "/battles/{battle_id}/revanche",
+    response_model=AcceptBattleOut,
+    dependencies=[Depends(_require_bot_secret)],
+)
+async def api_revanche(battle_id: int, body: RevancheIn) -> AcceptBattleOut:
+    """Создать реваншевый battle: новый id, тех же двух участников,
+    сразу status='accepted'. requester_tg_id — кто нажал кнопку."""
+    async with db_session() as s:
+        result = await battle_mod.revanche(
+            s, old_battle_id=battle_id, requester_tg_id=body.requester_tg_id,
+        )
+        await s.commit()
+    if result is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "cannot revanche")
+    topic = battle_topics.get_by_key(result.topic_key)
+    return AcceptBattleOut(
+        id=result.id,
+        topic_key=result.topic_key,
+        topic_title_ru=topic.title_ru if topic else result.topic_key,
+        initiator_tg_id=result.initiator_tg_id,
+        opponent_tg_id=result.opponent_tg_id,
+        prompt_en=result.prompt_en,
+        side_a_ru=result.side_a_ru,
+        side_b_ru=result.side_b_ru,
+        inline_message_id=result.inline_message_id,
+        chat_id=result.chat_id,
+        chat_message_id=result.chat_message_id,
+    )
+
+
 @router.post(
     "/battles/{battle_id}/revert-accept",
     dependencies=[Depends(_require_bot_secret)],

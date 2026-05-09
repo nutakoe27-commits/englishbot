@@ -105,25 +105,29 @@ def _split_correction(reply: str) -> tuple[Optional[str], str]:
     return correction, body
 
 
-async def _load_learner_context(limits_ctx) -> Optional[dict]:
-    """Тянем из БД recent_vocab + recent_mistakes для текущего юзера.
+async def _load_learner_context(limits_ctx) -> tuple[Optional[dict], Optional[str]]:
+    """Тянем из БД recent_vocab + recent_mistakes + learning_goal.
 
-    Best-effort: при отсутствии БД / любой ошибке — возвращаем None,
-    тогда build_system_prompt просто не подмешает учительский контекст.
+    Возвращает (learner_context_dict, learning_goal). Best-effort: при
+    отсутствии БД / любой ошибке — (None, None), тогда build_system_prompt
+    просто не подмешает дополнительные секции.
     """
     if limits_ctx is None:
-        return None
+        return None, None
     try:
         from .db import Repo, db_session
     except Exception:
-        return None
+        return None, None
     try:
         async with db_session() as session:
             repo = Repo(session)
-            return await repo.get_learner_context(limits_ctx.user_db_id)
+            ctx = await repo.get_learner_context(limits_ctx.user_db_id)
+            user = await repo.get_user_by_id(limits_ctx.user_db_id)
+            goal = user.learning_goal if user else None
+            return ctx, goal
     except Exception as exc:
         logger.warning("[voice] не смог загрузить learner_context: %s", exc)
-        return None
+        return None, None
 
 
 def _is_russian_utterance(text: str) -> bool:
@@ -364,10 +368,15 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
 
     # Настройки сессии (уровень, роль, длина, исправления) — из query-параметров WS.
     session_settings = SessionSettings.from_query(dict(websocket.query_params))
-    # Контекст учащегося (recent_vocab + recent_mistakes за неделю) — best-effort.
-    # Если БД нет / запрос упал — сессия идёт без подмеса.
-    learner_context = await _load_learner_context(limits_ctx)
-    system_prompt = build_system_prompt(session_settings, learner_context=learner_context)
+    # Контекст учащегося (recent_vocab + recent_mistakes за неделю)
+    # и onboarding-цель — best-effort. Если БД нет / запрос упал —
+    # сессия идёт без подмеса.
+    learner_context, learning_goal = await _load_learner_context(limits_ctx)
+    system_prompt = build_system_prompt(
+        session_settings,
+        learner_context=learner_context,
+        learning_goal=learning_goal,
+    )
     logger.warning(
         "[voice] настройки: level=%s role=%s length=%s corrections=%s mode=%s%s",
         session_settings.level,

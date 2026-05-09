@@ -155,6 +155,43 @@ async def battle_accept(
         return None
 
 
+async def battle_revanche(
+    *, old_battle_id: int, requester_tg_id: int,
+) -> Optional[BattleAcceptResult]:
+    """Создаёт реванш-battle: тех же двух участников, новый id, сразу
+    accepted. requester_tg_id становится initiator'ом нового battle.
+    """
+    c = _client()
+    if c is None:
+        return None
+    try:
+        async with c as client:
+            r = await client.post(
+                f"/api/battles/{old_battle_id}/revanche",
+                json={"requester_tg_id": requester_tg_id},
+            )
+            if r.status_code == 400:
+                return None
+            r.raise_for_status()
+            d = r.json()
+            return BattleAcceptResult(
+                id=d["id"],
+                topic_key=d["topic_key"],
+                topic_title_ru=d["topic_title_ru"],
+                initiator_tg_id=d["initiator_tg_id"],
+                opponent_tg_id=d["opponent_tg_id"],
+                prompt_en=d["prompt_en"],
+                side_a_ru=d["side_a_ru"],
+                side_b_ru=d["side_b_ru"],
+                inline_message_id=d.get("inline_message_id"),
+                chat_id=d.get("chat_id"),
+                chat_message_id=d.get("chat_message_id"),
+            )
+    except Exception as exc:
+        log.error("[backend_client] battle_revanche failed: %s", exc)
+        return None
+
+
 async def battle_revert_accept(
     *, battle_id: int, opponent_tg_id: int,
 ) -> bool:
