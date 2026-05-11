@@ -124,11 +124,19 @@ export default function App() {
   // Уже показывали opening-summary в этом mount'е Mini App? Чтобы не
   // открывать его повторно после End session (там — свой, с длительностью).
   const openingSummaryShownRef = useRef<boolean>(false);
+  // Актуальный appState для чтения из async-замыканий (fetch.then,
+  // setTimeout, ...). Иначе stale closure покажет старое значение.
+  const appStateRef = useRef<AppState>("initializing");
   // Реф с актуальными настройками — openConnection читает его без ре-рендера
   const settingsRef = useRef<TutorSettings>(settings);
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  // Синхронизация appStateRef с appState — для чтения из async-замыканий.
+  useEffect(() => {
+    appStateRef.current = appState;
+  }, [appState]);
 
   // Рефы для аудио/WS объектов (не вызывают ре-рендер)
   const wsRef = useRef<WebSocket | null>(null);
@@ -225,8 +233,18 @@ export default function App() {
           (Array.isArray(d.vocab) && d.vocab.length > 0) ||
           (Array.isArray(d.mistakes) && d.mistakes.length > 0);
         if (!hasContent) return;
-        // Не открываем, если уже показывается какой-то overlay (lock или
-        // post-session summary только что закрылся).
+        // КРИТИЧНО: не открываем overlay если юзер уже сейчас говорит.
+        // Бывает что fetch медленный и пришёл когда юзер уже нажал кнопку
+        // и начал сессию — overlay перекрыл бы интерфейс посреди разговора.
+        if (sessionStartRef.current !== null) return;
+        const state = appStateRef.current;
+        if (
+          state === "recording" ||
+          state === "speaking" ||
+          state === "connected"
+        ) {
+          return;
+        }
         openingSummaryShownRef.current = true;
         setSummarySeconds((prev) => (prev !== null ? prev : 0));
       })

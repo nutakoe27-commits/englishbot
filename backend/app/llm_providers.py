@@ -12,6 +12,7 @@ llm_providers.py — LLM-провайдер для ответов репетит
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -168,16 +169,36 @@ class VLLMProvider:
         }
 
         url = f"{self.base_url}/chat/completions"
-        # 30 сек total timeout — на случай если vLLM вообще не ответит.
-        # Стрим обычно укладывается в 5-7 сек.
-        timeout = httpx.Timeout(connect=5.0, read=60.0, write=5.0, pool=5.0)
+        # Connect/write/pool — короткие. Read 120с — это «успеть прочитать
+        # один чанк»; реальная защита от зависания между токенами стоит
+        # ниже через asyncio.wait_for на каждом next(line_iter).
+        timeout = httpx.Timeout(connect=5.0, read=120.0, write=5.0, pool=5.0)
+        # Если LLM не выдал новый токен за это время — стрим считаем
+        # зависшим, прерываем и возвращаем то что успели накопить. Это
+        # критично для длинных диалогов (vLLM иногда замирает на 30+ сек
+        # на больших контекстах).
+        INTER_TOKEN_TIMEOUT_SEC = 12.0
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("POST", url, json=payload, headers=headers) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()
                     logger.error("vLLM HTTP %s: %s", resp.status_code, body[:500])
                     resp.raise_for_status()
-                async for line in resp.aiter_lines():
+                line_iter = resp.aiter_lines()
+                while True:
+                    try:
+                        line = await asyncio.wait_for(
+                            line_iter.__anext__(),
+                            timeout=INTER_TOKEN_TIMEOUT_SEC,
+                        )
+                    except StopAsyncIteration:
+                        return
+                    except asyncio.TimeoutError:
+                        logger.error(
+                            "[LLM stream] нет новых токенов за %.0fс — прерываю",
+                            INTER_TOKEN_TIMEOUT_SEC,
+                        )
+                        return
                     if not line:
                         continue
                     if not line.startswith("data:"):
