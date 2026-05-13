@@ -293,6 +293,39 @@ async def assign_daily_quest(
 
     candidates = [c for c in cand_res.scalars().all() if _is_compatible(c)]
 
+    # Fallback: если все совместимые квесты уже выполнены (completed_at стоит),
+    # разрешаем повторное прохождение. Иначе юзер на дефолтной роли
+    # `language_partner` (где нет role-квестов под него в каталоге) и с
+    # полностью пройденными lex/grammar получает «Не удалось получить квест».
+    # Лучше дать ему пройти любимый квест ещё раз, чем заблокировать /quest.
+    if not candidates:
+        log.info(
+            "[quests] user_id=%s — completed-пул пуст, разрешаю повтор (last_role=%s)",
+            user_id, last_role,
+        )
+
+        def _is_compatible_replay(quest: QuestCatalog) -> bool:
+            # То же что _is_compatible, но БЕЗ проверки done_keys.
+            if quest.type != "role":
+                return True
+            rule_role = (quest.verification_rule or {}).get("role")
+            if not rule_role:
+                return True
+            if not last_role:
+                return False
+            return rule_role == last_role
+
+        # Iterator из cand_res уже исчерпан — делаем повторный select.
+        cand_res2 = await s.execute(
+            select(QuestCatalog).where(
+                QuestCatalog.is_active.is_(True),
+                or_(*level_filter),
+            )
+        )
+        candidates = [
+            c for c in cand_res2.scalars().all() if _is_compatible_replay(c)
+        ]
+
     if not candidates:
         log.info(
             "[quests] user_id=%s — пул квестов исчерпан (last_role=%s)",
@@ -307,11 +340,13 @@ async def assign_daily_quest(
         quest_key=chosen.key,
         assigned_at=now,
     )
-    # UNIQUE(user_id, quest_key): если эту пару уже выдавали (и она была expired),
-    # «оживляем» row — иначе у неё остаётся expired_at и get_active_quest её не
-    # увидит, юзер останется без активного квеста.
+    # UNIQUE(user_id, quest_key): если эту пару уже выдавали (была expired
+    # или completed) — «оживляем» row. Обнуляем completed_at тоже: при
+    # fallback-replay (см. выше) переплачиваем юзеру право пройти квест
+    # ещё раз, иначе get_active_quest не вернёт row как активную.
     stmt = stmt.on_duplicate_key_update(
         assigned_at=now,
+        completed_at=None,
         expired_at=None,
         verification_data=None,
     )
