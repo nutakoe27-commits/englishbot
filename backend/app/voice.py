@@ -389,7 +389,9 @@ async def _run_chat_session(
                 pass
         duration_sec = int(asyncio.get_event_loop().time() - chat_session_start)
         asyncio.create_task(_bump_streak_after_session(
-            limits_ctx=limits_ctx, duration_sec=duration_sec,
+            limits_ctx=limits_ctx,
+            duration_sec=duration_sec,
+            role=session_settings.role,
         ))
         asyncio.create_task(_capture_session_recap_hook(
             limits_ctx=limits_ctx, history=list(history), duration_sec=duration_sec,
@@ -851,9 +853,11 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
         await asyncio.gather(*pending, return_exceptions=True)
     finally:
         duration_sec = int(asyncio.get_event_loop().time() - session_start)
-        # Streak: фиксируем сегодняшнюю практику.
+        # Streak: фиксируем сегодняшнюю практику + последнюю роль.
         asyncio.create_task(_bump_streak_after_session(
-            limits_ctx=limits_ctx, duration_sec=duration_sec,
+            limits_ctx=limits_ctx,
+            duration_sec=duration_sec,
+            role=session_settings.role,
         ))
         # Recap: vocabulary + mistakes из транскрипта (LLM-анализ).
         asyncio.create_task(_capture_session_recap_hook(
@@ -905,9 +909,14 @@ async def _capture_session_recap_hook(*, limits_ctx, history: list[dict], durati
         logger.warning("[voice][recap] capture failed: %s", exc)
 
 
-async def _bump_streak_after_session(*, limits_ctx, duration_sec: int) -> None:
+async def _bump_streak_after_session(
+    *, limits_ctx, duration_sec: int, role: Optional[str] = None,
+) -> None:
     """Зафиксировать сегодняшнюю практику и обновить стрик. Вызывается
     из finally в run_voice_session / _run_chat_session.
+
+    `role` — роль из SessionSettings.role; записывается в
+    users.last_session_role для умной выдачи role-quest в quests.py.
 
     Тихо завершается, если:
       - limits_ctx None (нет привязки к юзеру в БД);
@@ -926,11 +935,13 @@ async def _bump_streak_after_session(*, limits_ctx, duration_sec: int) -> None:
     try:
         async with db_session() as session:
             repo = Repo(session)
-            current, best = await repo.bump_streak(limits_ctx.user_db_id)
+            current, best = await repo.bump_streak(
+                limits_ctx.user_db_id, role=role,
+            )
             await session.commit()
         logger.info(
-            "[voice][streak] user_db_id=%s streak=%d best=%d",
-            limits_ctx.user_db_id, current, best,
+            "[voice][streak] user_db_id=%s streak=%d best=%d role=%s",
+            limits_ctx.user_db_id, current, best, role,
         )
     except Exception as exc:
         logger.warning("[voice][streak] bump failed: %s", exc)
@@ -970,6 +981,10 @@ async def _check_quest_after_session(
         logger.info("[voice][quest-hook] пустой транскрипт и роль не ролевая — пропускаем")
         return
 
+    logger.info(
+        "[voice][quest-hook] verify start: user_db_id=%s role=%s duration=%ds transcript_len=%d",
+        limits_ctx.user_db_id, role, duration_sec, len(user_text),
+    )
     try:
         async with db_session() as s:
             result = await quests_mod.verify_session(

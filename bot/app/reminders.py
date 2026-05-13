@@ -60,6 +60,8 @@ class _User(_Base):
     best_streak_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_practice_date: Mapped[Optional[date]] = mapped_column(Date)
     learning_goal: Mapped[Optional[str]] = mapped_column(String(32))
+    # Миграция 0005 — роль из последней сессии для умной выдачи role-quest.
+    last_session_role: Mapped[Optional[str]] = mapped_column(String(64))
 
 
 class _DailyUsage(_Base):

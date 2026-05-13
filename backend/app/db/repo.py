@@ -156,14 +156,20 @@ class Repo:
         return await self.get_used_seconds_today(user_id)
 
     # ─── streak ─────────────────────────────────────────────────────────
-    async def bump_streak(self, user_id: int) -> tuple[int, int]:
+    async def bump_streak(
+        self, user_id: int, *, role: Optional[str] = None,
+    ) -> tuple[int, int]:
         """Зафиксировать практику сегодня и обновить стрик.
 
         Логика:
-          - Если уже занимались сегодня → ничего не меняем (no-op).
+          - Если уже занимались сегодня → стрик не меняем, но last_session_role
+            всё равно перезаписываем (юзер мог в эту сессию выбрать другую роль).
           - Если занимались вчера → streak_days += 1.
           - Иначе (пропустили день или первый раз) → streak_days = 1.
           - best_streak_days тянется как max(best, current).
+
+        Параметр `role` — роль сессии из SessionSettings.role; сохраняется
+        в users.last_session_role для assign_daily_quest.
 
         Возвращает (current_streak, best_streak) после апдейта. Если юзер
         не найден — (0, 0).
@@ -173,25 +179,28 @@ class Repo:
             return (0, 0)
 
         today = msk_today()
-        if user.last_practice_date == today:
-            # Уже зачли стрик сегодня.
-            return (user.streak_days, user.best_streak_days)
+        already_today = user.last_practice_date == today
 
-        if user.last_practice_date == today - timedelta(days=1):
+        if already_today:
+            new_streak = user.streak_days
+            new_best = user.best_streak_days
+        elif user.last_practice_date == today - timedelta(days=1):
             new_streak = user.streak_days + 1
+            new_best = max(user.best_streak_days, new_streak)
         else:
             # Пропуск или первый раз.
             new_streak = 1
+            new_best = max(user.best_streak_days, new_streak)
 
-        new_best = max(user.best_streak_days, new_streak)
+        values: dict = {
+            "streak_days": new_streak,
+            "best_streak_days": new_best,
+            "last_practice_date": today,
+        }
+        if role:
+            values["last_session_role"] = role
         await self.s.execute(
-            update(User)
-            .where(User.id == user_id)
-            .values(
-                streak_days=new_streak,
-                best_streak_days=new_best,
-                last_practice_date=today,
-            )
+            update(User).where(User.id == user_id).values(**values)
         )
         return (new_streak, new_best)
 

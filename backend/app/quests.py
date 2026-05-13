@@ -268,10 +268,36 @@ async def assign_daily_quest(
             or_(*level_filter),
         )
     )
-    candidates = [c for c in cand_res.scalars().all() if c.key not in done_keys]
+
+    # Тянем роль из последней сессии — для умной выдачи role-квестов.
+    # role-quest требует конкретную роль (barista/doctor/...); если выдать
+    # юзеру квест под чужую роль, verify никогда не пройдёт. Если роль
+    # юзера ещё не зафиксирована (last_session_role IS NULL) — не выдаём
+    # role-квесты вообще, пусть получит lexical/grammar.
+    role_res = await s.execute(
+        select(User.last_session_role).where(User.id == user_id)
+    )
+    last_role = role_res.scalar_one_or_none()
+
+    def _is_compatible(quest: QuestCatalog) -> bool:
+        if quest.key in done_keys:
+            return False
+        if quest.type != "role":
+            return True
+        rule_role = (quest.verification_rule or {}).get("role")
+        if not rule_role:
+            return True  # role-quest без обязательной роли — выдаём всем
+        if not last_role:
+            return False  # роль ещё неизвестна — пропускаем role-quest
+        return rule_role == last_role
+
+    candidates = [c for c in cand_res.scalars().all() if _is_compatible(c)]
 
     if not candidates:
-        log.info("[quests] user_id=%s — пул квестов исчерпан", user_id)
+        log.info(
+            "[quests] user_id=%s — пул квестов исчерпан (last_role=%s)",
+            user_id, last_role,
+        )
         return None
 
     chosen = random.choice(candidates)
