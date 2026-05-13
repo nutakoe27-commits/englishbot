@@ -256,18 +256,23 @@ async def assign_daily_quest(
     done_keys = {row[0] for row in done_res.all()}
 
     # 4) Кандидаты из каталога
-    level_filter = [QuestCatalog.target_level == "any"]
-    if user_level in ("A2", "B1", "B2", "C1"):
-        level_filter.append(QuestCatalog.target_level == user_level)
-
     from sqlalchemy import or_
 
-    cand_res = await s.execute(
-        select(QuestCatalog).where(
-            QuestCatalog.is_active.is_(True),
-            or_(*level_filter),
+    base_stmt = select(QuestCatalog).where(QuestCatalog.is_active.is_(True))
+    if user_level in ("A2", "B1", "B2", "C1"):
+        # Юзер с известным уровнем — даём ему квесты под уровень + any.
+        base_stmt = base_stmt.where(
+            or_(
+                QuestCatalog.target_level == "any",
+                QuestCatalog.target_level == user_level,
+            )
         )
-    )
+    # Если user_level не задан (например, /quest из бота — там нет уровня) —
+    # НЕ фильтруем по target_level. Иначе квестов с target_level='any' в
+    # каталоге всего 2 (role_barista, role_friend), оба отфильтровываются
+    # позже по role-несовпадению и пул становится пустой.
+
+    cand_res = await s.execute(base_stmt)
 
     # Тянем роль из последней сессии — для умной выдачи role-квестов.
     # role-quest требует конкретную роль (barista/doctor/...); если выдать
@@ -315,13 +320,9 @@ async def assign_daily_quest(
                 return False
             return rule_role == last_role
 
-        # Iterator из cand_res уже исчерпан — делаем повторный select.
-        cand_res2 = await s.execute(
-            select(QuestCatalog).where(
-                QuestCatalog.is_active.is_(True),
-                or_(*level_filter),
-            )
-        )
+        # Iterator из cand_res уже исчерпан — делаем повторный select
+        # с тем же level-фильтром, что и в основном проходе.
+        cand_res2 = await s.execute(base_stmt)
         candidates = [
             c for c in cand_res2.scalars().all() if _is_compatible_replay(c)
         ]
