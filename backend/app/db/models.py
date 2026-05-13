@@ -58,6 +58,12 @@ class User(Base):
     # travel | work | daily | exam | fun | NULL (до прохождения онбординга)
     learning_goal: Mapped[Optional[str]] = mapped_column(String(32))
 
+    # ── Last session role (миграция 0005) ──
+    # Роль из последней сессии. Используется assign_daily_quest для умной
+    # выдачи role-квестов: не подсовывать barista-квест юзеру, который
+    # сидит в doctor — verify никогда не пройдёт.
+    last_session_role: Mapped[Optional[str]] = mapped_column(String(64))
+
 
 class Session(Base):
     __tablename__ = "sessions"
