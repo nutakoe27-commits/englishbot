@@ -19,6 +19,7 @@ from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from .admin import router as admin_router
 from .battle_api import router as battle_router
@@ -135,6 +136,40 @@ async def ping() -> dict:
     return {"pong": True, "version": "0.3.0"}
 
 
+def _tg_id_from_init_data(init_data: str) -> int:
+    """Валидирует Telegram WebApp initData (подпись + 24-часовой TTL) и
+    возвращает tg_id юзера. Кидает HTTPException(401) при любой ошибке.
+
+    Используется во всех Mini-App endpoint'ах. Identical в логике с
+    battle_api._validate_init_data_and_get_tg_id — но тут без зависимости
+    от того файла, чтобы main.py остался самодостаточным.
+    """
+    from fastapi import HTTPException, status
+    import time as _time
+
+    if not init_data:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "init_data required")
+    if not settings.BOT_TOKEN:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "bot token missing")
+    validated = validate_telegram_init_data(init_data, settings.BOT_TOKEN)
+    if not validated:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid initData")
+    try:
+        auth_date = int(validated.get("auth_date") or 0)
+    except (TypeError, ValueError):
+        auth_date = 0
+    if auth_date == 0 or (_time.time() - auth_date) > 24 * 3600:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "init_data expired")
+    user_raw = validated.get("user")
+    if not user_raw:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "initData has no user")
+    try:
+        user_obj = json.loads(user_raw)
+        return int(user_obj["id"])
+    except Exception:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad user payload in initData")
+
+
 @app.get("/api/learner/recent-context", tags=["Learner"])
 async def learner_recent_context(init_data: str = "") -> dict:
     """Контекст учащегося для Mini App: для post-session summary экрана.
@@ -147,33 +182,7 @@ async def learner_recent_context(init_data: str = "") -> dict:
 
     Аутентификация — Telegram WebApp initData.
     """
-    from fastapi import HTTPException, status
-
-    if not init_data:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "init_data required")
-    if not settings.BOT_TOKEN:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "bot token missing")
-    validated = validate_telegram_init_data(init_data, settings.BOT_TOKEN)
-    if not validated:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid initData")
-
-    # Anti-replay: тот же 24-часовой TTL что и в battle_api.
-    try:
-        auth_date = int(validated.get("auth_date") or 0)
-    except (TypeError, ValueError):
-        auth_date = 0
-    import time as _time
-    if auth_date == 0 or (_time.time() - auth_date) > 24 * 3600:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "init_data expired")
-
-    user_raw = validated.get("user")
-    if not user_raw:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "initData has no user")
-    try:
-        user_obj = json.loads(user_raw)
-        tg_id = int(user_obj["id"])
-    except Exception:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad user payload in initData")
+    tg_id = _tg_id_from_init_data(init_data)
 
     if not settings.DATABASE_URL:
         return {
@@ -226,6 +235,101 @@ async def learner_recent_context(init_data: str = "") -> dict:
         ],
         "today_used_seconds": int(used_today or 0),
     }
+
+
+# ─── Мои слова (пользовательский словарь) ─────────────────────────────────────
+# Юзер может через Mini App добавлять слова, которые сейчас учит. Тьютор в
+# system_prompt получает их с пометкой «ACTIVELY WANTS to practice» и должен
+# вкручивать в разговор. Лимит — Repo.USER_WORDS_LIMIT (100).
+
+class _AddWordIn(BaseModel):
+    init_data: str
+    word: str
+    note: Optional[str] = None  # зарезервировано для импорта; UI пока не шлёт
+
+
+@app.get("/api/user-words", tags=["UserWords"])
+async def get_user_words(init_data: str = "") -> dict:
+    """Список user-слов для Mini App."""
+    tg_id = _tg_id_from_init_data(init_data)
+    if not settings.DATABASE_URL:
+        return {"words": [], "total": 0, "limit": 100}
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.get_user_by_tg_id(tg_id)
+        if user is None:
+            return {"words": [], "total": 0, "limit": Repo.USER_WORDS_LIMIT}
+        items = await repo.list_user_words(user.id)
+    return {
+        "words": [
+            {
+                "word": i["word"],
+                "note": i["note"],
+                "last_seen_at": i["last_seen_at"].isoformat() if i["last_seen_at"] else None,
+            }
+            for i in items
+        ],
+        "total": len(items),
+        "limit": Repo.USER_WORDS_LIMIT,
+    }
+
+
+@app.post("/api/user-words", tags=["UserWords"])
+async def post_user_word(body: _AddWordIn) -> dict:
+    """Добавить user-слово.
+
+    400 с error-кодом если empty/too_long/limit_reached/user-not-found.
+    """
+    from fastapi import HTTPException, status
+
+    tg_id = _tg_id_from_init_data(body.init_data)
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "DB not configured")
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.get_user_by_tg_id(tg_id)
+        if user is None:
+            # Юзер ещё не upsert'нут — попросим открыть Mini App обычным
+            # способом сначала (там в WS-preflight идёт upsert_user).
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "user_not_found"
+            )
+        result = await repo.add_user_word(user.id, body.word, note=body.note)
+        if result == "ok":
+            await session.commit()
+            return {"ok": True}
+        # «duplicate» считаем success-вариантом — слово уже есть, UI просто
+        # перерисует список.
+        if result == "duplicate":
+            return {"ok": True, "duplicate": True}
+        await session.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, result)
+
+
+@app.delete("/api/user-words/{word}", tags=["UserWords"])
+async def delete_user_word(word: str, init_data: str = "") -> dict:
+    """Удалить user-слово."""
+    from fastapi import HTTPException, status
+
+    tg_id = _tg_id_from_init_data(init_data)
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "DB not configured")
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.get_user_by_tg_id(tg_id)
+        if user is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
+        removed = await repo.remove_user_word(user.id, word)
+        if not removed:
+            await session.rollback()
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "word_not_found")
+        await session.commit()
+    return {"ok": True}
 
 
 # ─── WebSocket — голосовой диалог ─────────────────────────────────────────────

@@ -18,6 +18,7 @@ import "./App.css";
 import { SettingsSheet } from "./SettingsSheet";
 import { LockScreen } from "./LockScreen";
 import { SessionSummary } from "./SessionSummary";
+import { WordsScreen } from "./WordsScreen";
 import {
   loadSettings,
   saveSettings,
@@ -106,6 +107,8 @@ export default function App() {
   // Настройки тьютора (уровень, роль, длина, исправления)
   const [settings, setSettings] = useState<TutorSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  // Экран «Мои слова» (юзер добавляет слова, которые сейчас учит).
+  const [wordsOpen, setWordsOpen] = useState<boolean>(false);
   // Черновик текстового сообщения в chat-режиме
   const [chatDraft, setChatDraft] = useState<string>("");
   // Тьютор сейчас «думает» (индикация в chat-режиме пока LLM формирует ответ)
@@ -1018,6 +1021,15 @@ export default function App() {
           <button
             type="button"
             className="icon-button"
+            onClick={() => setWordsOpen(true)}
+            aria-label="Мои слова"
+            title="Мои слова"
+          >
+            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>📖</span>
+          </button>
+          <button
+            type="button"
+            className="icon-button"
             onClick={() => setSettingsOpen(true)}
             aria-label="Settings"
           >
@@ -1262,6 +1274,13 @@ export default function App() {
           apiBase={API_BASE}
           sessionSeconds={summarySeconds}
           onClose={dismissSummary}
+        />
+      )}
+
+      {wordsOpen && lockState === null && (
+        <WordsScreen
+          apiBase={API_BASE}
+          onClose={() => setWordsOpen(false)}
         />
       )}
     </div>
