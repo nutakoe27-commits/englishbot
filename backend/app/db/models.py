@@ -234,10 +234,18 @@ class UserQuest(Base):
 # ─── Persistent learner state (миграция 0004) ─────────────────────────
 
 class UserVocabulary(Base):
-    """Слова/фразы, которые тьютор вводил в разговоре с юзером.
+    """Слова/фразы из словарного запаса юзера.
 
-    Используется в build_system_prompt для reinforce — «эти слова уже
-    встречались, ткни их в реплику если естественно лежит».
+    `source` различает откуда слово взялось:
+      - 'tutor' (default): автоматически добавил session_recap.py после
+        разговора, тьютор сам ввёл это слово в реплику.
+      - 'user': юзер добавил вручную через Mini App (фича «Мои слова»).
+        Такие слова имеют ПРИОРИТЕТ в системном промпте — тьютор должен
+        вкручивать их в разговор активно.
+      - 'import': зарезервировано на массовый импорт из Anki/Quizlet/др.
+
+    `note` — опциональный перевод/заметка; в MVP не используется, есть
+    в схеме для будущего bulk-импорта.
     """
 
     __tablename__ = "user_vocabulary"
@@ -251,6 +259,8 @@ class UserVocabulary(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     times_used: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     context: Mapped[Optional[str]] = mapped_column(String(255))
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="tutor")
+    note: Mapped[Optional[str]] = mapped_column(String(255))
 
 
 class UserMistake(Base):

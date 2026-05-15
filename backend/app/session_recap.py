@@ -170,6 +170,11 @@ async def capture_session_recap(
     now = utcnow()
 
     # Vocabulary: UPSERT (last_seen, times_used). Контекст пишем только при INSERT.
+    # ВАЖНО: source НЕ указываем в values() и НЕ затираем в on_duplicate_key_update.
+    # При INSERT новой row source примет default 'tutor' (миграция 0006). При
+    # UPSERT существующей row source остаётся как был — если юзер уже добавил
+    # это слово вручную (source='user'), tutor-капчура не должна откатывать
+    # его обратно в 'tutor'.
     for word in new_words:
         try:
             stmt = mysql_insert(UserVocabulary).values(

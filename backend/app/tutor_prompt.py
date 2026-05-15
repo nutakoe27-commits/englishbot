@@ -249,17 +249,34 @@ def _build_learner_context_block(learner_context: Optional[dict]) -> Optional[st
     сессий. Тьютор должен мягко переиспользовать слова и подкидывать
     корректные конструкции (без лекции про грамматику).
 
-    Если данных мало (нет ни слов, ни ошибок) — возвращаем None,
-    в промпт ничего не подмешиваем.
+    Учитывает три источника:
+      - user_words: слова, которые юзер САМ добавил через Mini App
+        («Мои слова»). Высший приоритет: тьютор должен активно вкручивать
+        их в разговор — юзер ради этого их и добавил.
+      - recent_vocab: слова, которые тьютор вводил в прошлых разговорах.
+        Reuse без давления.
+      - recent_mistakes: повторяющиеся ошибки — мягкое модальное
+        переформулирование.
+
+    Если ни одного источника нет — возвращаем None, ничего не подмешиваем.
     """
     if not learner_context:
         return None
+    user_words = learner_context.get("user_words") or []
     vocab = learner_context.get("recent_vocab") or []
     mistakes = learner_context.get("recent_mistakes") or []
-    if not vocab and not mistakes:
+    if not user_words and not vocab and not mistakes:
         return None
 
     lines: list[str] = ["Learner context (from previous sessions):"]
+    if user_words:
+        # user_words приходит уже как list[str] из repo.get_user_words_for_prompt.
+        lines.append(
+            "- Words the learner ACTIVELY WANTS to practice "
+            "(reuse them naturally during the conversation — this is the top "
+            "priority, the learner picked them on purpose): "
+            + ", ".join(user_words[:10])
+        )
     if vocab:
         words = [v.get("word") for v in vocab if v.get("word")]
         if words:
