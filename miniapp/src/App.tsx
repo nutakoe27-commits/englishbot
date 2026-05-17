@@ -49,6 +49,12 @@ interface DialogEntry {
    * и шлёт отдельным полем; UI рисует жёлтым блоком над основной репликой.
    */
   correction?: string | null;
+  /**
+   * PCM-чанки TTS, накопленные между предыдущим и текущим text-сообщением
+   * от тьютора. Заполняется только в voice-режиме; используется кнопкой
+   * ▶ replay рядом с репликой.
+   */
+  audioChunks?: ArrayBuffer[];
 }
 
 interface TranslateTarget {
@@ -313,15 +319,27 @@ export default function App() {
     }
   }, [dialogLog]);
 
+  // Буфер бинарных чанков TTS, копится с момента предыдущей реплики тьютора.
+  // На каждое text-сообщение role=tutor этот буфер фиксируется в DialogEntry
+  // (для replay через ▶) и обнуляется.
+  const pendingTutorChunksRef = useRef<ArrayBuffer[]>([]);
+
   // ── Добавление реплики в лог ──────────────────────────────────────────────
   const addLogEntry = useCallback(
     (role: "user" | "tutor", text: string, correction?: string | null) => {
+      // Для тьютора прикрепляем накопленный TTS-буфер и очищаем его.
+      let audioChunks: ArrayBuffer[] | undefined;
+      if (role === "tutor" && pendingTutorChunksRef.current.length > 0) {
+        audioChunks = pendingTutorChunksRef.current;
+        pendingTutorChunksRef.current = [];
+      }
       setDialogLog((prev) => {
         const newEntry: DialogEntry = {
           id: ++logIdRef.current,
           role,
           text,
           correction: correction || null,
+          audioChunks,
         };
         const updated = [...prev, newEntry];
         return updated.slice(-MAX_LOG_ENTRIES);
@@ -329,6 +347,30 @@ export default function App() {
     },
     [],
   );
+
+  // ── Replay аудио конкретной реплики ───────────────────────────────────────
+  // Создаём новые BufferSource'ы из сохранённых PCM-чанков. Сбрасываем
+  // playbackTimeRef, чтобы перебить любое текущее воспроизведение.
+  const replayAudio = useCallback((chunks: ArrayBuffer[]) => {
+    const ctx = audioCtxRef.current;
+    if (!ctx || chunks.length === 0) return;
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
+    // Reset playback timeline — новый replay начинается сейчас.
+    playbackTimeRef.current = ctx.currentTime;
+    for (const data of chunks) {
+      const float32 = pcm16ToFloat32(data);
+      const buf = ctx.createBuffer(1, float32.length, OUTPUT_SAMPLE_RATE);
+      buf.copyToChannel(float32, 0);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      const startTime = Math.max(ctx.currentTime, playbackTimeRef.current);
+      src.start(startTime);
+      playbackTimeRef.current = startTime + buf.duration;
+    }
+  }, []);
 
   // ── Воспроизведение PCM-аудио из бинарного WebSocket-фрейма ──────────────
   const enqueueAudio = useCallback((data: ArrayBuffer) => {
@@ -536,6 +578,9 @@ export default function App() {
         if (wsRef.current !== ws) return;
         setAppState("connected");
         setStatusText("Ready to talk");
+        // Сбрасываем буфер TTS-чанков — старые куски не должны приклеиться
+        // к первой реплике новой сессии.
+        pendingTutorChunksRef.current = [];
         // Засекаем старт сессии для post-session summary.
         sessionStartRef.current = Date.now();
       };
@@ -546,6 +591,10 @@ export default function App() {
           // Бинарные данные → PCM 24 kHz аудио
           setAppState("speaking");
           setStatusText("Speaking…");
+          // Копируем буфер для replay: enqueueAudio передаст оригинал в
+          // AudioBuffer.copyToChannel, ArrayBuffer останется живым, но
+          // явный slice страхует от detach в некоторых браузерах.
+          pendingTutorChunksRef.current.push(event.data.slice(0));
           enqueueAudio(event.data);
 
           if (speakingEndTimerRef.current !== null) {
@@ -1120,6 +1169,16 @@ export default function App() {
             >
               <span className="msg__role">
                 {entry.role === "user" ? "You" : "Tutor"}
+                {entry.role === "tutor" && entry.audioChunks && entry.audioChunks.length > 0 && (
+                  <button
+                    type="button"
+                    className="msg__replay"
+                    aria-label="Прослушать заново"
+                    onClick={() => replayAudio(entry.audioChunks!)}
+                  >
+                    ▶
+                  </button>
+                )}
               </span>
               {entry.correction && (
                 <span className="msg__correction" aria-label="correction">
