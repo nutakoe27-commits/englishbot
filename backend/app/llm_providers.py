@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import AsyncIterator, Optional, Protocol
+from typing import AsyncIterator, Protocol
 
 import httpx
 
@@ -221,16 +221,21 @@ class VLLMProvider:
 # ─── Перевод одного слова (для тапа в чате) ─────────────────────────────────
 
 _TRANSLATE_SYSTEM_PROMPT = (
-    "Translate an English word into Russian, using the sentence as context.\n"
-    "Reply with one JSON line, no prose:\n"
-    '{"primary":"...","alternatives":["...","..."]}\n\n'
-    "Example input:\n"
-    "Word: bank\nSentence: I walked along the river bank.\n\n"
-    "Example output:\n"
-    '{"primary":"берег","alternatives":["банк"]}'
+    "You help a Russian learner of English understand a word from context. "
+    "When asked, reply with ONLY a short Russian translation of the word.\n\n"
+    "Format: <main translation> | <alt1> | <alt2>\n"
+    "1-3 options total, separated by |. Lowercase. No prose, no English, "
+    "no explanations.\n\n"
+    "Example:\n"
+    "User: What does \"bank\" mean in: \"I walked along the river bank.\"?\n"
+    "Assistant: берег | побережье\n\n"
+    "Example:\n"
+    "User: What does \"grabbing\" mean in: \"I'm grabbing some snacks.\"?\n"
+    "Assistant: хватать | брать"
 )
 
-_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+# Парсим ответ вида "берег | побережье | …" → [primary, alt, alt].
+_PIPE_SPLIT_RE = re.compile(r"\s*\|\s*")
 
 
 async def translate_word(
@@ -250,15 +255,13 @@ async def translate_word(
         return []
     context_clean = (context or "").strip()
     user_payload = (
-        f"Word: {word_clean}\n"
-        f"Sentence: {context_clean or '(no context)'}"
+        f'What does "{word_clean}" mean in: "{context_clean or "(no context)"}"?'
     )
 
-    # Используем уже проверенный llm.complete() — он работает в проде на
-    # тьютор-промптах с enable_thinking=False. Не дёргаем сырой HTTP, чтобы
-    # не наступить на reasoning-parser баги: на JSON-промпте Qwen3 уходит
-    # в <think> и не выходит за max_tokens, vLLM в итоге возвращает пустой
-    # content+reasoning.
+    # Идём через llm.complete() — он использует enable_thinking=False и
+    # /no_think, что в проде работает на коротких разговорных промптах.
+    # Промпт оформлен как диалог («помоги юзеру с английским»), а не
+    # JSON-инструкция — на ней Qwen3 уходила в reasoning loop / молчала.
     try:
         raw = await llm.complete(
             user_text=user_payload,
@@ -269,32 +272,22 @@ async def translate_word(
         logger.warning("[translate] LLM error for %r: %r", word_clean, exc)
         return []
 
-    cleaned = _strip_reasoning(raw)
-    if not cleaned:
-        logger.warning("[translate] пустой ответ для %r (raw=%r)", word_clean, raw[:200])
-        return []
-    match = _JSON_OBJECT_RE.search(cleaned)
-    if not match:
-        logger.warning("[translate] no JSON для %r: %r", word_clean, cleaned[:200])
-        return []
-    try:
-        parsed = json.loads(match.group(0))
-    except json.JSONDecodeError as exc:
-        logger.warning("[translate] bad JSON для %r: %s — %r", word_clean, exc, cleaned[:200])
+    cleaned = _strip_reasoning(raw).strip()
+    if not cleaned or cleaned.lower().startswith("sorry"):
+        logger.warning("[translate] пустой/sorry ответ для %r (raw=%r)", word_clean, raw[:200])
         return []
 
-    primary = (parsed.get("primary") or "").strip()
-    alts_raw = parsed.get("alternatives") or []
-    if not primary:
-        return []
-    result = [primary]
-    if isinstance(alts_raw, list):
-        for alt in alts_raw[:2]:
-            if not isinstance(alt, str):
-                continue
-            alt_clean = alt.strip()
-            if alt_clean and alt_clean.lower() != primary.lower():
-                result.append(alt_clean)
+    # Берём только первую строку (модель иногда добавляет пояснения снизу).
+    first_line = cleaned.splitlines()[0].strip().strip(".")
+    parts = [p.strip().strip(".,;") for p in _PIPE_SPLIT_RE.split(first_line) if p.strip()]
+    # Убираем дубликаты, оставляя порядок.
+    seen: set[str] = set()
+    result: list[str] = []
+    for p in parts[:3]:
+        key = p.lower()
+        if key and key not in seen:
+            seen.add(key)
+            result.append(p)
     return result
 
 
