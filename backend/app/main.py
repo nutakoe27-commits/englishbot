@@ -139,6 +139,202 @@ async def ping() -> dict:
     return {"pong": True, "version": "0.3.0"}
 
 
+def _tg_id_from_init_data(init_data: str) -> int:
+    """Валидирует Telegram WebApp initData (подпись + 24-часовой TTL) и
+    возвращает tg_id юзера. Кидает HTTPException(401) при любой ошибке.
+
+    Используется во всех Mini-App endpoint'ах. Identical в логике с
+    battle_api._validate_init_data_and_get_tg_id — но тут без зависимости
+    от того файла, чтобы main.py остался самодостаточным.
+    """
+    from fastapi import HTTPException, status
+    import time as _time
+
+    if not init_data:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "init_data required")
+    if not settings.BOT_TOKEN:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "bot token missing")
+    validated = validate_telegram_init_data(init_data, settings.BOT_TOKEN)
+    if not validated:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid initData")
+    try:
+        auth_date = int(validated.get("auth_date") or 0)
+    except (TypeError, ValueError):
+        auth_date = 0
+    if auth_date == 0 or (_time.time() - auth_date) > 24 * 3600:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "init_data expired")
+    user_raw = validated.get("user")
+    if not user_raw:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "initData has no user")
+    try:
+        user_obj = json.loads(user_raw)
+        return int(user_obj["id"])
+    except Exception:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad user payload in initData")
+
+
+@app.get("/api/learner/recent-context", tags=["Learner"])
+async def learner_recent_context(init_data: str = "") -> dict:
+    """Контекст учащегося для Mini App: для post-session summary экрана.
+
+    Возвращает:
+      - streak: {current, best, last_practice_date}
+      - vocab: [{word, times_used, last_seen_at}, ...] (топ-15 за неделю)
+      - mistakes: [{category, bad, good, occurred_at}, ...] (топ-5 за неделю)
+      - today_used_seconds: сколько юзер сегодня практиковался
+
+    Аутентификация — Telegram WebApp initData.
+    """
+    tg_id = _tg_id_from_init_data(init_data)
+
+    if not settings.DATABASE_URL:
+        return {
+            "streak": {"current": 0, "best": 0, "last_practice_date": None},
+            "vocab": [],
+            "mistakes": [],
+            "today_used_seconds": 0,
+        }
+
+    from .db import Repo
+
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.get_user_by_tg_id(tg_id)
+        if user is None:
+            return {
+                "streak": {"current": 0, "best": 0, "last_practice_date": None},
+                "vocab": [],
+                "mistakes": [],
+                "today_used_seconds": 0,
+            }
+        ctx = await repo.get_learner_context(user.id)
+        used_today = await repo.get_used_seconds_today(user.id)
+
+    return {
+        "streak": {
+            "current": int(user.streak_days or 0),
+            "best": int(user.best_streak_days or 0),
+            "last_practice_date": (
+                user.last_practice_date.isoformat()
+                if user.last_practice_date else None
+            ),
+        },
+        "vocab": [
+            {
+                "word": v["word"],
+                "times_used": v["times_used"],
+                "last_seen_at": v["last_seen_at"].isoformat() if v["last_seen_at"] else None,
+            }
+            for v in ctx["recent_vocab"]
+        ],
+        "mistakes": [
+            {
+                "category": m["category"],
+                "bad": m["bad"],
+                "good": m["good"],
+                "occurred_at": m["occurred_at"].isoformat() if m["occurred_at"] else None,
+            }
+            for m in ctx["recent_mistakes"]
+        ],
+        "today_used_seconds": int(used_today or 0),
+    }
+
+
+# ─── Мои слова (пользовательский словарь) ─────────────────────────────────────
+# Юзер может через Mini App добавлять слова, которые сейчас учит. Тьютор в
+# system_prompt получает их с пометкой «ACTIVELY WANTS to practice» и должен
+# вкручивать в разговор. Лимит — Repo.USER_WORDS_LIMIT (100).
+
+class _AddWordIn(BaseModel):
+    init_data: str
+    word: str
+    note: Optional[str] = None  # зарезервировано для импорта; UI пока не шлёт
+
+
+@app.get("/api/user-words", tags=["UserWords"])
+async def get_user_words(init_data: str = "") -> dict:
+    """Список user-слов для Mini App."""
+    tg_id = _tg_id_from_init_data(init_data)
+    if not settings.DATABASE_URL:
+        return {"words": [], "total": 0, "limit": 100}
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.get_user_by_tg_id(tg_id)
+        if user is None:
+            return {"words": [], "total": 0, "limit": Repo.USER_WORDS_LIMIT}
+        items = await repo.list_user_words(user.id)
+    return {
+        "words": [
+            {
+                "word": i["word"],
+                "note": i["note"],
+                "last_seen_at": i["last_seen_at"].isoformat() if i["last_seen_at"] else None,
+            }
+            for i in items
+        ],
+        "total": len(items),
+        "limit": Repo.USER_WORDS_LIMIT,
+    }
+
+
+@app.post("/api/user-words", tags=["UserWords"])
+async def post_user_word(body: _AddWordIn) -> dict:
+    """Добавить user-слово.
+
+    400 с error-кодом если empty/too_long/limit_reached/user-not-found.
+    """
+    from fastapi import HTTPException, status
+
+    tg_id = _tg_id_from_init_data(body.init_data)
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "DB not configured")
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.get_user_by_tg_id(tg_id)
+        if user is None:
+            # Юзер ещё не upsert'нут — попросим открыть Mini App обычным
+            # способом сначала (там в WS-preflight идёт upsert_user).
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "user_not_found"
+            )
+        result = await repo.add_user_word(user.id, body.word, note=body.note)
+        if result == "ok":
+            await session.commit()
+            return {"ok": True}
+        # «duplicate» считаем success-вариантом — слово уже есть, UI просто
+        # перерисует список.
+        if result == "duplicate":
+            return {"ok": True, "duplicate": True}
+        await session.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, result)
+
+
+@app.delete("/api/user-words/{word}", tags=["UserWords"])
+async def delete_user_word(word: str, init_data: str = "") -> dict:
+    """Удалить user-слово."""
+    from fastapi import HTTPException, status
+
+    tg_id = _tg_id_from_init_data(init_data)
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "DB not configured")
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.get_user_by_tg_id(tg_id)
+        if user is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
+        removed = await repo.remove_user_word(user.id, word)
+        if not removed:
+            await session.rollback()
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "word_not_found")
+        await session.commit()
+    return {"ok": True}
+
+
 # ─── Перевод слова по тапу в чате ─────────────────────────────────────────────
 
 _TRANSLATION_CACHE: dict[tuple[str, str], list[str]] = {}
@@ -147,35 +343,6 @@ _TRANSLATION_CACHE_MAX = 2000
 _RATE_WINDOW_SEC = 60
 _RATE_LIMIT_PER_USER = 30
 _RATE_BUCKETS: dict[int, deque] = defaultdict(deque)
-
-
-def _tg_id_from_init_data(init_data_raw: str) -> int:
-    """Парсит и валидирует Telegram initData, возвращает tg_id.
-    В dev-режиме (если BOT_TOKEN не задан) — берёт user_id без проверки подписи.
-    """
-    if not init_data_raw:
-        raise HTTPException(status_code=401, detail="missing_init_data")
-
-    if settings.BOT_TOKEN:
-        validated = validate_telegram_init_data(init_data_raw, settings.BOT_TOKEN)
-        if not validated and not settings.is_development:
-            raise HTTPException(status_code=401, detail="invalid_init_data")
-        parsed = validated or dict(
-            urllib.parse.parse_qsl(init_data_raw, keep_blank_values=True)
-        )
-    else:
-        if not settings.is_development:
-            raise HTTPException(status_code=500, detail="bot_token_not_configured")
-        parsed = dict(urllib.parse.parse_qsl(init_data_raw, keep_blank_values=True))
-
-    user_raw = parsed.get("user")
-    if not user_raw:
-        raise HTTPException(status_code=401, detail="missing_user")
-    try:
-        user_obj = json.loads(user_raw)
-        return int(user_obj["id"])
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=401, detail="bad_user") from exc
 
 
 def _enforce_rate_limit(tg_id: int) -> None:

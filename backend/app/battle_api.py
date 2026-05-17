@@ -125,6 +125,12 @@ class AcceptBattleOut(BaseModel):
     prompt_en: str
     side_a_ru: str
     side_b_ru: str
+    # Где было исходное chat-сообщение «Бросить вызов» — бот использует это,
+    # чтобы перерисовать его в «Вызов принят» даже если accept происходит
+    # не через callback в чате (а, например, через /start deep-link).
+    inline_message_id: Optional[str] = None
+    chat_id: Optional[int] = None
+    chat_message_id: Optional[int] = None
 
 
 class RecordIn(BaseModel):
@@ -240,6 +246,59 @@ async def api_accept_battle(battle_id: int, body: AcceptBattleIn) -> AcceptBattl
         side_a_ru=accepted.side_a_ru,
         side_b_ru=accepted.side_b_ru,
     )
+
+
+class RevancheIn(BaseModel):
+    requester_tg_id: int
+
+
+@router.post(
+    "/battles/{battle_id}/revanche",
+    response_model=AcceptBattleOut,
+    dependencies=[Depends(_require_bot_secret)],
+)
+async def api_revanche(battle_id: int, body: RevancheIn) -> AcceptBattleOut:
+    """Создать реваншевый battle: новый id, тех же двух участников,
+    сразу status='accepted'. requester_tg_id — кто нажал кнопку."""
+    async with db_session() as s:
+        result = await battle_mod.revanche(
+            s, old_battle_id=battle_id, requester_tg_id=body.requester_tg_id,
+        )
+        await s.commit()
+    if result is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "cannot revanche")
+    topic = battle_topics.get_by_key(result.topic_key)
+    return AcceptBattleOut(
+        id=result.id,
+        topic_key=result.topic_key,
+        topic_title_ru=topic.title_ru if topic else result.topic_key,
+        initiator_tg_id=result.initiator_tg_id,
+        opponent_tg_id=result.opponent_tg_id,
+        prompt_en=result.prompt_en,
+        side_a_ru=result.side_a_ru,
+        side_b_ru=result.side_b_ru,
+        inline_message_id=result.inline_message_id,
+        chat_id=result.chat_id,
+        chat_message_id=result.chat_message_id,
+    )
+
+
+@router.post(
+    "/battles/{battle_id}/revert-accept",
+    dependencies=[Depends(_require_bot_secret)],
+)
+async def api_revert_accept(battle_id: int, body: AcceptBattleIn) -> dict:
+    """Бот зовёт сюда, если не смог доставить ЛС оппоненту: возвращаем
+    battle в статус 'open', чтобы оппонент мог нажать «Принять» снова после /start.
+    """
+    async with db_session() as s:
+        ok = await battle_mod.revert_accept(
+            s, battle_id=battle_id, opponent_tg_id=body.opponent_tg_id,
+        )
+        await s.commit()
+    if not ok:
+        raise HTTPException(status.HTTP_409_CONFLICT, "cannot revert accept")
+    return {"ok": True}
 
 
 @router.post(

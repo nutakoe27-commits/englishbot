@@ -49,6 +49,21 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
+    # ── Streak (миграция 0004) ──
+    streak_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    best_streak_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_practice_date: Mapped[Optional[date]] = mapped_column(Date)
+
+    # ── Onboarding goal (миграция 0004) ──
+    # travel | work | daily | exam | fun | NULL (до прохождения онбординга)
+    learning_goal: Mapped[Optional[str]] = mapped_column(String(32))
+
+    # ── Last session role (миграция 0005) ──
+    # Роль из последней сессии. Используется assign_daily_quest для умной
+    # выдачи role-квестов: не подсовывать barista-квест юзеру, который
+    # сидит в doctor — verify никогда не пройдёт.
+    last_session_role: Mapped[Optional[str]] = mapped_column(String(64))
+
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -214,3 +229,55 @@ class UserQuest(Base):
     expired_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     verification_data: Mapped[Optional[dict]] = mapped_column(JSON)
+
+
+# ─── Persistent learner state (миграция 0004) ─────────────────────────
+
+class UserVocabulary(Base):
+    """Слова/фразы из словарного запаса юзера.
+
+    `source` различает откуда слово взялось:
+      - 'tutor' (default): автоматически добавил session_recap.py после
+        разговора, тьютор сам ввёл это слово в реплику.
+      - 'user': юзер добавил вручную через Mini App (фича «Мои слова»).
+        Такие слова имеют ПРИОРИТЕТ в системном промпте — тьютор должен
+        вкручивать их в разговор активно.
+      - 'import': зарезервировано на массовый импорт из Anki/Quizlet/др.
+
+    `note` — опциональный перевод/заметка; в MVP не используется, есть
+    в схеме для будущего bulk-импорта.
+    """
+
+    __tablename__ = "user_vocabulary"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    word: Mapped[str] = mapped_column(String(64), nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    times_used: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    context: Mapped[Optional[str]] = mapped_column(String(255))
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="tutor")
+    note: Mapped[Optional[str]] = mapped_column(String(255))
+
+
+class UserMistake(Base):
+    """Лог ошибок, которые тьютор поправил во время сессии.
+
+    Используется в build_system_prompt для гентл-reinforce: «эта категория
+    регулярно ломается, по возможности подкидывай корректные конструкции».
+    """
+
+    __tablename__ = "user_mistakes"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    # article | tense | preposition | word_choice | phrasal | other
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    bad_phrase: Mapped[str] = mapped_column(String(255), nullable=False)
+    good_phrase: Mapped[str] = mapped_column(String(255), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

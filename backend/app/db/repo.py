@@ -13,7 +13,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import DailyUsage, Payment, SettingKV, Session as SessionRow, User
+from .models import DailyUsage, Payment, SettingKV, Session as SessionRow, User, UserMistake, UserVocabulary
 
 
 # Europe/Moscow без зависимости от системного tz — фикс UTC+3.
@@ -154,6 +154,273 @@ class Repo:
         )
         await self.s.execute(stmt)
         return await self.get_used_seconds_today(user_id)
+
+    # ─── streak ─────────────────────────────────────────────────────────
+    async def bump_streak(
+        self, user_id: int, *, role: Optional[str] = None,
+    ) -> tuple[int, int]:
+        """Зафиксировать практику сегодня и обновить стрик.
+
+        Логика:
+          - Если уже занимались сегодня → стрик не меняем, но last_session_role
+            всё равно перезаписываем (юзер мог в эту сессию выбрать другую роль).
+          - Если занимались вчера → streak_days += 1.
+          - Иначе (пропустили день или первый раз) → streak_days = 1.
+          - best_streak_days тянется как max(best, current).
+
+        Параметр `role` — роль сессии из SessionSettings.role; сохраняется
+        в users.last_session_role для assign_daily_quest.
+
+        Возвращает (current_streak, best_streak) после апдейта. Если юзер
+        не найден — (0, 0).
+        """
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            return (0, 0)
+
+        today = msk_today()
+        already_today = user.last_practice_date == today
+
+        if already_today:
+            new_streak = user.streak_days
+            new_best = user.best_streak_days
+        elif user.last_practice_date == today - timedelta(days=1):
+            new_streak = user.streak_days + 1
+            new_best = max(user.best_streak_days, new_streak)
+        else:
+            # Пропуск или первый раз.
+            new_streak = 1
+            new_best = max(user.best_streak_days, new_streak)
+
+        values: dict = {
+            "streak_days": new_streak,
+            "best_streak_days": new_best,
+            "last_practice_date": today,
+        }
+        if role:
+            values["last_session_role"] = role
+        await self.s.execute(
+            update(User).where(User.id == user_id).values(**values)
+        )
+        return (new_streak, new_best)
+
+    async def get_streak(self, user_id: int) -> tuple[int, int, Optional[date]]:
+        """Текущий стрик / лучший / дата последней практики (МСК)."""
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            return (0, 0, None)
+        return (user.streak_days, user.best_streak_days, user.last_practice_date)
+
+    # ─── learner context (vocabulary + mistakes) ───────────────────────
+    # Лимит на количество пользовательских слов в словаре одного юзера.
+    # Выше — раздувает system_prompt и теряется фокус LLM.
+    USER_WORDS_LIMIT: int = 100
+
+    async def get_recent_vocabulary(
+        self, user_id: int, *, limit: int = 15, days: int = 7,
+    ) -> list[dict]:
+        """Топ N слов, которые тьютор подкидывал юзеру за последние N дней.
+
+        Только source != 'user' — пользовательские слова идут отдельно
+        через get_user_words_for_prompt (без cutoff по дате).
+
+        Возвращает list[{word, times_used, last_seen_at}] — отсортирован
+        по last_seen_at DESC (самые свежие сначала). Используется как для
+        контекста next session, так и для post-session summary в Mini App.
+        """
+        cutoff = utcnow() - timedelta(days=days)
+        res = await self.s.execute(
+            select(
+                UserVocabulary.word,
+                UserVocabulary.times_used,
+                UserVocabulary.last_seen_at,
+            )
+            .where(
+                UserVocabulary.user_id == user_id,
+                UserVocabulary.last_seen_at >= cutoff,
+                UserVocabulary.source != "user",
+            )
+            .order_by(UserVocabulary.last_seen_at.desc())
+            .limit(limit)
+        )
+        return [
+            {
+                "word": row[0],
+                "times_used": int(row[1] or 1),
+                "last_seen_at": row[2],
+            }
+            for row in res.all()
+        ]
+
+    async def get_recent_mistakes(
+        self, user_id: int, *, limit: int = 5, days: int = 7,
+    ) -> list[dict]:
+        """Свежие ошибки юзера. Возвращает list[{category, bad, good, occurred_at}]."""
+        cutoff = utcnow() - timedelta(days=days)
+        res = await self.s.execute(
+            select(
+                UserMistake.category,
+                UserMistake.bad_phrase,
+                UserMistake.good_phrase,
+                UserMistake.occurred_at,
+            )
+            .where(
+                UserMistake.user_id == user_id,
+                UserMistake.occurred_at >= cutoff,
+            )
+            .order_by(UserMistake.occurred_at.desc())
+            .limit(limit)
+        )
+        return [
+            {
+                "category": row[0],
+                "bad": row[1],
+                "good": row[2],
+                "occurred_at": row[3],
+            }
+            for row in res.all()
+        ]
+
+    async def get_learner_context(self, user_id: int) -> dict:
+        """Контекст для подмешивания в system_prompt + UI:
+          - user_words: то что юзер сам добавил (приоритет в промпте).
+          - recent_vocab: что тьютор сам ввёл за последние 7 дней.
+          - recent_mistakes: ошибки за неделю.
+        """
+        user_words = await self.get_user_words_for_prompt(user_id, limit=10)
+        vocab = await self.get_recent_vocabulary(user_id, limit=15, days=7)
+        mistakes = await self.get_recent_mistakes(user_id, limit=5, days=7)
+        return {
+            "user_words": user_words,
+            "recent_vocab": vocab,
+            "recent_mistakes": mistakes,
+        }
+
+    # ─── user-added words (Mini App «Мои слова») ────────────────────────
+    async def get_user_words_for_prompt(
+        self, user_id: int, *, limit: int = 10,
+    ) -> list[str]:
+        """Топ N свежих пользовательских слов (source='user').
+
+        Без cutoff по дате — это активный учебный список юзера, не
+        история. Используется для подмеса в system_prompt с пометкой
+        «learner ACTIVELY WANTS to practice».
+        """
+        res = await self.s.execute(
+            select(UserVocabulary.word)
+            .where(
+                UserVocabulary.user_id == user_id,
+                UserVocabulary.source == "user",
+            )
+            .order_by(UserVocabulary.last_seen_at.desc())
+            .limit(limit)
+        )
+        return [row[0] for row in res.all()]
+
+    async def list_user_words(self, user_id: int) -> list[dict]:
+        """Полный список пользовательских слов для Mini App.
+
+        Возвращает list[{word, note, last_seen_at}], сорт by last_seen_at DESC.
+        """
+        res = await self.s.execute(
+            select(
+                UserVocabulary.word,
+                UserVocabulary.note,
+                UserVocabulary.last_seen_at,
+            )
+            .where(
+                UserVocabulary.user_id == user_id,
+                UserVocabulary.source == "user",
+            )
+            .order_by(UserVocabulary.last_seen_at.desc())
+        )
+        return [
+            {"word": row[0], "note": row[1], "last_seen_at": row[2]}
+            for row in res.all()
+        ]
+
+    async def count_user_words(self, user_id: int) -> int:
+        """Сколько user-слов у юзера — для лимита."""
+        res = await self.s.execute(
+            select(func.count(UserVocabulary.id)).where(
+                UserVocabulary.user_id == user_id,
+                UserVocabulary.source == "user",
+            )
+        )
+        return int(res.scalar() or 0)
+
+    async def add_user_word(
+        self, user_id: int, word: str, *, note: Optional[str] = None,
+    ) -> str:
+        """Добавить пользовательское слово.
+
+        Возвращает:
+          - "ok": вставлено / row была tutor-словом и теперь оживлено как user
+          - "duplicate": слово уже есть как user-слово
+          - "empty": пустая строка после нормализации
+          - "too_long": > 64 символа
+          - "limit_reached": достигнут USER_WORDS_LIMIT
+        """
+        normalized = (word or "").strip().lower()
+        if not normalized:
+            return "empty"
+        if len(normalized) > 64:
+            return "too_long"
+
+        # Уже user-слово? — duplicate.
+        existing = await self.s.execute(
+            select(UserVocabulary.source).where(
+                UserVocabulary.user_id == user_id,
+                UserVocabulary.word == normalized,
+            )
+        )
+        existing_source = existing.scalar_one_or_none()
+        if existing_source == "user":
+            return "duplicate"
+
+        # Лимит — считаем только если новое слово (existing_source != 'user').
+        current = await self.count_user_words(user_id)
+        if current >= self.USER_WORDS_LIMIT:
+            return "limit_reached"
+
+        now = utcnow()
+        stmt = mysql_insert(UserVocabulary).values(
+            user_id=user_id,
+            word=normalized,
+            first_seen_at=now,
+            last_seen_at=now,
+            times_used=0,
+            context=None,
+            source="user",
+            note=note,
+        )
+        # Если строка существует как tutor-слово — конвертируем в user.
+        stmt = stmt.on_duplicate_key_update(
+            source="user",
+            last_seen_at=now,
+            note=stmt.inserted.note,
+        )
+        await self.s.execute(stmt)
+        return "ok"
+
+    async def remove_user_word(self, user_id: int, word: str) -> bool:
+        """Удалить пользовательское слово. Returns True если удалили.
+
+        Удаляем ТОЛЬКО row с source='user' — tutor-слова не трогаем
+        (юзер не должен иметь возможность стереть статистику разговора).
+        """
+        normalized = (word or "").strip().lower()
+        if not normalized:
+            return False
+        from sqlalchemy import delete
+        res = await self.s.execute(
+            delete(UserVocabulary).where(
+                UserVocabulary.user_id == user_id,
+                UserVocabulary.word == normalized,
+                UserVocabulary.source == "user",
+            )
+        )
+        return (res.rowcount or 0) > 0
 
     # ─── sessions ───────────────────────────────────────────────────────
     async def open_session(

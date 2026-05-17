@@ -18,6 +18,8 @@ import "./App.css";
 import { SettingsSheet } from "./SettingsSheet";
 import { LockScreen } from "./LockScreen";
 import { TranslatePopover } from "./TranslatePopover";
+import { SessionSummary } from "./SessionSummary";
+import { WordsScreen } from "./WordsScreen";
 import {
   loadSettings,
   saveSettings,
@@ -41,6 +43,12 @@ interface DialogEntry {
   id: number;
   role: "user" | "tutor";
   text: string;
+  /**
+   * Если тьютор поправил ошибку — здесь корректная форма (без слова
+   * "Correction:" префикса). Бэкенд парсит её в voice.py::_split_correction
+   * и шлёт отдельным полем; UI рисует жёлтым блоком над основной репликой.
+   */
+  correction?: string | null;
 }
 
 interface TranslateTarget {
@@ -79,6 +87,9 @@ const WS_URL = "wss://api-english.krichigindocs.ru/ws/voice";
 const API_BASE = "https://api-english.krichigindocs.ru";
 const OUTPUT_SAMPLE_RATE = 24000; // TTS отдаёт 24 kHz PCM
 const MAX_LOG_ENTRIES = 20;
+// Сессия должна продлиться хотя бы столько, чтобы показать summary-экран.
+// Совпадает с STREAK_MIN_DURATION_SEC на бэке (защита от микро-сессий).
+const SUMMARY_MIN_SECONDS = 30;
 // Username бота для deep-link на /subscribe и /start.
 // Пробрасывается на этапе Docker build через VITE_BOT_USERNAME (см. docker-compose.yml).
 // Указывать БЕЗ символа '@'.
@@ -127,6 +138,8 @@ export default function App() {
   // Настройки тьютора (уровень, роль, длина, исправления)
   const [settings, setSettings] = useState<TutorSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  // Экран «Мои слова» (юзер добавляет слова, которые сейчас учит).
+  const [wordsOpen, setWordsOpen] = useState<boolean>(false);
   // Черновик текстового сообщения в chat-режиме
   const [chatDraft, setChatDraft] = useState<string>("");
   // Тьютор сейчас «думает» (индикация в chat-режиме пока LLM формирует ответ)
@@ -151,11 +164,28 @@ export default function App() {
     },
     [],
   );
+  // Post-session summary — показываем после нормального End session
+  // (sessionSeconds > 0) ИЛИ как «opening» при открытии Mini App
+  // (sessionSeconds = 0). Логика выбора режима в SessionSummary.tsx.
+  const [summarySeconds, setSummarySeconds] = useState<number | null>(null);
+  // Время начала сессии (для подсчёта длительности при End session).
+  const sessionStartRef = useRef<number | null>(null);
+  // Уже показывали opening-summary в этом mount'е Mini App? Чтобы не
+  // открывать его повторно после End session (там — свой, с длительностью).
+  const openingSummaryShownRef = useRef<boolean>(false);
+  // Актуальный appState для чтения из async-замыканий (fetch.then,
+  // setTimeout, ...). Иначе stale closure покажет старое значение.
+  const appStateRef = useRef<AppState>("initializing");
   // Реф с актуальными настройками — openConnection читает его без ре-рендера
   const settingsRef = useRef<TutorSettings>(settings);
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  // Синхронизация appStateRef с appState — для чтения из async-замыканий.
+  useEffect(() => {
+    appStateRef.current = appState;
+  }, [appState]);
 
   // Рефы для аудио/WS объектов (не вызывают ре-рендер)
   const wsRef = useRef<WebSocket | null>(null);
@@ -173,6 +203,10 @@ export default function App() {
   // Защита от параллельных/повторных вызовов openConnection: пока идёт
   // хэндшейк нового WS или ожидание закрытия старого — дубликаты игнорируем.
   const openingRef = useRef<boolean>(false);
+  // True между handleSettingsSave и завершением reconnect'а — нужен, чтобы
+  // НЕ показывать SessionSummary в момент когда юзер просто сменил настройки
+  // и WS пересоздаётся прозрачно. Сбрасывается в maybeTriggerSummary.
+  const settingsReconnectRef = useRef<boolean>(false);
   // Флаг — идёт ли сейчас запись (ref для доступа из замыканий без stale closure)
   const isRecordingRef = useRef<boolean>(false);
   // Флаг — палец сейчас зажат на кнопке (критично для синхронизации с async WS)
@@ -227,6 +261,50 @@ export default function App() {
     }
   }, []);
 
+  // ── Opening summary: при каждом открытии Mini App, если у юзера уже есть
+  // streak/словарь/ошибки — показываем экран «привет, вот твой прогресс».
+  // Это решает проблему «summary не показывается при возврате из background»:
+  // даже если ws.onclose / openConnection не успели поймать момент, на
+  // следующем mount юзер всё равно видит свои итоги.
+  useEffect(() => {
+    if (openingSummaryShownRef.current) return;
+    let cancelled = false;
+    const initData = WebApp.initData || "";
+    if (!initData) return; // вне Telegram (dev) — не показываем
+    fetch(
+      `${API_BASE}/api/learner/recent-context?init_data=${encodeURIComponent(initData)}`,
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        const hasContent =
+          (d.streak?.current ?? 0) > 0 ||
+          (Array.isArray(d.vocab) && d.vocab.length > 0) ||
+          (Array.isArray(d.mistakes) && d.mistakes.length > 0);
+        if (!hasContent) return;
+        // КРИТИЧНО: не открываем overlay если юзер уже сейчас говорит.
+        // Бывает что fetch медленный и пришёл когда юзер уже нажал кнопку
+        // и начал сессию — overlay перекрыл бы интерфейс посреди разговора.
+        if (sessionStartRef.current !== null) return;
+        const state = appStateRef.current;
+        if (
+          state === "recording" ||
+          state === "speaking" ||
+          state === "connected"
+        ) {
+          return;
+        }
+        openingSummaryShownRef.current = true;
+        setSummarySeconds((prev) => (prev !== null ? prev : 0));
+      })
+      .catch(() => {
+        // Сеть/ошибка — тихо пропускаем, основной UI работает дальше.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // ── Авто-скролл лога вниз при новой реплике ──────────────────────────────
   useEffect(() => {
     const el = logRef.current;
@@ -236,17 +314,21 @@ export default function App() {
   }, [dialogLog]);
 
   // ── Добавление реплики в лог ──────────────────────────────────────────────
-  const addLogEntry = useCallback((role: "user" | "tutor", text: string) => {
-    setDialogLog((prev) => {
-      const newEntry: DialogEntry = {
-        id: ++logIdRef.current,
-        role,
-        text,
-      };
-      const updated = [...prev, newEntry];
-      return updated.slice(-MAX_LOG_ENTRIES);
-    });
-  }, []);
+  const addLogEntry = useCallback(
+    (role: "user" | "tutor", text: string, correction?: string | null) => {
+      setDialogLog((prev) => {
+        const newEntry: DialogEntry = {
+          id: ++logIdRef.current,
+          role,
+          text,
+          correction: correction || null,
+        };
+        const updated = [...prev, newEntry];
+        return updated.slice(-MAX_LOG_ENTRIES);
+      });
+    },
+    [],
+  );
 
   // ── Воспроизведение PCM-аудио из бинарного WebSocket-фрейма ──────────────
   const enqueueAudio = useCallback((data: ArrayBuffer) => {
@@ -409,6 +491,10 @@ export default function App() {
           setTimeout(resolve, 1000);
         });
       }
+      // Если предыдущая сессия была осмысленной (≥ 30 сек) — показываем
+      // SessionSummary. Это и foreground-resume из background (Telegram
+      // свернуло Mini App), и любой автоматический reconnect.
+      maybeTriggerSummary();
       wsRef.current = null;
 
       setAppState("connecting");
@@ -450,6 +536,8 @@ export default function App() {
         if (wsRef.current !== ws) return;
         setAppState("connected");
         setStatusText("Ready to talk");
+        // Засекаем старт сессии для post-session summary.
+        sessionStartRef.current = Date.now();
       };
 
       ws.onmessage = (event) => {
@@ -482,7 +570,11 @@ export default function App() {
           try {
             const msg = JSON.parse(event.data);
             if (msg.type === "text" && msg.text) {
-              addLogEntry(msg.role as "user" | "tutor", msg.text);
+              addLogEntry(
+                msg.role as "user" | "tutor",
+                msg.text,
+                typeof msg.correction === "string" ? msg.correction : null,
+              );
               if (msg.role === "tutor") setChatThinking(false);
             } else if (msg.type === "thinking") {
               setChatThinking(true);
@@ -562,6 +654,11 @@ export default function App() {
           } else if (code === 4003) {
             setLockState((cur) => cur ?? "blocked");
           }
+          // НЕ триггерим summary здесь — это делает maybeTriggerSummary()
+          // в openConnection или closeConnection. ws.onclose может прийти
+          // после того, как openConnection уже обернул его собственным
+          // .onclose-хэндлером (см. раздел "Дожидаемся закрытия старого WS"
+          // выше), и наш inline-код мог пропуститься из-за гонки.
           wsRef.current = null;
           if (!wsClosingRef.current) {
             setAppState("idle");
@@ -648,6 +745,29 @@ export default function App() {
     }
   }, []);
 
+  // ── SessionSummary trigger ────────────────────────────────────────────────
+  // Зовётся при ЛЮБОМ завершении сессии: явный End session, авто-reconnect
+  // из background, переоткрытие при sendChatMessage и т.д. Если сессия была
+  // ≥ 30 сек — показываем оверлей, иначе тихо чистим sessionStartRef.
+  // settingsReconnectRef==true → юзер только что нажал Apply в настройках,
+  // overlay показывать НЕ нужно (это прозрачный reconnect посреди работы).
+  const maybeTriggerSummary = useCallback((): boolean => {
+    if (settingsReconnectRef.current) {
+      settingsReconnectRef.current = false;
+      sessionStartRef.current = null;
+      return false;
+    }
+    const startedAt = sessionStartRef.current;
+    sessionStartRef.current = null;
+    if (startedAt === null) return false;
+    const sec = Math.floor((Date.now() - startedAt) / 1000);
+    if (sec >= SUMMARY_MIN_SECONDS) {
+      setSummarySeconds((prev) => prev ?? sec);
+      return true;
+    }
+    return false;
+  }, []);
+
   // ── Разрыв соединения ─────────────────────────────────────────────────────
   const closeConnection = useCallback(() => {
     stopRecording();
@@ -656,13 +776,28 @@ export default function App() {
       wsRef.current.close(1000);
       wsRef.current = null;
     }
+    // Если сессия была достаточно длинной — показываем post-session summary
+    // до того как сбросить лог. После него юзер жмёт «Готово» и UI чистится.
+    const triggered = maybeTriggerSummary();
     setAppState("idle");
     setStatusText("Ready to talk");
+    if (triggered) {
+      // Лог и лимиты оставляем — почистим в dismissSummary, чтобы юзер
+      // мог увидеть свои реплики во время просмотра summary.
+      return;
+    }
     setDialogLog([]);
     setLimits(null);
     setLockState(null);
     setLockMessage("");
-  }, [stopRecording]);
+  }, [stopRecording, maybeTriggerSummary]);
+
+  // Закрыть SessionSummary и почистить UI.
+  const dismissSummary = useCallback(() => {
+    setSummarySeconds(null);
+    setDialogLog([]);
+    setLimits(null);
+  }, []);
 
   // ── Применение новых настроек: сохраняем, закрываем текущую сессию и
   // переоткрываем WS с обновлёнными query-параметрами. Тьютор пришлёт
@@ -670,6 +805,9 @@ export default function App() {
   const handleSettingsSave = useCallback(
     (next: TutorSettings) => {
       const prevMode = settingsRef.current.mode;
+      // Помечаем флаг — чтобы maybeTriggerSummary не открыл оверлей в момент
+      // пересоздания WS из-за смены настроек. Сбрасывается в самом helper'е.
+      settingsReconnectRef.current = true;
       setSettings(next);
       saveSettings(next);
       settingsRef.current = next;
@@ -929,6 +1067,15 @@ export default function App() {
           <button
             type="button"
             className="icon-button"
+            onClick={() => setWordsOpen(true)}
+            aria-label="Мои слова"
+            title="Мои слова"
+          >
+            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>📖</span>
+          </button>
+          <button
+            type="button"
+            className="icon-button"
             onClick={() => setSettingsOpen(true)}
             aria-label="Settings"
           >
@@ -974,6 +1121,14 @@ export default function App() {
               <span className="msg__role">
                 {entry.role === "user" ? "You" : "Tutor"}
               </span>
+              {entry.correction && (
+                <span className="msg__correction" aria-label="correction">
+                  <span className="msg__correction-icon" aria-hidden>
+                    ✏️
+                  </span>
+                  {entry.correction}
+                </span>
+              )}
               <span className="msg__text">
                 {entry.role === "tutor"
                   ? renderWithTaps(entry.text, handleWordTap)
@@ -1173,6 +1328,21 @@ export default function App() {
           x={translateTarget.x}
           y={translateTarget.y}
           onClose={() => setTranslateTarget(null)}
+        />
+      )}
+
+      {summarySeconds !== null && lockState === null && (
+        <SessionSummary
+          apiBase={API_BASE}
+          sessionSeconds={summarySeconds}
+          onClose={dismissSummary}
+        />
+      )}
+
+      {wordsOpen && lockState === null && (
+        <WordsScreen
+          apiBase={API_BASE}
+          onClose={() => setWordsOpen(false)}
         />
       )}
     </div>

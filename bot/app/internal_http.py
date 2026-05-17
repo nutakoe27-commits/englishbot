@@ -21,8 +21,22 @@ from typing import Any
 
 from aiohttp import web
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from . import backend_client
+
+
+def _revanche_keyboard(battle_id: int) -> InlineKeyboardMarkup:
+    """Кнопка «🔄 Реванш» под результатом battle. callback_data парсится
+    в bot/app/main.py::cb_battle_revanche."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(
+                text="🔄 Реванш",
+                callback_data=f"battle:revanche:{battle_id}",
+            ),
+        ]]
+    )
 
 
 log = logging.getLogger(__name__)
@@ -71,6 +85,8 @@ async def _handle_battle_judged(request: web.Request) -> web.Response:
     chat_id = state.get("chat_id")
     chat_message_id = state.get("chat_message_id")
 
+    revanche_kb = _revanche_keyboard(battle_id)
+
     edited = False
     try:
         if inline_message_id:
@@ -78,6 +94,7 @@ async def _handle_battle_judged(request: web.Request) -> web.Response:
                 inline_message_id=inline_message_id,
                 text=text,
                 parse_mode="HTML",
+                reply_markup=revanche_kb,
             )
             edited = True
         elif chat_id and chat_message_id:
@@ -86,18 +103,21 @@ async def _handle_battle_judged(request: web.Request) -> web.Response:
                 message_id=chat_message_id,
                 text=text,
                 parse_mode="HTML",
+                reply_markup=revanche_kb,
             )
             edited = True
     except Exception as exc:
         log.warning("[internal_http] edit_message_text failed: %s", exc)
 
     # Дублируем в ЛС обоим участникам — им важно знать результат,
-    # даже если исходный inline-пост недоступен.
+    # даже если исходный inline-пост недоступен. С кнопкой реванша.
     for tg_id in (state.get("initiator_tg_id"), state.get("opponent_tg_id")):
         if not tg_id:
             continue
         try:
-            await bot.send_message(tg_id, text, parse_mode="HTML")
+            await bot.send_message(
+                tg_id, text, parse_mode="HTML", reply_markup=revanche_kb,
+            )
         except Exception as exc:
             log.info("[internal_http] DM result to %s failed: %s", tg_id, exc)
 

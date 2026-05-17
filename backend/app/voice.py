@@ -41,7 +41,10 @@ INPUT_SAMPLE_RATE = 16000
 OUTPUT_SAMPLE_RATE = 24000
 
 # История диалога — храним несколько последних реплик для контекста LLM.
-MAX_HISTORY_TURNS = 6
+# 4 turn'а = 8 сообщений: достаточно для связности, защита от роста контекста
+# на длинных сессиях (когда история + learner_context + system_prompt начинают
+# давить на LLM и провоцируют галлюцинации типа «эхо реплики + Correction»).
+MAX_HISTORY_TURNS = 4
 
 # Период «тика» учёта времени для бесплатных юзеров (секунды).
 USAGE_HEARTBEAT_SECONDS = 5
@@ -75,6 +78,107 @@ async def _llm_complete_with_timeout(llm, *, user_text, history, system_prompt):
     if timeout and timeout > 0:
         return await asyncio.wait_for(coro, timeout=timeout)
     return await coro
+
+
+# ─── Streaming LLM → TTS по предложениям ──────────────────────────────────
+# Граница предложения: . ! ? — после них пробел или конец строки.
+# Также \n считается границей (LLM иногда переносит без пунктуации).
+_SENTENCE_END_RE = re.compile(r"[.!?](?:\s|$)|\n")
+
+# Минимальная длина первого «куска» для отправки в TTS — иначе TTS получит
+# одно слово и окончит синтез слишком быстро (мерцание звука).
+_MIN_FIRST_TTS_CHUNK = 30
+# После первого куска можно отдавать каждое предложение даже короткое.
+
+# Сколько символов с начала ответа смотрим, чтобы решить — есть ли префикс
+# Correction:. Если в первых N символах его нет → точно нет, можем стримить
+# с самого начала. Иначе — буферим до первого пустого ряда (\n\n).
+_CORRECTION_DETECT_HEAD = 20
+
+
+def _starts_with_correction(text: str) -> bool:
+    """True если текст начинается с 'Correction:' (с учётом возможных
+    пробелов/переводов в начале)."""
+    return text.lstrip().lower().startswith("correction:")
+
+
+def _try_extract_streaming_correction(full_reply: str) -> tuple[Optional[str], Optional[str]]:
+    """Streaming-вариант _split_correction: парсит «Correction: X\\n\\n…»
+    но позволяет body быть пустым (стрим ещё не закончился).
+
+    Возвращает (correction, body_so_far). Если структура ещё не оформлена
+    (нет \\n\\n после Correction:) — возвращает (None, None) — caller
+    должен подождать следующих токенов.
+
+    В отличие от _split_correction, body может быть пустой строкой "".
+    """
+    if not _starts_with_correction(full_reply):
+        return None, None
+    idx = full_reply.find("\n\n")
+    if idx == -1:
+        return None, None
+    corr_line = full_reply[:idx].strip()
+    # corr_line должен начинаться с "Correction:" — strip префикс.
+    if not corr_line.lower().startswith("correction:"):
+        return None, None
+    correction = corr_line[len("Correction:"):].strip()
+    if not correction or len(correction) > 200:
+        return None, None
+    body_so_far = full_reply[idx + 2:]
+    return correction, body_so_far
+
+
+# ─── Correction split: «Correction: ...\n\n<body>» ──────────────────────
+# tutor_prompt._CORRECTION_ON инструктирует LLM выдавать первой строкой
+# `Correction: <fixed>\n\n<reply>`. Парсим её и отдаём отдельно — фронт
+# подсвечивает correction жёлтым блоком, а TTS озвучивает только body.
+_CORRECTION_LINE_RE = re.compile(
+    r"^\s*Correction\s*:\s*(.+?)\s*\n\s*\n+(.+)\Z",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _split_correction(reply: str) -> tuple[Optional[str], str]:
+    """Возвращает (correction, body). Если структуры нет — (None, reply)."""
+    if not reply:
+        return None, reply or ""
+    m = _CORRECTION_LINE_RE.match(reply)
+    if not m:
+        return None, reply.strip()
+    correction = m.group(1).strip()
+    body = m.group(2).strip()
+    if not correction or not body:
+        return None, reply.strip()
+    # Защита от вырожденных случаев — если correction слишком длинный,
+    # это, скорее всего, не correction, а первая строка ответа.
+    if len(correction) > 200:
+        return None, reply.strip()
+    return correction, body
+
+
+async def _load_learner_context(limits_ctx) -> tuple[Optional[dict], Optional[str]]:
+    """Тянем из БД recent_vocab + recent_mistakes + learning_goal.
+
+    Возвращает (learner_context_dict, learning_goal). Best-effort: при
+    отсутствии БД / любой ошибке — (None, None), тогда build_system_prompt
+    просто не подмешает дополнительные секции.
+    """
+    if limits_ctx is None:
+        return None, None
+    try:
+        from .db import Repo, db_session
+    except Exception:
+        return None, None
+    try:
+        async with db_session() as session:
+            repo = Repo(session)
+            ctx = await repo.get_learner_context(limits_ctx.user_db_id)
+            user = await repo.get_user_by_id(limits_ctx.user_db_id)
+            goal = user.learning_goal if user else None
+            return ctx, goal
+    except Exception as exc:
+        logger.warning("[voice] не смог загрузить learner_context: %s", exc)
+        return None, None
 
 
 def _is_russian_utterance(text: str) -> bool:
@@ -248,8 +352,15 @@ async def _run_chat_session(
                 logger.error("[chat] LLM сбой: %s", exc, exc_info=True)
                 reply = "I'm having trouble right now. Let's try again in a moment."
 
+            # Debug: видим что отдал LLM до парсинга — без этого непонятно,
+            # выводит ли он "Correction:" вообще или нет.
+            logger.warning("[chat] llm_reply_raw: %s", (reply or "")[:200])
+            correction, body = _split_correction(reply)
+            if correction:
+                logger.warning("[chat] correction extracted: %s", correction)
+
             history.append({"role": "user", "text": user_text})
-            history.append({"role": "assistant", "text": reply})
+            history.append({"role": "assistant", "text": body})
             if len(history) > MAX_HISTORY_TURNS * 2:
                 del history[: len(history) - MAX_HISTORY_TURNS * 2]
 
@@ -261,9 +372,10 @@ async def _run_chat_session(
                 await websocket.send_json({
                     "type": "text",
                     "role": "tutor",
-                    "text": reply,
+                    "text": body,
+                    "correction": correction,
                 })
-            logger.warning("[chat] tutor: %s", reply[:120])
+            logger.warning("[chat] tutor: %s", body[:120])
     except WebSocketDisconnect:
         pass
     except Exception as exc:
@@ -276,6 +388,14 @@ async def _run_chat_session(
             except asyncio.CancelledError:
                 pass
         duration_sec = int(asyncio.get_event_loop().time() - chat_session_start)
+        asyncio.create_task(_bump_streak_after_session(
+            limits_ctx=limits_ctx,
+            duration_sec=duration_sec,
+            role=session_settings.role,
+        ))
+        asyncio.create_task(_capture_session_recap_hook(
+            limits_ctx=limits_ctx, history=list(history), duration_sec=duration_sec,
+        ))
         if limits_ctx is not None:
             asyncio.create_task(_check_quest_after_session(
                 limits_ctx=limits_ctx,
@@ -301,7 +421,15 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
 
     # Настройки сессии (уровень, роль, длина, исправления) — из query-параметров WS.
     session_settings = SessionSettings.from_query(dict(websocket.query_params))
-    system_prompt = build_system_prompt(session_settings)
+    # Контекст учащегося (recent_vocab + recent_mistakes за неделю)
+    # и onboarding-цель — best-effort. Если БД нет / запрос упал —
+    # сессия идёт без подмеса.
+    learner_context, learning_goal = await _load_learner_context(limits_ctx)
+    system_prompt = build_system_prompt(
+        session_settings,
+        learner_context=learner_context,
+        learning_goal=learning_goal,
+    )
     logger.warning(
         "[voice] настройки: level=%s role=%s length=%s corrections=%s mode=%s%s",
         session_settings.level,
@@ -466,22 +594,142 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                 "text": text,
             })
 
+        # Streaming LLM → TTS по предложениям.
+        # ─────────────────────────────────────────────────────────────
+        # Запускаем фоновый TTS-worker, который последовательно
+        # синтезирует предложения из очереди. Параллельно собираем
+        # токены LLM в sentence_buffer; на каждой границе (.!? или \n)
+        # передаём готовое предложение в очередь. Это сокращает latency
+        # «EOU → первый звук тьютора» с ~2.5 до ~0.8 сек.
+        sentence_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+        async def tts_worker() -> None:
+            while True:
+                sentence = await sentence_queue.get()
+                if sentence is None:
+                    return
+                if not sentence.strip():
+                    continue
+                try:
+                    await _send_tts_to_ws(websocket, tts, sentence)
+                except Exception as exc:
+                    logger.error("[TTS] worker error: %s", exc)
+
+        worker_task = asyncio.create_task(tts_worker())
+
+        full_reply = ""
+        # Буфер «головы» ответа до момента, когда понятно: с Correction: или без.
+        head_resolved = False
+        # Если correction есть — собираем body отдельно и стримим только его.
+        sentence_buffer = ""
+        correction_text: Optional[str] = None
+        timed_out = False
+        # Флаг — отправили ли уже хотя бы одно предложение в TTS. Нужен для
+        # минимального размера первого куска (см. ниже).
+        first_chunk_sent = False
+
         try:
-            reply = await _llm_complete_with_timeout(
-                llm,
+            stream = llm.stream(
                 user_text=text,
                 history=history,
                 system_prompt=system_prompt,
             )
-        except asyncio.TimeoutError:
-            logger.error("LLM timeout %dс", app_settings.LLM_TIMEOUT_SEC)
-            reply = LLM_TIMEOUT_FALLBACK_EN
+            timeout = app_settings.LLM_TIMEOUT_SEC
+            deadline = asyncio.get_event_loop().time() + (timeout or 60)
+            async for delta in stream:
+                if timeout and asyncio.get_event_loop().time() > deadline:
+                    timed_out = True
+                    logger.error("[voice] LLM stream timeout %dс", timeout)
+                    break
+                full_reply += delta
+                if not head_resolved:
+                    # До этого момента ничего не отправляем в TTS.
+                    if _starts_with_correction(full_reply):
+                        # Ждём конец Correction-строки (\n\n) — потом
+                        # отрезаем correction и стартуем стрим body.
+                        corr, body_head = _try_extract_streaming_correction(full_reply)
+                        if corr is not None:
+                            correction_text = corr
+                            sentence_buffer = body_head or ""
+                            head_resolved = True
+                        # иначе ждём дальше
+                    elif len(full_reply) >= _CORRECTION_DETECT_HEAD:
+                        # 20+ символов накопилось без префикса "Correction:" —
+                        # точно нет. Стартуем стрим с full_reply.
+                        sentence_buffer = full_reply
+                        head_resolved = True
+                    # иначе — ждём ещё несколько токенов чтобы решить
+                else:
+                    sentence_buffer += delta
+
+                if head_resolved:
+                    # Извлекаем все полные предложения, какие есть в буфере.
+                    while True:
+                        m = _SENTENCE_END_RE.search(sentence_buffer)
+                        if not m:
+                            break
+                        cut = m.end()
+                        # Минимальный размер первого куска — чтобы TTS не
+                        # дёргался на «Hi.» (одно слово ≈ 0.3 сек звука).
+                        if not first_chunk_sent and cut < _MIN_FIRST_TTS_CHUNK:
+                            break
+                        sentence = sentence_buffer[:cut].strip()
+                        sentence_buffer = sentence_buffer[cut:]
+                        if sentence:
+                            await sentence_queue.put(sentence)
+                            first_chunk_sent = True
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            logger.error("LLM сбой: %s", exc, exc_info=True)
-            reply = "I'm having trouble right now. Let's try again in a moment."
+            logger.error("[voice] LLM stream сбой: %s", exc, exc_info=True)
+
+        # Конец LLM-стрима (или таймаут / ошибка).
+        if timed_out and not full_reply.strip():
+            # Полный фейл — даём fallback в TTS.
+            full_reply = LLM_TIMEOUT_FALLBACK_EN
+            sentence_buffer = LLM_TIMEOUT_FALLBACK_EN
+            head_resolved = True
+
+        if not head_resolved:
+            # LLM выдал слишком мало (< 20 символов) и закончил —
+            # это весь ответ, стримить нечего, просто отдаём.
+            if _starts_with_correction(full_reply):
+                # Используем финальный _split_correction, body тут уже точно
+                # есть (или нет — тогда отправим всё как есть).
+                corr, body = _split_correction(full_reply)
+                correction_text = corr
+                sentence_buffer = body if corr else full_reply
+            else:
+                sentence_buffer = full_reply
+            head_resolved = True
+
+        # Отдаём остаток (последнее предложение без точки в конце).
+        if sentence_buffer.strip():
+            await sentence_queue.put(sentence_buffer.strip())
+
+        # Сигнал worker'у завершиться и дождаться TTS всех предложений.
+        await sentence_queue.put(None)
+        try:
+            await worker_task
+        except Exception as exc:
+            logger.warning("[TTS] worker exited with: %s", exc)
+
+        # Финальный текст для UI и истории. Для надёжности применяем
+        # _split_correction ещё раз к полному reply (стримовое решение
+        # могло пропустить trailing whitespace).
+        logger.warning("[voice] llm_reply_raw: %s", (full_reply or "")[:200])
+        correction_final, body_final = _split_correction(full_reply)
+        # Если в стриминге нашли correction — он точнее (учитывался по мере
+        # появления \n\n), используем его. Иначе берём финальный.
+        if correction_text:
+            correction_final = correction_text
+        if not body_final:
+            body_final = full_reply
+        if correction_final:
+            logger.warning("[voice] correction extracted: %s", correction_final)
 
         history.append({"role": "user", "text": text})
-        history.append({"role": "assistant", "text": reply})
+        history.append({"role": "assistant", "text": body_final})
         if len(history) > MAX_HISTORY_TURNS * 2:
             del history[: len(history) - MAX_HISTORY_TURNS * 2]
 
@@ -489,11 +737,9 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
             await websocket.send_json({
                 "type": "text",
                 "role": "tutor",
-                "text": reply,
+                "text": body_final,
+                "correction": correction_final,
             })
-
-        # Синтез и стриминг PCM 24kHz в браузер
-        await send_tts(reply)
 
     async def process_stt() -> None:
         """
@@ -607,6 +853,16 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
         await asyncio.gather(*pending, return_exceptions=True)
     finally:
         duration_sec = int(asyncio.get_event_loop().time() - session_start)
+        # Streak: фиксируем сегодняшнюю практику + последнюю роль.
+        asyncio.create_task(_bump_streak_after_session(
+            limits_ctx=limits_ctx,
+            duration_sec=duration_sec,
+            role=session_settings.role,
+        ))
+        # Recap: vocabulary + mistakes из транскрипта (LLM-анализ).
+        asyncio.create_task(_capture_session_recap_hook(
+            limits_ctx=limits_ctx, history=list(history), duration_sec=duration_sec,
+        ))
         # Daily Quest: проверяем выполнение квеста по транскрипту сессии.
         if limits_ctx is not None:
             asyncio.create_task(_check_quest_after_session(
@@ -616,6 +872,79 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                 duration_sec=duration_sec,
             ))
         logger.warning("[voice] сессия завершена для %s (%dс)", websocket.client, duration_sec)
+
+
+# ─── Hook после сессии: streak + recap ────────────────────────────────
+
+# Минимальная длительность сессии, чтобы засчитать день для стрика.
+# Защищает от накрутки секундными подключениями.
+STREAK_MIN_DURATION_SEC = 30
+
+# Минимальная длительность сессии для recap-захвата (LLM-анализ дороже стоит).
+RECAP_MIN_DURATION_SEC = 60
+
+
+async def _capture_session_recap_hook(*, limits_ctx, history: list[dict], duration_sec: int) -> None:
+    """LLM-анализ транскрипта → user_vocabulary + user_mistakes.
+    Best-effort, никогда не пробрасывает исключения."""
+    if limits_ctx is None or duration_sec < RECAP_MIN_DURATION_SEC:
+        return
+    if not history:
+        return
+    try:
+        from . import session_recap
+        from .db import db_session
+    except Exception as exc:
+        logger.warning("[voice][recap] не могу импортировать: %s", exc)
+        return
+    try:
+        async with db_session() as session:
+            await session_recap.capture_session_recap(
+                session,
+                user_db_id=limits_ctx.user_db_id,
+                history=list(history),
+            )
+            await session.commit()
+    except Exception as exc:
+        logger.warning("[voice][recap] capture failed: %s", exc)
+
+
+async def _bump_streak_after_session(
+    *, limits_ctx, duration_sec: int, role: Optional[str] = None,
+) -> None:
+    """Зафиксировать сегодняшнюю практику и обновить стрик. Вызывается
+    из finally в run_voice_session / _run_chat_session.
+
+    `role` — роль из SessionSettings.role; записывается в
+    users.last_session_role для умной выдачи role-quest в quests.py.
+
+    Тихо завершается, если:
+      - limits_ctx None (нет привязки к юзеру в БД);
+      - сессия была короче STREAK_MIN_DURATION_SEC;
+      - БД недоступна.
+    """
+    if limits_ctx is None:
+        return
+    if duration_sec < STREAK_MIN_DURATION_SEC:
+        return
+    try:
+        from .db import Repo, db_session
+    except Exception as exc:
+        logger.warning("[voice][streak] не могу импортировать БД: %s", exc)
+        return
+    try:
+        async with db_session() as session:
+            repo = Repo(session)
+            current, best = await repo.bump_streak(
+                limits_ctx.user_db_id, role=role,
+            )
+            await session.commit()
+        logger.info(
+            "[voice][streak] user_db_id=%s streak=%d best=%d role=%s",
+            limits_ctx.user_db_id, current, best, role,
+        )
+    except Exception as exc:
+        logger.warning("[voice][streak] bump failed: %s", exc)
 
 
 # ─── Hook после сессии: проверка Daily Quest ─────────────────────────────
@@ -652,6 +981,10 @@ async def _check_quest_after_session(
         logger.info("[voice][quest-hook] пустой транскрипт и роль не ролевая — пропускаем")
         return
 
+    logger.info(
+        "[voice][quest-hook] verify start: user_db_id=%s role=%s duration=%ds transcript_len=%d",
+        limits_ctx.user_db_id, role, duration_sec, len(user_text),
+    )
     try:
         async with db_session() as s:
             result = await quests_mod.verify_session(

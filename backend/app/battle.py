@@ -56,6 +56,12 @@ class BattleAccepted:
     side_a_ru: str   # что делать юзеру A
     side_b_ru: str   # что делать юзеру B
     prompt_en: str   # инструкция на английском (одинаковая)
+    # Куда было отправлено исходное chat-сообщение с кнопкой «Принять» —
+    # нужно, чтобы бот мог его перерисовать, в т.ч. когда accept происходит
+    # не через callback в чате (например, через /start deep-link).
+    inline_message_id: Optional[str] = None
+    chat_id: Optional[int] = None
+    chat_message_id: Optional[int] = None
 
 
 @dataclass
@@ -163,7 +169,119 @@ async def accept_battle(
         side_a_ru=topic.side_a_ru,
         side_b_ru=topic.side_b_ru,
         prompt_en=topic.prompt_en,
+        inline_message_id=battle.inline_message_id,
+        chat_id=battle.chat_id,
+        chat_message_id=battle.chat_message_id,
     )
+
+
+async def revanche(
+    s: AsyncSession,
+    *,
+    old_battle_id: int,
+    requester_tg_id: int,
+) -> Optional[BattleAccepted]:
+    """Реванш: создать новый battle с теми же двумя участниками сразу
+    в статусе 'accepted'. requester_tg_id становится initiator'ом нового
+    battle (это и логично — кто инициировал реванш).
+
+    Условия:
+      - Старый battle существует и в статусе 'judged'.
+      - requester_tg_id — один из двух участников.
+      - Новая тема выбирается случайно (как и при обычном create).
+
+    Возвращает BattleAccepted (с новой темой) или None при отказе.
+    """
+    res = await s.execute(select(Battle).where(Battle.id == old_battle_id))
+    old = res.scalar_one_or_none()
+    if old is None:
+        log.warning("[battle] revanche: old not found id=%s", old_battle_id)
+        return None
+    if old.status != "judged":
+        log.info(
+            "[battle] revanche: old not judged id=%s status=%s",
+            old_battle_id, old.status,
+        )
+        return None
+    a, b = old.initiator_tg_id, old.opponent_tg_id
+    if requester_tg_id not in (a, b) or not b:
+        log.warning(
+            "[battle] revanche: requester %s not in old battle %s",
+            requester_tg_id, old_battle_id,
+        )
+        return None
+
+    # Инициатор реванша — тот, кто нажал кнопку.
+    new_initiator = requester_tg_id
+    new_opponent = a if requester_tg_id == b else b
+
+    topic = battle_topics.pick_random()
+    now = utcnow()
+    new_battle = Battle(
+        initiator_tg_id=new_initiator,
+        opponent_tg_id=new_opponent,
+        # Реваншевый battle публикуется в тот же чат, что и оригинал.
+        chat_id=old.chat_id,
+        chat_message_id=None,
+        inline_message_id=None,
+        topic_key=topic.key,
+        status="accepted",  # сразу принят: оба уже играли, accept не нужен
+        created_at=now,
+        updated_at=now,
+        expires_at=now + timedelta(hours=24),
+    )
+    s.add(new_battle)
+    await s.flush()
+    log.info(
+        "[battle] revanche created id=%s from old=%s initiator=%s opponent=%s topic=%s",
+        new_battle.id, old_battle_id, new_initiator, new_opponent, topic.key,
+    )
+    return BattleAccepted(
+        id=new_battle.id,
+        topic_key=topic.key,
+        initiator_tg_id=new_initiator,
+        opponent_tg_id=new_opponent,
+        side_a_ru=topic.side_a_ru,
+        side_b_ru=topic.side_b_ru,
+        prompt_en=topic.prompt_en,
+        inline_message_id=None,
+        chat_id=old.chat_id,
+        chat_message_id=None,
+    )
+
+
+async def revert_accept(
+    s: AsyncSession,
+    *,
+    battle_id: int,
+    opponent_tg_id: int,
+) -> bool:
+    """Откатить accept до 'open': бот не смог доставить ЛС оппоненту,
+    значит делаем вид, что accept не случился.
+
+    Безопасно только если:
+      - battle в статусе 'accepted'
+      - opponent_tg_id совпадает с тем, кто принимал
+      - никто ещё не записал аудио (a_audio_path/b_audio_path пустые)
+
+    Возвращает True если откатили, False если нечего откатывать.
+    """
+    res = await s.execute(select(Battle).where(Battle.id == battle_id))
+    battle = res.scalar_one_or_none()
+    if battle is None:
+        return False
+    if battle.status != "accepted":
+        return False
+    if battle.opponent_tg_id != opponent_tg_id:
+        return False
+    if battle.a_audio_path or battle.b_audio_path:
+        return False
+    battle.status = "open"
+    battle.opponent_tg_id = None
+    battle.updated_at = utcnow()
+    await s.flush()
+    log.info("[battle] revert_accept id=%s opp=%s", battle_id, opponent_tg_id)
+    return True
 
 
 async def attach_recording(

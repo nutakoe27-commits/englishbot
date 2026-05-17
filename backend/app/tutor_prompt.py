@@ -14,7 +14,7 @@ WebSocket и определяют поведение собеседника:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 
 # ─── Типы и дефолты ──────────────────────────────────────────────────────────
@@ -157,16 +157,48 @@ _LENGTH_GUIDANCE: dict[str, str] = {
     ),
 }
 
-_CORRECTION_ON = (
-    "If the learner made a grammar, word-choice, or pronunciation mistake "
-    "in their last message, begin your reply with one VERY short correction on "
-    "its own line, in this exact format:\n"
-    "  Correction: <the corrected version of what they tried to say>\n"
-    "Then leave a blank line and continue naturally with your in-character reply. "
-    "Do NOT explain the grammar rule — just show the corrected phrase. "
-    "If there was no meaningful mistake, skip the Correction line entirely "
-    "and reply normally."
-)
+_CORRECTION_ON = """When the learner makes a clear grammar, word-form,
+word-choice, or word-order mistake — point it out using THIS EXACT format
+at the very start of your reply:
+
+  Correction: <the corrected version of what they tried to say>
+
+  <your normal in-character reply>
+
+Strict format rules:
+1. The first line MUST start with the literal token "Correction:" (capital C, colon, single space).
+2. After the corrected phrase, leave ONE blank line (i.e. two newline characters), THEN your in-character reply.
+3. Keep the corrected phrase short (≤ 12 words). It is the WHOLE corrected
+   utterance, not a grammar lecture. No quotes, no asterisks, no markdown.
+4. If there is NO clear mistake (or the message is already fine, or it's a
+   greeting / one-word reply) — DO NOT include the Correction line. Just
+   reply naturally as your character.
+5. NEVER repeat the learner's full original sentence anywhere in your reply.
+   The Correction line is the ONLY place a fixed version appears. Your
+   in-character reply must move the conversation forward — comment on what
+   they said, ask a follow-up, react. Do NOT echo their words back.
+6. NEVER include "Correction:" or any reformulation of the learner's
+   message inside your in-character reply. One Correction per turn, and
+   only on its own first line.
+
+Examples (follow these EXACTLY):
+
+Learner: "Yesterday I go to the doctor."
+You:
+Correction: Yesterday I went to the doctor.
+
+Oh, what happened? Were you feeling sick?
+
+Learner: "My lag is pain."
+You:
+Correction: My leg hurts.
+
+That sounds rough. When did it start?
+
+Learner: "Hi, how are you?"
+You:
+Hey. Doing fine. What about you?
+"""
 
 _CORRECTION_OFF = (
     "Do NOT explicitly correct the learner's mistakes. "
@@ -175,8 +207,119 @@ _CORRECTION_OFF = (
 )
 
 
-def build_system_prompt(s: SessionSettings) -> str:
-    """Собирает финальный system-промпт из настроек сессии."""
+_GOAL_HINTS: dict[str, str] = {
+    "travel": (
+        "When the topic naturally allows, weave in travel-relevant vocabulary "
+        "(airports, hotels, ordering food abroad, navigating cities, asking "
+        "for help in a new place). Don't force it — only when it fits."
+    ),
+    "work": (
+        "When the topic naturally allows, lean into work-context vocabulary "
+        "(meetings, deadlines, polite disagreement, professional small talk, "
+        "feedback). Don't force it — only when it fits."
+    ),
+    "daily": (
+        "Lean into everyday small-talk vocabulary (weekend plans, weather, "
+        "food, household, friends, opinions on light topics). Keep it casual."
+    ),
+    "exam": (
+        "The learner is preparing for an English exam (IELTS/TOEFL-style). "
+        "When fitting, use exam-style topics (education, environment, society, "
+        "technology) and richer phrasing — but stay conversational, not formal."
+    ),
+    "fun": (
+        "The learner is just curious. Keep things light and varied — bring "
+        "interesting topics yourself if conversation stalls (films, hobbies, "
+        "weird news, opinions). Don't be too utilitarian."
+    ),
+}
+
+
+def _build_goal_block(learning_goal: Optional[str]) -> Optional[str]:
+    if not learning_goal:
+        return None
+    hint = _GOAL_HINTS.get(learning_goal.strip().lower())
+    if not hint:
+        return None
+    return "Learner goal: " + hint
+
+
+def _build_learner_context_block(learner_context: Optional[dict]) -> Optional[str]:
+    """Опциональная секция в системном промпте: словарь и ошибки последних
+    сессий. Тьютор должен мягко переиспользовать слова и подкидывать
+    корректные конструкции (без лекции про грамматику).
+
+    Учитывает три источника:
+      - user_words: слова, которые юзер САМ добавил через Mini App
+        («Мои слова»). Высший приоритет: тьютор должен активно вкручивать
+        их в разговор — юзер ради этого их и добавил.
+      - recent_vocab: слова, которые тьютор вводил в прошлых разговорах.
+        Reuse без давления.
+      - recent_mistakes: повторяющиеся ошибки — мягкое модальное
+        переформулирование.
+
+    Если ни одного источника нет — возвращаем None, ничего не подмешиваем.
+    """
+    if not learner_context:
+        return None
+    user_words = learner_context.get("user_words") or []
+    vocab = learner_context.get("recent_vocab") or []
+    mistakes = learner_context.get("recent_mistakes") or []
+    if not user_words and not vocab and not mistakes:
+        return None
+
+    lines: list[str] = ["Learner context (from previous sessions):"]
+    if user_words:
+        # user_words приходит уже как list[str] из repo.get_user_words_for_prompt.
+        lines.append(
+            "- Words the learner ACTIVELY WANTS to practice "
+            "(reuse them naturally during the conversation — this is the top "
+            "priority, the learner picked them on purpose): "
+            + ", ".join(user_words[:10])
+        )
+    if vocab:
+        words = [v.get("word") for v in vocab if v.get("word")]
+        if words:
+            lines.append(
+                "- Words/phrases recently practised (gently reuse them when natural, "
+                "don't force): " + ", ".join(words[:15])
+            )
+    if mistakes:
+        # Группируем по категории и считаем — даём LLM «patterns to reinforce».
+        from collections import Counter
+        cats = Counter((m.get("category") or "other") for m in mistakes)
+        cat_summary = ", ".join(f"{cat} (×{cnt})" for cat, cnt in cats.most_common())
+        lines.append(f"- Patterns the learner often gets wrong: {cat_summary}")
+        # Конкретные примеры — самые свежие 3.
+        examples = []
+        for m in mistakes[:3]:
+            bad = m.get("bad")
+            good = m.get("good")
+            if bad and good:
+                examples.append(f'  "{bad}" → "{good}"')
+        if examples:
+            lines.append("- Recent miscorrections to gently model again:")
+            lines.extend(examples)
+    lines.append(
+        "Weave these into the conversation when they fit naturally. NEVER lecture "
+        "about grammar or list vocabulary explicitly — just expose the learner to "
+        "correct usage in real speech."
+    )
+    return "\n".join(lines)
+
+
+def build_system_prompt(
+    s: SessionSettings,
+    *,
+    learner_context: Optional[dict] = None,
+    learning_goal: Optional[str] = None,
+) -> str:
+    """Собирает финальный system-промпт из настроек сессии.
+
+    `learner_context` — опциональный dict {recent_vocab, recent_mistakes}
+    из Repo.get_learner_context(). Подмешивается отдельной секцией если есть.
+    `learning_goal` — `users.learning_goal` ("travel"|"work"|"daily"|"exam"|"fun").
+    """
     parts: list[str] = []
 
     parts.append(
@@ -187,6 +330,14 @@ def build_system_prompt(s: SessionSettings) -> str:
     parts.append(_LEVEL_GUIDANCE[s.level])
     parts.append(_LENGTH_GUIDANCE[s.length])
     parts.append(_CORRECTION_ON if s.corrections else _CORRECTION_OFF)
+
+    goal_block = _build_goal_block(learning_goal)
+    if goal_block:
+        parts.append(goal_block)
+
+    learner_block = _build_learner_context_block(learner_context)
+    if learner_block:
+        parts.append(learner_block)
 
     # Ученик может писать/говорить на любом языке (Whisper в auto, текстовый ввод
     # вообще без языковых ограничений). Но тьютор всегда отвечает по-английски.

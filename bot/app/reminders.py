@@ -55,6 +55,13 @@ class _User(_Base):
     reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # Миграция 0004 — стрик и онбординг-цель.
+    streak_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    best_streak_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_practice_date: Mapped[Optional[date]] = mapped_column(Date)
+    learning_goal: Mapped[Optional[str]] = mapped_column(String(32))
+    # Миграция 0005 — роль из последней сессии для умной выдачи role-quest.
+    last_session_role: Mapped[Optional[str]] = mapped_column(String(64))
 
 
 class _DailyUsage(_Base):
@@ -266,6 +273,28 @@ async def get_user_reminder(tg_id: int) -> Optional[tuple[bool, int]]:
         return bool(u.reminder_enabled), int(h)
 
 
+async def set_user_learning_goal(tg_id: int, goal: Optional[str]) -> bool:
+    """Сохранить onboarding-цель (`travel|work|daily|exam|fun`) или None.
+
+    Возвращает True если апдейт прошёл, False если юзер ещё не создан в БД
+    (нужно сначала открыть Mini App один раз для upsert) или БД недоступна.
+    """
+    if not is_db_ready():
+        return False
+    assert _SessionMaker is not None
+    g = (goal or "").strip().lower() or None
+    if g and g not in ("travel", "work", "daily", "exam", "fun"):
+        return False
+    async with _SessionMaker() as s:
+        res = await s.execute(
+            update(_User)
+            .where(_User.tg_id == tg_id)
+            .values(learning_goal=g, updated_at=datetime.utcnow())
+        )
+        await s.commit()
+    return (res.rowcount or 0) > 0
+
+
 async def set_user_reminder(
     tg_id: int,
     *,
@@ -443,6 +472,10 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
                 "quests_completed_total": quests_completed_total,
                 "quests_completed_7d": quests_completed_7d,
                 "quest_active_title": quest_active_title,
+                "streak_days": int(u.streak_days or 0),
+                "best_streak_days": int(u.best_streak_days or 0),
+                "last_practice_date": u.last_practice_date,
+                "learning_goal": u.learning_goal,
             }
     except Exception as exc:
         logger.warning("[profile] get_user_profile упал: %s", exc)

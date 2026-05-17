@@ -22,10 +22,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select, update
@@ -36,6 +37,32 @@ from .db.models import DailyUsage, QuestCatalog, User, UserQuest
 from .db.repo import msk_today, utcnow
 
 log = logging.getLogger(__name__)
+
+# Час МСК, на котором начинается новый «квестовый цикл». Совпадает с
+# QUEST_DEFAULT_PUSH_HOUR_MSK в bot/app/reminders.py — это время утреннего
+# push'а с новым квестом. Квест, выданный в любой момент дня, живёт до
+# наступления этого часа на следующий день — а не «ровно 24ч от выдачи».
+QUEST_RESET_HOUR_MSK = int(os.getenv("QUEST_RESET_HOUR_MSK", "9"))
+
+_MSK = timezone(timedelta(hours=3))
+
+
+def _last_quest_cutoff(now_utc: datetime) -> datetime:
+    """UTC-момент последнего наступления QUEST_RESET_HOUR_MSK МСК.
+
+    Если now_msk >= reset_hour сегодня — возвращаем сегодня в reset_hour МСК.
+    Иначе вчера в reset_hour МСК. Квесты с assigned_at < этого момента
+    считаются «прошлой смены» и должны expire.
+    """
+    # naive UTC → aware UTC → MSK
+    now_aware = now_utc.replace(tzinfo=timezone.utc) if now_utc.tzinfo is None else now_utc
+    now_msk = now_aware.astimezone(_MSK)
+    today_reset_msk = now_msk.replace(
+        hour=QUEST_RESET_HOUR_MSK, minute=0, second=0, microsecond=0,
+    )
+    cutoff_msk = today_reset_msk if now_msk >= today_reset_msk else today_reset_msk - timedelta(days=1)
+    cutoff_utc = cutoff_msk.astimezone(timezone.utc).replace(tzinfo=None)
+    return cutoff_utc
 
 
 # ─── Эвристики проверки по транскрипту ────────────────────────────────
@@ -191,20 +218,18 @@ async def assign_daily_quest(
     """Выдать юзеру новый квест, если нет активного.
 
     Логика подбора:
-      1. Если уже есть активный (не completed, не expired) — вернуть его, новый не выдаём.
-      2. Исключить квесты, которые юзер уже выполнил (completed_at не NULL).
-      3. Фильтр по уровню: совпадающий или any.
-      4. Случайный из оставшихся.
+      1. Сначала expire'им любые висящие квесты, выданные до последнего
+         утреннего push'а (QUEST_RESET_HOUR_MSK МСК). Так квест живёт до
+         следующего утреннего цикла, а не «ровно 24ч от выдачи».
+      2. Если уже есть свежий активный (не completed, не expired) — вернуть его.
+      3. Исключить квесты, которые юзер уже выполнил.
+      4. Фильтр по уровню: совпадающий или any.
+      5. Случайный из оставшихся.
 
     Возвращает ActiveQuest, либо None если пул исчерпан.
     """
-    # 1) Активный
-    existing = await get_active_quest(s, user_id)
-    if existing is not None:
-        return existing
-
-    # 2) Помечаем старые незавершённые как expired (assigned > 24ч назад)
-    cutoff = utcnow() - timedelta(hours=24)
+    # 1) Просрочиваем висящие квесты прошлого «утреннего цикла».
+    cutoff = _last_quest_cutoff(utcnow())
     await s.execute(
         update(UserQuest)
         .where(
@@ -216,6 +241,11 @@ async def assign_daily_quest(
         .values(expired_at=utcnow())
     )
 
+    # 2) Свежий активный — отдаём как есть.
+    existing = await get_active_quest(s, user_id)
+    if existing is not None:
+        return existing
+
     # 3) Список ключей, которые юзер УЖЕ выполнил
     done_res = await s.execute(
         select(UserQuest.quest_key).where(
@@ -226,22 +256,82 @@ async def assign_daily_quest(
     done_keys = {row[0] for row in done_res.all()}
 
     # 4) Кандидаты из каталога
-    level_filter = [QuestCatalog.target_level == "any"]
-    if user_level in ("A2", "B1", "B2", "C1"):
-        level_filter.append(QuestCatalog.target_level == user_level)
-
     from sqlalchemy import or_
 
-    cand_res = await s.execute(
-        select(QuestCatalog).where(
-            QuestCatalog.is_active.is_(True),
-            or_(*level_filter),
+    base_stmt = select(QuestCatalog).where(QuestCatalog.is_active.is_(True))
+    if user_level in ("A2", "B1", "B2", "C1"):
+        # Юзер с известным уровнем — даём ему квесты под уровень + any.
+        base_stmt = base_stmt.where(
+            or_(
+                QuestCatalog.target_level == "any",
+                QuestCatalog.target_level == user_level,
+            )
         )
+    # Если user_level не задан (например, /quest из бота — там нет уровня) —
+    # НЕ фильтруем по target_level. Иначе квестов с target_level='any' в
+    # каталоге всего 2 (role_barista, role_friend), оба отфильтровываются
+    # позже по role-несовпадению и пул становится пустой.
+
+    cand_res = await s.execute(base_stmt)
+
+    # Тянем роль из последней сессии — для умной выдачи role-квестов.
+    # role-quest требует конкретную роль (barista/doctor/...); если выдать
+    # юзеру квест под чужую роль, verify никогда не пройдёт. Если роль
+    # юзера ещё не зафиксирована (last_session_role IS NULL) — не выдаём
+    # role-квесты вообще, пусть получит lexical/grammar.
+    role_res = await s.execute(
+        select(User.last_session_role).where(User.id == user_id)
     )
-    candidates = [c for c in cand_res.scalars().all() if c.key not in done_keys]
+    last_role = role_res.scalar_one_or_none()
+
+    def _is_compatible(quest: QuestCatalog) -> bool:
+        if quest.key in done_keys:
+            return False
+        if quest.type != "role":
+            return True
+        rule_role = (quest.verification_rule or {}).get("role")
+        if not rule_role:
+            return True  # role-quest без обязательной роли — выдаём всем
+        if not last_role:
+            return False  # роль ещё неизвестна — пропускаем role-quest
+        return rule_role == last_role
+
+    candidates = [c for c in cand_res.scalars().all() if _is_compatible(c)]
+
+    # Fallback: если все совместимые квесты уже выполнены (completed_at стоит),
+    # разрешаем повторное прохождение. Иначе юзер на дефолтной роли
+    # `language_partner` (где нет role-квестов под него в каталоге) и с
+    # полностью пройденными lex/grammar получает «Не удалось получить квест».
+    # Лучше дать ему пройти любимый квест ещё раз, чем заблокировать /quest.
+    if not candidates:
+        log.info(
+            "[quests] user_id=%s — completed-пул пуст, разрешаю повтор (last_role=%s)",
+            user_id, last_role,
+        )
+
+        def _is_compatible_replay(quest: QuestCatalog) -> bool:
+            # То же что _is_compatible, но БЕЗ проверки done_keys.
+            if quest.type != "role":
+                return True
+            rule_role = (quest.verification_rule or {}).get("role")
+            if not rule_role:
+                return True
+            if not last_role:
+                return False
+            return rule_role == last_role
+
+        # Iterator из cand_res уже исчерпан — делаем повторный select
+        # с тем же level-фильтром, что и в основном проходе.
+        cand_res2 = await s.execute(base_stmt)
+        candidates = [
+            c for c in cand_res2.scalars().all() if _is_compatible_replay(c)
+        ]
 
     if not candidates:
-        log.info("[quests] user_id=%s — пул квестов исчерпан", user_id)
+        log.info(
+            "[quests] user_id=%s — пул квестов исчерпан (last_role=%s)",
+            user_id, last_role,
+        )
         return None
 
     chosen = random.choice(candidates)
@@ -251,8 +341,16 @@ async def assign_daily_quest(
         quest_key=chosen.key,
         assigned_at=now,
     )
-    # Не трогаем если ключ уже выдавался (UNIQUE user_id+quest_key)
-    stmt = stmt.on_duplicate_key_update(assigned_at=UserQuest.assigned_at)
+    # UNIQUE(user_id, quest_key): если эту пару уже выдавали (была expired
+    # или completed) — «оживляем» row. Обнуляем completed_at тоже: при
+    # fallback-replay (см. выше) переплачиваем юзеру право пройти квест
+    # ещё раз, иначе get_active_quest не вернёт row как активную.
+    stmt = stmt.on_duplicate_key_update(
+        assigned_at=now,
+        completed_at=None,
+        expired_at=None,
+        verification_data=None,
+    )
     await s.execute(stmt)
     await s.flush()
 

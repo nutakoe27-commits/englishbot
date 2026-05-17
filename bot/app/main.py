@@ -4,6 +4,7 @@ import os
 from typing import Optional
 
 from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     BotCommand,
@@ -34,6 +35,7 @@ from .reminders import (
     get_user_reminder,
     is_db_ready,
     reminders_loop,
+    set_user_learning_goal,
     set_user_reminder,
 )
 
@@ -48,6 +50,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN: str = os.environ["BOT_TOKEN"]
 MINIAPP_URL: str = os.getenv("MINIAPP_URL", "https://englishbot.krichigindocs.ru")
 
+# Username бота без @ — для построения deep-link'ов t.me/<bot>?start=...
+BOT_USERNAME: str = os.getenv("BOT_USERNAME", "kmo_ai_english_bot").lstrip("@")
+
 # Free Period — промо-период без оплаты. При FREE_PERIOD=1 бот скрывает
 # кнопки подписки, /subscribe возвращает уведомление вместо инвойса,
 # в /profile нет блока «оформить подписку», лимит 10 минут не показывается.
@@ -61,6 +66,32 @@ FREE_PERIOD_TEXT = (
     "и без подписки. Просто открой /start и нажми «🎤 Начать разговор».\n\n"
     "Когда промо-период закончится — мы напишем заранее."
 )
+
+# ─── Onboarding learning goal ─────────────────────────────────────────────
+# Цель изучения для подмеса в системный промпт тьютора. Пишется в
+# users.learning_goal (миграция 0004). Меняется через /goal.
+_GOAL_LABELS: dict[str, str] = {
+    "travel": "🌍 Путешествия",
+    "work": "💼 Работа / карьера",
+    "daily": "💬 Повседневное общение",
+    "exam": "🎓 Экзамен (IELTS/TOEFL)",
+    "fun": "✨ Просто интересно",
+}
+
+_GOAL_PROMPT_TEXT = (
+    "🎯 <b>Зачем тебе английский?</b>\n\n"
+    "Я подкину релевантную лексику и темы под твою цель. "
+    "Можно поменять в любой момент: /goal."
+)
+
+
+def _goal_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=label, callback_data=f"goal:{key}")]
+        for key, label in _GOAL_LABELS.items()
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 # Цены синхронизированы с settings_kv (DB) и LockScreen в mini app.
 # Источник истины сейчас — эти константы (бот не ходит в DB).
@@ -173,7 +204,31 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
             )
         return
 
+    # Deep-link из callback'а в чате: «/start battle_accept_<id>» — оппонент
+    # не открывал бота, был перенаправлен сюда; принимаем вызов от его имени.
+    if payload.startswith("battle_accept_"):
+        try:
+            battle_id = int(payload[len("battle_accept_"):])
+        except ValueError:
+            battle_id = 0
+        if battle_id > 0:
+            await _handle_start_battle_accept(message, battle_id)
+            return
+
     user_name = message.from_user.first_name if message.from_user else "друг"
+
+    # Если у юзера ещё не задана цель — после приветствия показываем
+    # goal-клавиатуру. Профиль может быть None (юзер ещё не открывал
+    # Mini App) — в этом случае тоже показываем (запишется при клике).
+    has_goal = False
+    if message.from_user:
+        try:
+            profile = await asyncio.wait_for(
+                get_user_profile(message.from_user.id), timeout=3.0,
+            )
+            has_goal = bool(profile and profile.get("learning_goal"))
+        except Exception:
+            has_goal = False
 
     await message.answer(
         text=(
@@ -189,6 +244,58 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
         parse_mode="HTML",
         reply_markup=_miniapp_keyboard(),
     )
+
+    # Onboarding-флоу: предлагаем выбрать цель. Не блокируем — это
+    # отдельное сообщение под основным приветствием.
+    if not has_goal:
+        await message.answer(
+            text=_GOAL_PROMPT_TEXT,
+            parse_mode="HTML",
+            reply_markup=_goal_keyboard(),
+        )
+
+
+# ─── /goal ───────────────────────────────────────────────────────────────────
+@dp.message(Command("goal"))
+async def cmd_goal(message: Message) -> None:
+    """Показать клавиатуру для смены onboarding-цели."""
+    await message.answer(
+        text=_GOAL_PROMPT_TEXT,
+        parse_mode="HTML",
+        reply_markup=_goal_keyboard(),
+    )
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("goal:"))
+async def cb_goal(callback: CallbackQuery) -> None:
+    if not callback.data or not callback.from_user:
+        await callback.answer()
+        return
+    key = callback.data.split(":", 1)[-1].strip().lower()
+    if key not in _GOAL_LABELS:
+        await callback.answer("Неизвестная цель", show_alert=True)
+        return
+    ok = await set_user_learning_goal(callback.from_user.id, key)
+    if not ok:
+        # Юзер ещё не upsert'нут в БД — попросим открыть Mini App один раз.
+        await callback.answer(
+            "Сначала открой Mini App — я тебя запомню, потом /goal сработает.",
+            show_alert=True,
+        )
+        return
+    await callback.answer(f"Записал: {_GOAL_LABELS[key]}")
+    if callback.message:
+        try:
+            await callback.message.edit_text(
+                text=(
+                    f"🎯 <b>Цель: {_GOAL_LABELS[key]}</b>\n\n"
+                    "Учту в следующей сессии — буду подкидывать релевантные "
+                    "слова и темы. Поменять цель — /goal."
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            logger.warning("[goal] edit msg fail: %s", exc)
 
 
 # ─── /guide ──────────────────────────────────────────────────────────────────
@@ -370,6 +477,19 @@ def _fmt_subscription_until(dt) -> str:
     return dt.strftime("%d.%m.%Y")
 
 
+def _pluralize_days(n: int) -> str:
+    """Русское склонение: 1 день / 2 дня / 5 дней."""
+    n_abs = abs(n) % 100
+    if 11 <= n_abs <= 14:
+        return "дней"
+    last = n_abs % 10
+    if last == 1:
+        return "день"
+    if 2 <= last <= 4:
+        return "дня"
+    return "дней"
+
+
 def _profile_keyboard(has_sub: bool) -> InlineKeyboardMarkup:
     rows = [
         [
@@ -430,6 +550,23 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
             "Нажми «🎤 Начать разговор» и запусти мини-апп.",
         ]
         return "\n".join(lines)
+
+    # Streak — главный мотиватор «вернись завтра».
+    streak_days = int(profile.get("streak_days") or 0)
+    best_streak = int(profile.get("best_streak_days") or 0)
+    if streak_days > 0:
+        if best_streak > streak_days:
+            streak_line = (
+                f"🔥 <b>Стрик: {streak_days}</b> "
+                f"{_pluralize_days(streak_days)} (рекорд {best_streak})"
+            )
+        else:
+            streak_line = (
+                f"🔥 <b>Стрик: {streak_days}</b> "
+                f"{_pluralize_days(streak_days)} — это твой рекорд!"
+            )
+        lines.append(streak_line)
+        lines.append("")
 
     # Подписка
     if FREE_PERIOD:
@@ -1070,7 +1207,7 @@ def _battle_miniapp_keyboard(battle_id: int, side: str) -> InlineKeyboardMarkup:
     InlineKeyboardButton.url — Telegram откроет Mini App с нужным payload.
     """
     start_param = f"battle_{battle_id}_{side}"
-    url = f"https://t.me/kmo_ai_english_bot?startapp={start_param}"
+    url = f"https://t.me/{BOT_USERNAME}?startapp={start_param}"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🎤 Записать ответ (60 сек)", url=url)],
@@ -1187,6 +1324,127 @@ async def on_inline_chosen(chosen: ChosenInlineResult) -> None:
         logger.warning("[battle] edit_message_text fail: %s", exc)
 
 
+async def _try_send_battle_dm(
+    *, tg_id: int, text: str, reply_markup: InlineKeyboardMarkup,
+) -> bool:
+    """Шлём ЛС участнику battle. True — доставлено, False — юзер не открывал
+    бота / заблокировал / chat not found.
+
+    TelegramForbiddenError — бот заблокирован или не запущен.
+    TelegramBadRequest — chat not found / bot can't initiate conversation.
+    """
+    try:
+        await bot.send_message(
+            chat_id=tg_id, text=text, parse_mode="HTML", reply_markup=reply_markup,
+        )
+        return True
+    except (TelegramForbiddenError, TelegramBadRequest) as exc:
+        logger.warning("[battle] DM to %s blocked/unreachable: %s", tg_id, exc)
+        return False
+    except Exception as exc:
+        logger.warning("[battle] DM to %s failed: %s", tg_id, exc)
+        return False
+
+
+async def _send_battle_dms_and_render_chat(
+    result: backend_client.BattleAcceptResult,
+    *,
+    inline_message_id: Optional[str] = None,
+    chat_id: Optional[int] = None,
+    chat_message_id: Optional[int] = None,
+) -> bool:
+    """Общий хвост успешного accept: DM оппоненту → DM инициатору (best-effort)
+    → перерисовать chat-сообщение «принят». Используется и из callback'а
+    в чате, и из /start deep-link обработчика.
+
+    Возвращает True если ЛС оппоненту доставлено (вызов «жив»), False иначе —
+    тогда вызывающая сторона должна откатить accept.
+    """
+    initiator_display = await _display_name_for(result.initiator_tg_id)
+    opponent_display = await _display_name_for(result.opponent_tg_id)
+
+    dm_text_common = (
+        f"⚔️ <b>Battle #{result.id}</b>\n\n"
+        f"<b>Тема:</b> {result.topic_title_ru}\n"
+        f"<b>Вопрос:</b> <i>{result.prompt_en}</i>\n\n"
+    )
+    dm_to_opponent = (
+        dm_text_common
+        + f"<b>Соперник:</b> {initiator_display}\n"
+        + f"<b>Твоя позиция:</b> {result.side_b_ru}\n\n"
+        + "Открывай Mini App и записывай 60-секундный аргумент."
+    )
+    dm_to_initiator = (
+        dm_text_common
+        + f"<b>Соперник:</b> {opponent_display}\n"
+        + f"<b>Твоя позиция:</b> {result.side_a_ru}\n\n"
+        + "Открывай Mini App и записывай 60-секундный аргумент."
+    )
+
+    ok_opp = await _try_send_battle_dm(
+        tg_id=result.opponent_tg_id,
+        text=dm_to_opponent,
+        reply_markup=_battle_miniapp_keyboard(result.id, "b"),
+    )
+    if not ok_opp:
+        return False
+
+    ok_init = await _try_send_battle_dm(
+        tg_id=result.initiator_tg_id,
+        text=dm_to_initiator,
+        reply_markup=_battle_miniapp_keyboard(result.id, "a"),
+    )
+    if not ok_init:
+        logger.warning(
+            "[battle] инициатор %s не получил DM — продолжаем без него",
+            result.initiator_tg_id,
+        )
+
+    chat_text = (
+        f"⚔️ <b>Вызов принят</b>\n\n"
+        f"<b>Тема:</b> {result.topic_title_ru}\n"
+        f"<b>Участники:</b> {initiator_display} vs {opponent_display}\n\n"
+        f"Оба участника получили задание в ЛС. После записи обоих "
+        f"ответов ИИ-судья объявит победителя прямо здесь."
+    )
+    try:
+        if inline_message_id:
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text=chat_text,
+                parse_mode="HTML",
+            )
+        elif chat_id is not None and chat_message_id is not None:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=chat_message_id,
+                text=chat_text,
+                parse_mode="HTML",
+            )
+    except Exception as exc:
+        logger.warning("[battle] edit accepted msg fail: %s", exc)
+
+    return True
+
+
+async def _accept_battle_for_user(
+    *,
+    battle_id: int,
+    opponent_tg_id: int,
+) -> tuple[Optional[backend_client.BattleAcceptResult], Optional[str]]:
+    """Дёргает backend.battle_accept + базовая валидация. Возвращает
+    (result, error_message). Если result не None — accept на стороне
+    backend'а прошёл, остаётся доставить DMs."""
+    result = await backend_client.battle_accept(
+        battle_id=battle_id, opponent_tg_id=opponent_tg_id,
+    )
+    if result is None:
+        return None, "Вызов уже принят, просрочен или ты сам его создал."
+    if result.initiator_tg_id == opponent_tg_id:
+        return None, "Нельзя принимать собственный вызов — позови кого-нибудь."
+    return result, None
+
+
 @dp.callback_query(lambda c: c.data and c.data.startswith("battle:accept:"))
 async def cb_battle_accept(callback: CallbackQuery) -> None:
     if not callback.data:
@@ -1199,92 +1457,86 @@ async def cb_battle_accept(callback: CallbackQuery) -> None:
         return
 
     opponent_tg_id = callback.from_user.id
-    result = await backend_client.battle_accept(
+    result, err = await _accept_battle_for_user(
         battle_id=battle_id, opponent_tg_id=opponent_tg_id,
     )
-    if result is None:
-        await callback.answer(
-            "Вызов уже принят, просрочен или ты сам его создал.",
-            show_alert=True,
-        )
+    if err is not None:
+        await callback.answer(err, show_alert=True)
         return
+    assert result is not None
 
-    if result.initiator_tg_id == opponent_tg_id:
-        await callback.answer(
-            "Нельзя принимать собственный вызов — позови кого-нибудь.",
-            show_alert=True,
+    ok = await _send_battle_dms_and_render_chat(
+        result,
+        inline_message_id=callback.inline_message_id,
+        chat_id=callback.message.chat.id if callback.message else None,
+        chat_message_id=callback.message.message_id if callback.message else None,
+    )
+    if not ok:
+        # Оппоненту не доставилось → откатываем accept в backend и
+        # перебрасываем юзера в чат с ботом через deep-link. После /start
+        # cmd_start примет вызов автоматически.
+        await backend_client.battle_revert_accept(
+            battle_id=battle_id, opponent_tg_id=opponent_tg_id,
         )
+        deep_link = f"https://t.me/{BOT_USERNAME}?start=battle_accept_{battle_id}"
+        try:
+            await callback.answer(
+                text="Открываю бота — нажми Start, и вызов сразу примется.",
+                url=deep_link,
+            )
+        except Exception:
+            # Защитный fallback: если по какой-то причине callback с url
+            # не поддержан клиентом — показываем alert с подсказкой.
+            await callback.answer(
+                f"Открой @{BOT_USERNAME}, нажми Start — и возвращайся к "
+                "кнопке «Принять».",
+                show_alert=True,
+            )
         return
 
     await callback.answer("Вызов принят — лови задание в личке.")
 
-    # Тянем ники участников — покажем их в карточке и в DM-ах.
-    initiator_display = await _display_name_for(result.initiator_tg_id)
-    opponent_display = await _display_name_for(result.opponent_tg_id)
 
-    # Редактируем chat-сообщение: битва принята, оба получили задание
-    topic_line = f"<b>Тема:</b> {result.topic_title_ru}"
-    chat_text = (
-        f"⚔️ <b>Вызов принят</b>\n\n"
-        f"{topic_line}\n"
-        f"<b>Участники:</b> {initiator_display} vs {opponent_display}\n\n"
-        f"Оба участника получили задание в ЛС. После записи обоих "
-        f"ответов ИИ-судья объявит победителя прямо здесь."
-    )
-    try:
-        if callback.inline_message_id:
-            await bot.edit_message_text(
-                inline_message_id=callback.inline_message_id,
-                text=chat_text,
-                parse_mode="HTML",
-            )
-        elif callback.message:
-            await callback.message.edit_text(
-                text=chat_text, parse_mode="HTML",
-            )
-    except Exception as exc:
-        logger.warning("[battle] edit accepted msg fail: %s", exc)
+async def _handle_start_battle_accept(message: Message, battle_id: int) -> None:
+    """Юзер пришёл по deep-link `/start battle_accept_<id>` — принимаем
+    вызов от его имени и шлём задание в этот же DM."""
+    if not message.from_user:
+        return
+    opponent_tg_id = message.from_user.id
 
-    # Шлём задания в ЛС каждому
-    dm_text_common = (
-        f"⚔️ <b>Battle #{result.id}</b>\n\n"
-        f"<b>Тема:</b> {result.topic_title_ru}\n"
-        f"<b>Вопрос:</b> <i>{result.prompt_en}</i>\n\n"
+    result, err = await _accept_battle_for_user(
+        battle_id=battle_id, opponent_tg_id=opponent_tg_id,
     )
-    try:
-        await bot.send_message(
-            chat_id=result.initiator_tg_id,
-            text=(
-                dm_text_common
-                + f"<b>Соперник:</b> {opponent_display}\n"
-                + f"<b>Твоя позиция:</b> {result.side_a_ru}\n\n"
-                + "Открывай Mini App и записывай 60-секундный аргумент."
-            ),
-            parse_mode="HTML",
-            reply_markup=_battle_miniapp_keyboard(result.id, "a"),
+    if err is not None:
+        await message.answer(
+            err + "\n\nМожешь бросить новый вызов: /battle.",
+            reply_markup=_miniapp_keyboard(),
         )
-    except Exception as exc:
-        logger.warning(
-            "[battle] не удалось отправить DM инициатору %s: %s",
-            result.initiator_tg_id, exc,
+        return
+    assert result is not None
+
+    ok = await _send_battle_dms_and_render_chat(
+        result,
+        inline_message_id=result.inline_message_id,
+        chat_id=result.chat_id,
+        chat_message_id=result.chat_message_id,
+    )
+    if not ok:
+        # Маловероятно — мы только что в его DM, бот может писать. Откатываем.
+        await backend_client.battle_revert_accept(
+            battle_id=battle_id, opponent_tg_id=opponent_tg_id,
         )
-    try:
-        await bot.send_message(
-            chat_id=result.opponent_tg_id,
-            text=(
-                dm_text_common
-                + f"<b>Соперник:</b> {initiator_display}\n"
-                + f"<b>Твоя позиция:</b> {result.side_b_ru}\n\n"
-                + "Открывай Mini App и записывай 60-секундный аргумент."
-            ),
-            parse_mode="HTML",
-            reply_markup=_battle_miniapp_keyboard(result.id, "b"),
+        await message.answer(
+            "Не удалось доставить задание. Попробуй ещё раз — открой чат "
+            "с другом и нажми «Принять» снова.",
         )
-    except Exception as exc:
-        logger.warning(
-            "[battle] не удалось отправить DM оппоненту %s: %s",
-            result.opponent_tg_id, exc,
-        )
+        return
+
+    await message.answer(
+        "✅ <b>Вызов принят!</b> Задание уже выше — открывай Mini App "
+        "и записывай ответ.",
+        parse_mode="HTML",
+    )
 
 
 async def _display_name_for(tg_id: int) -> str:
@@ -1303,6 +1555,98 @@ async def _display_name_for(tg_id: int) -> str:
     return f"Player {tg_id}"
 
 
+@dp.callback_query(lambda c: c.data and c.data.startswith("battle:revanche:"))
+async def cb_battle_revanche(callback: CallbackQuery) -> None:
+    """Реванш: кнопка под результатом judged-battle. Создаёт новый
+    battle с теми же двумя tg_id'ами в статусе accepted, шлёт обоим
+    задание в ЛС, оверрайдит исходное сообщение результатом."""
+    if not callback.data or not callback.from_user:
+        await callback.answer()
+        return
+    try:
+        old_battle_id = int(callback.data.rsplit(":", 1)[-1])
+    except ValueError:
+        await callback.answer("Кривой id", show_alert=True)
+        return
+
+    requester_tg_id = callback.from_user.id
+    result = await backend_client.battle_revanche(
+        old_battle_id=old_battle_id, requester_tg_id=requester_tg_id,
+    )
+    if result is None:
+        await callback.answer(
+            "Не получилось запустить реванш — старый бой не отсужен либо "
+            "ты не участвовал.",
+            show_alert=True,
+        )
+        return
+
+    # Пробуем доставить ЛС оппоненту. Если он закрыл бот — об этом узнаем
+    # сразу (TelegramForbiddenError), и сообщим инициатору реванша.
+    initiator_display = await _display_name_for(result.initiator_tg_id)
+    opponent_display = await _display_name_for(result.opponent_tg_id)
+
+    dm_common = (
+        f"⚔️ <b>Реванш! Battle #{result.id}</b>\n\n"
+        f"<b>Тема:</b> {result.topic_title_ru}\n"
+        f"<b>Вопрос:</b> <i>{result.prompt_en}</i>\n\n"
+    )
+    ok_opp = await _try_send_battle_dm(
+        tg_id=result.opponent_tg_id,
+        text=(
+            dm_common
+            + f"<b>Соперник:</b> {initiator_display}\n"
+            + f"<b>Твоя позиция:</b> {result.side_b_ru}\n\n"
+            + "Открывай Mini App и записывай 60-секундный аргумент."
+        ),
+        reply_markup=_battle_miniapp_keyboard(result.id, "b"),
+    )
+    if not ok_opp:
+        await callback.answer(
+            "Соперник закрыл бот — реванш сейчас не получится. Попробуй позже.",
+            show_alert=True,
+        )
+        # Реванш-battle создан в БД, но недоставлен. Можно просто оставить
+        # его — он сам expire через 24ч.
+        return
+
+    ok_init = await _try_send_battle_dm(
+        tg_id=result.initiator_tg_id,
+        text=(
+            dm_common
+            + f"<b>Соперник:</b> {opponent_display}\n"
+            + f"<b>Твоя позиция:</b> {result.side_a_ru}\n\n"
+            + "Открывай Mini App и записывай 60-секундный аргумент."
+        ),
+        reply_markup=_battle_miniapp_keyboard(result.id, "a"),
+    )
+    if not ok_init:
+        logger.warning("[battle][revanche] инициатор %s не получил DM", result.initiator_tg_id)
+
+    # Оверрайдим исходное сообщение в чате — убираем кнопку «Реванш»
+    # (бой уже идёт) и показываем что реванш запущен.
+    chat_text = (
+        f"⚔️ <b>Реванш запущен (Battle #{result.id})</b>\n\n"
+        f"<b>Тема:</b> {result.topic_title_ru}\n"
+        f"<b>Участники:</b> {initiator_display} vs {opponent_display}\n\n"
+        f"Оба получили задание в ЛС. Результат прилетит сюда после "
+        f"записей обоих ответов."
+    )
+    try:
+        if callback.inline_message_id:
+            await bot.edit_message_text(
+                inline_message_id=callback.inline_message_id,
+                text=chat_text,
+                parse_mode="HTML",
+            )
+        elif callback.message:
+            await callback.message.edit_text(text=chat_text, parse_mode="HTML")
+    except Exception as exc:
+        logger.warning("[battle][revanche] edit msg fail: %s", exc)
+
+    await callback.answer("Реванш запущен — задание уже у обоих в ЛС.")
+
+
 @dp.callback_query(lambda c: c.data == "battle:noop")
 async def cb_battle_noop(callback: CallbackQuery) -> None:
     await callback.answer("Секунду, создаю вызов…")
@@ -1319,6 +1663,7 @@ async def _set_bot_commands() -> None:
         commands.append(BotCommand(command="subscribe", description="Подписка"))
     commands += [
         BotCommand(command="reminder", description="Напоминания"),
+        BotCommand(command="goal", description="Зачем учу английский"),
         BotCommand(command="battle", description="Англо-дуэль с другом"),
         BotCommand(command="quest", description="Мой квест дня"),
         BotCommand(command="help", description="Справка по командам"),
