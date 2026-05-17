@@ -215,9 +215,36 @@ button {
   text-transform: uppercase;
   letter-spacing: 0.6px;
   opacity: 0.65;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .msg__text {
   color: var(--text);
+}
+
+/* Replay-кнопка ▶ рядом с лейблом "Tutor". */
+.msg__replay {
+  appearance: none;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--text);
+  border-radius: 999px;
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+.msg__replay:hover,
+.msg__replay:active {
+  background: rgba(164, 137, 255, 0.2);
+  border-color: rgba(164, 137, 255, 0.5);
 }
 
 .msg--user {
@@ -379,15 +406,18 @@ button {
   animation: ring-pulse 1.4s var(--ease) infinite;
 }
 
-/* ── Вариант: speaking — мятный спокойный пульс ── */
+/* ── Вариант: speaking — статичный мятный контур, без пульса.
+   Пульсация ring-pulse мигала и дёргала глаз; пока тьютор говорит,
+   достаточно неподвижного индикатора + сменившегося цвета фона. ── */
 .talk-button[data-variant="speaking"] {
   color: var(--speak);
   background: linear-gradient(135deg, #152520, #101814);
 }
 .talk-button[data-variant="speaking"] .talk-button__ring {
   border-color: var(--speak);
-  opacity: 1;
-  animation: ring-pulse 1.6s var(--ease) infinite;
+  opacity: 0.55;
+  animation: none;
+  transform: none;
 }
 
 /* ── Вариант: connecting / initializing — медленный warm pulse ── */
