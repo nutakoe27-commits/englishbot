@@ -94,47 +94,25 @@ class VLLMProvider:
         history: list[dict],
         system_prompt: str,
     ) -> str:
-        # /no_think подавляет reasoning Qwen3 на токенизерном уровне.
-        # Ставится в user-реплику (в system не работает).
-        messages: list[dict] = [{"role": "system", "content": system_prompt}]
-        messages.extend(self._to_openai(history))
-        messages.append({"role": "user", "content": f"/no_think\n{user_text}"})
-
-        payload = {
-            "model": self.model_name,
-            "messages": messages,
-            "temperature": 0.6,
-            # Повышенный лимит на случай, если модель всё же потратит несколько
-            # токенов на <think></think> — чистый ответ влезет с запасом.
-            "max_tokens": 400,
-            "stream": False,
-            # Жёсткий выключатель reasoning для Qwen3 через chat template.
-            # Работает только если vLLM запущен с --reasoning-parser qwen3.
-            # Это strict-switch (сильнее чем soft /no_think в промпте).
-            "chat_template_kwargs": {"enable_thinking": False},
-        }
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-        url = f"{self.base_url}/chat/completions"
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code != 200:
-                logger.error("vLLM HTTP %s: %s", resp.status_code, resp.text)
-                resp.raise_for_status()
-            data = resp.json()
-
-        try:
-            raw = data["choices"][0]["message"]["content"] or ""
-        except (KeyError, IndexError) as exc:
-            logger.error("Неожиданный формат ответа vLLM: %s — %s", data, exc)
-            return "Sorry, I didn't catch that. Could you say it again?"
-
+        """Не-стриминговый ответ. Под капотом дёргаем stream() и склеиваем
+        дельты — vLLM с --reasoning-parser qwen3 на stream=False часто
+        возвращает пустой content для коротких/нестандартных промптов
+        (translate-эндпоинт, chat-режим Mini App). Стрим работает.
+        """
+        chunks: list[str] = []
+        async for delta in self.stream(
+            user_text=user_text,
+            history=history,
+            system_prompt=system_prompt,
+        ):
+            chunks.append(delta)
+        raw = "".join(chunks)
         cleaned = _strip_reasoning(raw)
         if not cleaned:
-            logger.warning("vLLM вернул пустой ответ после зачистки reasoning. raw=%r", raw[:200])
+            logger.warning(
+                "[complete] пустой ответ от LLM (raw=%r history_len=%d)",
+                raw[:200], len(history),
+            )
             return "Sorry, could you say that again?"
         return cleaned
 
