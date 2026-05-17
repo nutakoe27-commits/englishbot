@@ -268,15 +268,15 @@ async def translate_word(
             {"role": "user", "content": f"/no_think\n{user_payload}"},
         ],
         "temperature": 0.2,
-        # Запас на случай, если Qwen3 потратит часть max_tokens на <think>.
-        # На JSON-ответ уходит ~30-60 токенов, остальное — буфер.
+        # Запас: при reasoning-parser qwen3 модель может потратить
+        # значительную часть на <think>, JSON приходит после.
         "max_tokens": 400,
         "stream": False,
-        # Жёсткий выключатель reasoning для Qwen3 (как в complete()).
+        # Выключаем reasoning через chat_template (работает с
+        # --reasoning-parser qwen3). Без response_format=json_object —
+        # тот конфликтует с reasoning_parser и обнуляет оба поля
+        # message (content="", reasoning_content="").
         "chat_template_kwargs": {"enable_thinking": False},
-        # Guided JSON — vLLM форсирует валидный JSON. Гарантия, что
-        # ответ распарсится. Поддерживается vLLM v0.4+ через OpenAI API.
-        "response_format": {"type": "json_object"},
     }
     headers = {
         "Authorization": f"Bearer {llm.api_key}",
@@ -318,9 +318,12 @@ async def translate_word(
 
     parsed = _try_extract_json(content_raw) or _try_extract_json(reasoning_raw)
     if parsed is None:
+        # Логируем весь message + finish_reason — позволяет понять, что vLLM
+        # реально вернул (length cutoff, отказ, пустое поле и т.п.).
+        finish = data["choices"][0].get("finish_reason")
         logger.warning(
-            "[translate] не нашёл JSON для %r (content=%r reasoning=%r)",
-            word_clean, content_raw[:200], reasoning_raw[:200],
+            "[translate] не нашёл JSON для %r finish=%s message=%r",
+            word_clean, finish, message,
         )
         return []
 
