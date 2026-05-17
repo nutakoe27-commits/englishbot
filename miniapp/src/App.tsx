@@ -17,6 +17,7 @@ import WebApp from "@twa-dev/sdk";
 import "./App.css";
 import { SettingsSheet } from "./SettingsSheet";
 import { LockScreen } from "./LockScreen";
+import { TranslatePopover } from "./TranslatePopover";
 import {
   loadSettings,
   saveSettings,
@@ -42,9 +43,40 @@ interface DialogEntry {
   text: string;
 }
 
+interface TranslateTarget {
+  word: string;
+  context: string;
+  x: number;
+  y: number;
+}
+
+/** Разбивает текст тьютора на токены: слова → кликабельные span'ы, остальное as-is.
+ *  Одиночные буквы и числа не делаем кликабельными. */
+function renderWithTaps(
+  text: string,
+  onWordTap: (word: string, context: string, evt: React.MouseEvent) => void,
+): React.ReactNode[] {
+  const parts = text.split(/(\b[A-Za-z][A-Za-z'-]*\b)/g);
+  return parts.map((part, i) => {
+    if (/^[A-Za-z][A-Za-z'-]*$/.test(part) && part.length > 1) {
+      return (
+        <span
+          key={i}
+          className="tap-word"
+          onClick={(e) => onWordTap(part, text, e)}
+        >
+          {part}
+        </span>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
+
 // ─── Константы ────────────────────────────────────────────────────────────────
 
 const WS_URL = "wss://api-english.krichigindocs.ru/ws/voice";
+const API_BASE = "https://api-english.krichigindocs.ru";
 const OUTPUT_SAMPLE_RATE = 24000; // TTS отдаёт 24 kHz PCM
 const MAX_LOG_ENTRIES = 20;
 // Username бота для deep-link на /subscribe и /start.
@@ -104,6 +136,21 @@ export default function App() {
   // Состояние lock-screen: null = обычный UI; иначе — показываем overlay
   const [lockState, setLockState] = useState<LockKind | null>(null);
   const [lockMessage, setLockMessage] = useState<string>("");
+  // Тап по слову в реплике тьютора → popover с переводом
+  const [translateTarget, setTranslateTarget] = useState<TranslateTarget | null>(null);
+
+  const handleWordTap = useCallback(
+    (word: string, context: string, evt: React.MouseEvent) => {
+      const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect();
+      setTranslateTarget({
+        word: word.toLowerCase(),
+        context,
+        x: rect.left,
+        y: rect.bottom + 6,
+      });
+    },
+    [],
+  );
   // Реф с актуальными настройками — openConnection читает его без ре-рендера
   const settingsRef = useRef<TutorSettings>(settings);
   useEffect(() => {
@@ -927,7 +974,11 @@ export default function App() {
               <span className="msg__role">
                 {entry.role === "user" ? "You" : "Tutor"}
               </span>
-              <span className="msg__text">{entry.text}</span>
+              <span className="msg__text">
+                {entry.role === "tutor"
+                  ? renderWithTaps(entry.text, handleWordTap)
+                  : entry.text}
+              </span>
             </div>
           ))
         )}
@@ -1110,6 +1161,18 @@ export default function App() {
           kind={lockState}
           message={lockMessage}
           botUsername={BOT_USERNAME}
+        />
+      )}
+
+      {translateTarget && (
+        <TranslatePopover
+          apiBase={API_BASE}
+          initData={WebApp.initData || ""}
+          word={translateTarget.word}
+          context={translateTarget.context}
+          x={translateTarget.x}
+          y={translateTarget.y}
+          onClose={() => setTranslateTarget(null)}
         />
       )}
     </div>

@@ -12,6 +12,7 @@ llm_providers.py — LLM-провайдер для ответов репетит
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Protocol
@@ -128,6 +129,103 @@ class VLLMProvider:
             logger.warning("vLLM вернул пустой ответ после зачистки reasoning. raw=%r", raw[:200])
             return "Sorry, could you say that again?"
         return cleaned
+
+
+# ─── Перевод одного слова (для тапа в чате) ─────────────────────────────────
+
+_TRANSLATE_SYSTEM_PROMPT = (
+    "You are a concise English-to-Russian word translator. "
+    "Given an English word and the sentence it appeared in, translate the "
+    "word into Russian, considering the context of the sentence.\n\n"
+    "Return ONLY a JSON object with this exact shape:\n"
+    '{"primary": "...", "alternatives": ["...", "..."]}\n\n'
+    "Rules:\n"
+    "- \"primary\": the single most likely Russian translation for this "
+    "context (1-3 words). Lowercase. Initial form (lemma) when reasonable.\n"
+    "- \"alternatives\": up to 2 other plausible Russian options if the "
+    "word is ambiguous. Empty list if there are no good alternatives.\n"
+    "- NO prose, NO markdown fences, NO explanations.\n"
+    "- If the word is a proper noun, brand, or clearly untranslatable — "
+    'return it transliterated as "primary" and empty alternatives.'
+)
+
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+async def translate_word(
+    llm: "VLLMProvider",
+    *,
+    word: str,
+    context: str,
+    target_lang: str = "ru",
+) -> list[str]:
+    """Переводит одно слово с учётом контекста. Возвращает список переводов:
+    [primary, alt1, alt2, ...]. На ошибку — пустой список.
+
+    target_lang пока всегда 'ru' (поле зарезервировано на будущее).
+    """
+    word_clean = (word or "").strip()
+    if not word_clean:
+        return []
+    context_clean = (context or "").strip()
+    user_payload = (
+        f"Word: {word_clean}\n"
+        f"Sentence: {context_clean or '(no context)'}\n"
+        f"JSON now."
+    )
+
+    payload = {
+        "model": llm.model_name,
+        "messages": [
+            {"role": "system", "content": _TRANSLATE_SYSTEM_PROMPT},
+            {"role": "user", "content": f"/no_think\n{user_payload}"},
+        ],
+        "temperature": 0.2,
+        "max_tokens": 100,
+        "stream": False,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    headers = {
+        "Authorization": f"Bearer {llm.api_key}",
+        "Content-Type": "application/json",
+    }
+
+    url = f"{llm.base_url}/chat/completions"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        raw = (data["choices"][0]["message"]["content"] or "").strip()
+    except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+        logger.warning("[translate] LLM error for %r: %s", word_clean, exc)
+        return []
+
+    cleaned = _strip_reasoning(raw)
+    # Извлекаем JSON-объект из ответа (модель иногда добавляет мусор вокруг).
+    match = _JSON_OBJECT_RE.search(cleaned)
+    if not match:
+        logger.warning("[translate] no JSON in response for %r: %r", word_clean, cleaned[:200])
+        return []
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        logger.warning("[translate] bad JSON for %r: %s — %r", word_clean, exc, cleaned[:200])
+        return []
+
+    primary = (parsed.get("primary") or "").strip()
+    alts_raw = parsed.get("alternatives") or []
+    if not primary:
+        return []
+    result = [primary]
+    if isinstance(alts_raw, list):
+        for alt in alts_raw[:2]:
+            if not isinstance(alt, str):
+                continue
+            alt_clean = alt.strip()
+            if alt_clean and alt_clean.lower() != primary.lower():
+                result.append(alt_clean)
+    return result
 
 
 # ─── Фабрика ─────────────────────────────────────────────────────────────────
