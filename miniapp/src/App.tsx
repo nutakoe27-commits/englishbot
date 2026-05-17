@@ -203,6 +203,12 @@ export default function App() {
   const playbackTimeRef = useRef<number>(0);
   // Таймер перехода speaking → connected (один, перезаводим на каждый чанк)
   const speakingEndTimerRef = useRef<number | null>(null);
+  // Активные BufferSource'ы — нужны чтобы остановить их при barge-in.
+  // source.onended вычёркивает себя из массива по завершении воспроизведения.
+  const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  // Гейт для входящих TTS-чанков. После interrupt бэкенд может ещё какое-то
+  // время слать байты (in-flight) — игнорируем, пока не придёт interrupt_ack.
+  const audioGateOpenRef = useRef<boolean>(true);
   const logIdRef = useRef<number>(0);
   // Флаг — ws уже закрывается
   const wsClosingRef = useRef<boolean>(false);
@@ -369,6 +375,10 @@ export default function App() {
       const startTime = Math.max(ctx.currentTime, playbackTimeRef.current);
       src.start(startTime);
       playbackTimeRef.current = startTime + buf.duration;
+      activeSourcesRef.current.push(src);
+      src.onended = () => {
+        activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== src);
+      };
     }
   }, []);
 
@@ -397,6 +407,32 @@ export default function App() {
     const startTime = Math.max(ctx.currentTime, playbackTimeRef.current);
     source.start(startTime);
     playbackTimeRef.current = startTime + audioBuffer.duration;
+    activeSourcesRef.current.push(source);
+    source.onended = () => {
+      activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== source);
+    };
+  }, []);
+
+  // ── Прерывание текущей речи тьютора (barge-in) ────────────────────────────
+  // Юзер зажал push-to-talk пока бот говорит → мгновенно глушим всё, что
+  // звучит, и сообщаем backend'у чтобы он остановил LLM/TTS.
+  const interruptSpeaking = useCallback(() => {
+    if (speakingEndTimerRef.current !== null) {
+      clearTimeout(speakingEndTimerRef.current);
+      speakingEndTimerRef.current = null;
+    }
+    for (const src of activeSourcesRef.current) {
+      try { src.stop(0); } catch { /* уже отыгран */ }
+    }
+    activeSourcesRef.current = [];
+    const ctx = audioCtxRef.current;
+    playbackTimeRef.current = ctx ? ctx.currentTime : 0;
+    // Закрываем gate — in-flight TTS-чанки от backend'а дропаем до ack.
+    audioGateOpenRef.current = false;
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(JSON.stringify({ type: "interrupt" })); } catch { /* noop */ }
+    }
   }, []);
 
   // ── Запрос микрофона при старте приложения ────────────────────────────────
@@ -581,6 +617,8 @@ export default function App() {
         // Сбрасываем буфер TTS-чанков — старые куски не должны приклеиться
         // к первой реплике новой сессии.
         pendingTutorChunksRef.current = [];
+        // Свежее подключение — gate открыт.
+        audioGateOpenRef.current = true;
         // Засекаем старт сессии для post-session summary.
         sessionStartRef.current = Date.now();
       };
@@ -588,6 +626,8 @@ export default function App() {
       ws.onmessage = (event) => {
         if (wsRef.current !== ws) return;
         if (event.data instanceof ArrayBuffer) {
+          // После barge-in: дропаем in-flight TTS-чанки до interrupt_ack.
+          if (!audioGateOpenRef.current) return;
           // Бинарные данные → PCM 24 kHz аудио
           setAppState("speaking");
           setStatusText("Speaking…");
@@ -629,6 +669,10 @@ export default function App() {
               setChatThinking(true);
             } else if (msg.type === "thinking_done") {
               setChatThinking(false);
+            } else if (msg.type === "interrupt_ack") {
+              // Backend подтвердил interrupt — открываем audio gate,
+              // чтобы следующий ответ тьютора был слышен.
+              audioGateOpenRef.current = true;
             } else if (msg.type === "limits") {
               // Сервер прислал текущее состояние лимитов — сохраняем
               setLimits({
@@ -971,15 +1015,23 @@ export default function App() {
       if (e.button !== undefined && e.button !== 0) return;
       if (isPressedRef.current) return;
       if (activePointerIdRef.current !== null) return;
-      // Не начинаем запись пока идёт TTS / подключение
+      // Не начинаем запись пока идёт подключение / нет микрофона.
+      // speaking — НЕ блокируем: это barge-in (см. interruptSpeaking ниже).
       if (
-        appState === "speaking" ||
         appState === "connecting" ||
         appState === "initializing" ||
         appState === "mic-denied" ||
         appState === "error"
       ) {
         return;
+      }
+
+      // Barge-in: пока бот говорит, зажим кнопки прерывает TTS и
+      // начинает запись. Глушим звук + шлём interrupt на backend +
+      // переключаем UI в connected, чтобы startRecording отработал.
+      if (appState === "speaking") {
+        interruptSpeaking();
+        setAppState("connected");
       }
 
       isPressedRef.current = true;
@@ -994,7 +1046,7 @@ export default function App() {
 
       startRecording();
     },
-    [appState, startRecording]
+    [appState, startRecording, interruptSpeaking]
   );
 
   const handlePointerUp = useCallback(
@@ -1050,8 +1102,9 @@ export default function App() {
   const isConnecting = appState === "connecting";
   const isMicDenied = appState === "mic-denied";
   const isError = appState === "error";
+  // speaking — НЕ disabled: кнопка работает как barge-in (см. handlePointerDown).
   const buttonDisabled =
-    isInitializing || isConnecting || isError || isSpeaking || isMicDenied;
+    isInitializing || isConnecting || isError || isMicDenied;
 
   // Дата-атрибут для CSS — одно состояние управляет всем видом
   const buttonVariant = isRecording
