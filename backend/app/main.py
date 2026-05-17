@@ -13,19 +13,22 @@ import json
 import asyncio
 import logging
 import os
+import time
 import urllib.parse
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .admin import router as admin_router
 from .battle_api import router as battle_router
 from .config import settings
 from .db import db_session, init_db
 from .limits import LimitsContext, build_limits_context
+from .llm_providers import get_llm_provider, translate_word
 from .voice import run_voice_session
 
 # ─── Конфигурация логирования ──────────────────────────────────────────
@@ -330,6 +333,74 @@ async def delete_user_word(word: str, init_data: str = "") -> dict:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "word_not_found")
         await session.commit()
     return {"ok": True}
+
+
+# ─── Перевод слова по тапу в чате ─────────────────────────────────────────────
+
+_TRANSLATION_CACHE: dict[tuple[str, str], list[str]] = {}
+_TRANSLATION_CACHE_MAX = 2000
+
+_RATE_WINDOW_SEC = 60
+_RATE_LIMIT_PER_USER = 30
+_RATE_BUCKETS: dict[int, deque] = defaultdict(deque)
+
+
+def _enforce_rate_limit(tg_id: int) -> None:
+    now = time.time()
+    bucket = _RATE_BUCKETS[tg_id]
+    while bucket and bucket[0] < now - _RATE_WINDOW_SEC:
+        bucket.popleft()
+    if len(bucket) >= _RATE_LIMIT_PER_USER:
+        raise HTTPException(status_code=429, detail="rate_limited")
+    bucket.append(now)
+
+
+async def _get_translation_cached(word: str, context: str) -> list[str]:
+    # Контекст-ключ: хеш первых 80 символов нормализованной строки.
+    # Тот же word с похожим контекстом → один кеш-хит.
+    ctx_norm = (context or "").lower().strip()[:80]
+    ctx_key = hashlib.md5(ctx_norm.encode("utf-8")).hexdigest()[:8]
+    key = (word, ctx_key)
+
+    cached = _TRANSLATION_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    llm = get_llm_provider()
+    translations = await translate_word(llm, word=word, context=context)
+
+    # FIFO-вытеснение при переполнении (грубая аппроксимация LRU — для
+    # in-memory кеша на 2000 entries этого достаточно).
+    if len(_TRANSLATION_CACHE) >= _TRANSLATION_CACHE_MAX:
+        try:
+            first_key = next(iter(_TRANSLATION_CACHE))
+            _TRANSLATION_CACHE.pop(first_key, None)
+        except StopIteration:
+            pass
+    _TRANSLATION_CACHE[key] = translations
+    return translations
+
+
+class _TranslateIn(BaseModel):
+    init_data: str
+    word: str = Field(..., min_length=1, max_length=64)
+    context: str = Field("", max_length=500)
+
+
+@app.post("/api/translate", tags=["Translate"])
+async def translate(body: _TranslateIn) -> dict:
+    """Перевод одного английского слова на русский с учётом контекста реплики.
+
+    Возвращает {word, translations: [primary, alt1, alt2]}. На пустой результат
+    от LLM — translations=[].
+    """
+    tg_id = _tg_id_from_init_data(body.init_data)
+    word = body.word.strip().lower()
+    if not word:
+        raise HTTPException(status_code=400, detail="empty_word")
+    _enforce_rate_limit(tg_id)
+    translations = await _get_translation_cached(word, body.context)
+    return {"word": word, "translations": translations}
 
 
 # ─── WebSocket — голосовой диалог ─────────────────────────────────────────────

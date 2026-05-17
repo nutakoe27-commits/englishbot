@@ -17,6 +17,7 @@ import WebApp from "@twa-dev/sdk";
 import "./App.css";
 import { SettingsSheet } from "./SettingsSheet";
 import { LockScreen } from "./LockScreen";
+import { TranslatePopover } from "./TranslatePopover";
 import { SessionSummary } from "./SessionSummary";
 import { WordsScreen } from "./WordsScreen";
 import {
@@ -48,6 +49,36 @@ interface DialogEntry {
    * и шлёт отдельным полем; UI рисует жёлтым блоком над основной репликой.
    */
   correction?: string | null;
+}
+
+interface TranslateTarget {
+  word: string;
+  context: string;
+  x: number;
+  y: number;
+}
+
+/** Разбивает текст тьютора на токены: слова → кликабельные span'ы, остальное as-is.
+ *  Одиночные буквы и числа не делаем кликабельными. */
+function renderWithTaps(
+  text: string,
+  onWordTap: (word: string, context: string, evt: React.MouseEvent) => void,
+): React.ReactNode[] {
+  const parts = text.split(/(\b[A-Za-z][A-Za-z'-]*\b)/g);
+  return parts.map((part, i) => {
+    if (/^[A-Za-z][A-Za-z'-]*$/.test(part) && part.length > 1) {
+      return (
+        <span
+          key={i}
+          className="tap-word"
+          onClick={(e) => onWordTap(part, text, e)}
+        >
+          {part}
+        </span>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
 }
 
 // ─── Константы ────────────────────────────────────────────────────────────────
@@ -118,6 +149,21 @@ export default function App() {
   // Состояние lock-screen: null = обычный UI; иначе — показываем overlay
   const [lockState, setLockState] = useState<LockKind | null>(null);
   const [lockMessage, setLockMessage] = useState<string>("");
+  // Тап по слову в реплике тьютора → popover с переводом
+  const [translateTarget, setTranslateTarget] = useState<TranslateTarget | null>(null);
+
+  const handleWordTap = useCallback(
+    (word: string, context: string, evt: React.MouseEvent) => {
+      const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect();
+      setTranslateTarget({
+        word: word.toLowerCase(),
+        context,
+        x: rect.left,
+        y: rect.bottom + 6,
+      });
+    },
+    [],
+  );
   // Post-session summary — показываем после нормального End session
   // (sessionSeconds > 0) ИЛИ как «opening» при открытии Mini App
   // (sessionSeconds = 0). Логика выбора режима в SessionSummary.tsx.
@@ -1083,7 +1129,11 @@ export default function App() {
                   {entry.correction}
                 </span>
               )}
-              <span className="msg__text">{entry.text}</span>
+              <span className="msg__text">
+                {entry.role === "tutor"
+                  ? renderWithTaps(entry.text, handleWordTap)
+                  : entry.text}
+              </span>
             </div>
           ))
         )}
@@ -1266,6 +1316,18 @@ export default function App() {
           kind={lockState}
           message={lockMessage}
           botUsername={BOT_USERNAME}
+        />
+      )}
+
+      {translateTarget && (
+        <TranslatePopover
+          apiBase={API_BASE}
+          initData={WebApp.initData || ""}
+          word={translateTarget.word}
+          context={translateTarget.context}
+          x={translateTarget.x}
+          y={translateTarget.y}
+          onClose={() => setTranslateTarget(null)}
         />
       )}
 

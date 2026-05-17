@@ -92,6 +92,7 @@ def _goal_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+
 # Цены синхронизированы с settings_kv (DB) и LockScreen в mini app.
 # Источник истины сейчас — эти константы (бот не ходит в DB).
 PRICE_MONTHLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_MONTHLY_RUB", "699"))
