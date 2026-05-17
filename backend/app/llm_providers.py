@@ -221,19 +221,13 @@ class VLLMProvider:
 # ─── Перевод одного слова (для тапа в чате) ─────────────────────────────────
 
 _TRANSLATE_SYSTEM_PROMPT = (
-    "You are a concise English-to-Russian word translator. "
-    "Given an English word and the sentence it appeared in, translate the "
-    "word into Russian, considering the context of the sentence.\n\n"
-    "Return ONLY a JSON object with this exact shape:\n"
-    '{"primary": "...", "alternatives": ["...", "..."]}\n\n'
-    "Rules:\n"
-    "- \"primary\": the single most likely Russian translation for this "
-    "context (1-3 words). Lowercase. Initial form (lemma) when reasonable.\n"
-    "- \"alternatives\": up to 2 other plausible Russian options if the "
-    "word is ambiguous. Empty list if there are no good alternatives.\n"
-    "- NO prose, NO markdown fences, NO explanations.\n"
-    "- If the word is a proper noun, brand, or clearly untranslatable — "
-    'return it transliterated as "primary" and empty alternatives.'
+    "Translate an English word into Russian, using the sentence as context.\n"
+    "Reply with one JSON line, no prose:\n"
+    '{"primary":"...","alternatives":["...","..."]}\n\n'
+    "Example input:\n"
+    "Word: bank\nSentence: I walked along the river bank.\n\n"
+    "Example output:\n"
+    '{"primary":"берег","alternatives":["банк"]}'
 )
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -257,8 +251,7 @@ async def translate_word(
     context_clean = (context or "").strip()
     user_payload = (
         f"Word: {word_clean}\n"
-        f"Sentence: {context_clean or '(no context)'}\n"
-        f"JSON now."
+        f"Sentence: {context_clean or '(no context)'}"
     )
 
     payload = {
@@ -284,13 +277,16 @@ async def translate_word(
 
     url = f"{llm.base_url}/chat/completions"
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        # 60с — Qwen3 35B-A3B с reasoning тратит 5-20 сек на одно слово.
+        # Кеш сглаживает повторные тапы.
+        async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
         message = data["choices"][0]["message"]
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-        logger.warning("[translate] LLM error for %r: %s", word_clean, exc)
+        # repr — пустые ReadTimeout без message в %s превращаются в "".
+        logger.warning("[translate] LLM error for %r: %r", word_clean, exc)
         return []
 
     # vLLM с --reasoning-parser qwen3 раздваивает ответ: финальный ответ →
