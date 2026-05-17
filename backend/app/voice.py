@@ -237,13 +237,25 @@ async def _usage_watchdog(websocket: WebSocket, limits_ctx) -> None:
 
 # ─── Хелпер: синтез + отправка в WebSocket ───────────────────────────
 
-async def _send_tts_to_ws(websocket: WebSocket, tts, text: str) -> None:
-    """Синтезирует текст через TTS-провайдер и стримит PCM в WS."""
+async def _send_tts_to_ws(
+    websocket: WebSocket,
+    tts,
+    text: str,
+    interrupt_event: Optional[asyncio.Event] = None,
+) -> None:
+    """Синтезирует текст через TTS-провайдер и стримит PCM в WS.
+
+    Если передан interrupt_event и он set'ится в процессе — рвём поток на
+    ближайшем PCM-чанке (barge-in).
+    """
     chunks_sent = 0
     bytes_sent = 0
     logger.warning("[TTS] старт синтеза: %r", text[:80])
     try:
         async for pcm_chunk in tts.synthesize(text):
+            if interrupt_event is not None and interrupt_event.is_set():
+                logger.warning("[TTS] interrupt — обрываем синтез после %d чанков", chunks_sent)
+                return
             if websocket.client_state != WebSocketState.CONNECTED:
                 logger.warning("[TTS] WS не в CONNECTED (сост. %s), прерываем отправку",
                     websocket.client_state)
@@ -487,6 +499,12 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
     # Буфер финалов, пришедших между EOU — соберём их в одну реплику.
     pending_finals: list[str] = []
 
+    # Barge-in: фронт жмёт push-to-talk пока тьютор говорит → шлёт
+    # {"type":"interrupt"}. receive_from_client ставит event, а LLM-stream
+    # / tts_worker / _send_tts_to_ws его проверяют и завершаются. Каждый
+    # новый user-turn в handle_user_utterance начинает с .clear().
+    interrupt_event: asyncio.Event = asyncio.Event()
+
     # ─── Приветственное сообщение репетитора ───────────────────────
     # Сразу после подключения приглашаем пользователя заговорить — чтобы было понятно,
     # что бот готов, и сессия не выглядела «зависшей» при молчании.
@@ -552,6 +570,14 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                     if ctrl.get("type") == "eou":
                         logger.warning("[WS] EOU от клиента")
                         await stt_queue.put({"kind": "eou"})
+                    elif ctrl.get("type") == "interrupt":
+                        logger.warning("[WS] interrupt от клиента")
+                        interrupt_event.set()
+                        # ack — фронт сразу откроет audio gate для нового ответа.
+                        try:
+                            await websocket.send_json({"type": "interrupt_ack"})
+                        except Exception:
+                            pass
         except WebSocketDisconnect:
             pass
         except Exception as exc:
@@ -562,10 +588,12 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
 
     async def send_tts(text: str) -> None:
         """Синтезирует текст и отправляет PCM в WebSocket."""
-        await _send_tts_to_ws(websocket, tts, text)
+        await _send_tts_to_ws(websocket, tts, text, interrupt_event=interrupt_event)
 
     async def handle_user_utterance(text: str) -> None:
         """Для готовой реплики пользователя: LLM в ответ и озвучка."""
+        # Каждый новый user-turn — чистый флаг прерывания.
+        interrupt_event.clear()
         # Language guard: если Whisper всё же распознал кириллицу —
         # не отдаём в LLM, но показываем всплывающую подсказку на английском.
         if _is_russian_utterance(text):
@@ -608,10 +636,15 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                 sentence = await sentence_queue.get()
                 if sentence is None:
                     return
+                if interrupt_event.is_set():
+                    # Barge-in: дальнейшие предложения не озвучиваем.
+                    continue
                 if not sentence.strip():
                     continue
                 try:
-                    await _send_tts_to_ws(websocket, tts, sentence)
+                    await _send_tts_to_ws(
+                        websocket, tts, sentence, interrupt_event=interrupt_event
+                    )
                 except Exception as exc:
                     logger.error("[TTS] worker error: %s", exc)
 
@@ -637,6 +670,10 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
             timeout = app_settings.LLM_TIMEOUT_SEC
             deadline = asyncio.get_event_loop().time() + (timeout or 60)
             async for delta in stream:
+                if interrupt_event.is_set():
+                    logger.warning("[voice] LLM stream прерван (barge-in) после %d символов",
+                                   len(full_reply))
+                    break
                 if timeout and asyncio.get_event_loop().time() > deadline:
                     timed_out = True
                     logger.error("[voice] LLM stream timeout %dс", timeout)
