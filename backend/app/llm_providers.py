@@ -254,72 +254,33 @@ async def translate_word(
         f"Sentence: {context_clean or '(no context)'}"
     )
 
-    payload = {
-        "model": llm.model_name,
-        "messages": [
-            {"role": "system", "content": _TRANSLATE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_payload},
-        ],
-        "temperature": 0.2,
-        # Большой буфер: reasoning-блок <think>...</think> Qwen3 может
-        # быть в сотни токенов; JSON приходит после него.
-        "max_tokens": 800,
-        "stream": False,
-        # Намеренно НЕ отключаем thinking. Эмпирически: с enable_thinking=
-        # False + /no_think Qwen3 на JSON-промпте возвращает пустой content
-        # и finish_reason='stop' — модель просто ничего не генерирует.
-        # Reasoning-блок _strip_reasoning вырежет позже, JSON останется.
-    }
-    headers = {
-        "Authorization": f"Bearer {llm.api_key}",
-        "Content-Type": "application/json",
-    }
-
-    url = f"{llm.base_url}/chat/completions"
+    # Используем уже проверенный llm.complete() — он работает в проде на
+    # тьютор-промптах с enable_thinking=False. Не дёргаем сырой HTTP, чтобы
+    # не наступить на reasoning-parser баги: на JSON-промпте Qwen3 уходит
+    # в <think> и не выходит за max_tokens, vLLM в итоге возвращает пустой
+    # content+reasoning.
     try:
-        # 60с — Qwen3 35B-A3B с reasoning тратит 5-20 сек на одно слово.
-        # Кеш сглаживает повторные тапы.
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-        message = data["choices"][0]["message"]
-    except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-        # repr — пустые ReadTimeout без message в %s превращаются в "".
+        raw = await llm.complete(
+            user_text=user_payload,
+            history=[],
+            system_prompt=_TRANSLATE_SYSTEM_PROMPT,
+        )
+    except Exception as exc:
         logger.warning("[translate] LLM error for %r: %r", word_clean, exc)
         return []
 
-    # vLLM с --reasoning-parser qwen3 раздваивает ответ: финальный ответ →
-    # content, размышления → reasoning (или reasoning_content в старых
-    # версиях). Ищем JSON в обоих полях.
-    content_raw = (message.get("content") or "").strip()
-    reasoning_raw = (
-        message.get("reasoning") or message.get("reasoning_content") or ""
-    ).strip()
-
-    def _try_extract_json(text: str) -> Optional[dict]:
-        if not text:
-            return None
-        cleaned = _strip_reasoning(text)
-        if not cleaned:
-            return None
-        m = _JSON_OBJECT_RE.search(cleaned)
-        if not m:
-            return None
-        try:
-            return json.loads(m.group(0))
-        except json.JSONDecodeError:
-            return None
-
-    parsed = _try_extract_json(content_raw) or _try_extract_json(reasoning_raw)
-    if parsed is None:
-        # Логируем весь message + finish_reason — позволяет понять, что vLLM
-        # реально вернул (length cutoff, отказ, пустое поле и т.п.).
-        finish = data["choices"][0].get("finish_reason")
-        logger.warning(
-            "[translate] не нашёл JSON для %r finish=%s message=%r",
-            word_clean, finish, message,
-        )
+    cleaned = _strip_reasoning(raw)
+    if not cleaned:
+        logger.warning("[translate] пустой ответ для %r (raw=%r)", word_clean, raw[:200])
+        return []
+    match = _JSON_OBJECT_RE.search(cleaned)
+    if not match:
+        logger.warning("[translate] no JSON для %r: %r", word_clean, cleaned[:200])
+        return []
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        logger.warning("[translate] bad JSON для %r: %s — %r", word_clean, exc, cleaned[:200])
         return []
 
     primary = (parsed.get("primary") or "").strip()
