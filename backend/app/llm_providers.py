@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import AsyncIterator, Protocol
+from typing import AsyncIterator, Optional, Protocol
 
 import httpx
 
@@ -289,28 +289,39 @@ async def translate_word(
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-        raw = (data["choices"][0]["message"]["content"] or "").strip()
+        message = data["choices"][0]["message"]
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
         logger.warning("[translate] LLM error for %r: %s", word_clean, exc)
         return []
 
-    cleaned = _strip_reasoning(raw)
-    if not cleaned:
+    # vLLM с --reasoning-parser qwen3 раздваивает ответ: финальный ответ →
+    # content, размышления → reasoning_content. Для Qwen3 на «думающем»
+    # промпте content нередко пустой — модель всё пишет в reasoning_content
+    # и не успевает дойти до финального блока за max_tokens. Поэтому ищем
+    # JSON в обоих полях и берём первый удачный matc.
+    content_raw = (message.get("content") or "").strip()
+    reasoning_raw = (message.get("reasoning_content") or "").strip()
+
+    def _try_extract_json(text: str) -> Optional[dict]:
+        if not text:
+            return None
+        cleaned = _strip_reasoning(text)
+        if not cleaned:
+            return None
+        m = _JSON_OBJECT_RE.search(cleaned)
+        if not m:
+            return None
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return None
+
+    parsed = _try_extract_json(content_raw) or _try_extract_json(reasoning_raw)
+    if parsed is None:
         logger.warning(
-            "[translate] пустой content для %r (raw=%r)", word_clean, raw[:300]
+            "[translate] не нашёл JSON для %r (content=%r reasoning=%r)",
+            word_clean, content_raw[:200], reasoning_raw[:200],
         )
-        return []
-    # Извлекаем JSON-объект из ответа (модель иногда добавляет мусор вокруг).
-    match = _JSON_OBJECT_RE.search(cleaned)
-    if not match:
-        logger.warning(
-            "[translate] no JSON in response for %r: %r", word_clean, cleaned[:200]
-        )
-        return []
-    try:
-        parsed = json.loads(match.group(0))
-    except json.JSONDecodeError as exc:
-        logger.warning("[translate] bad JSON for %r: %s — %r", word_clean, exc, cleaned[:200])
         return []
 
     primary = (parsed.get("primary") or "").strip()
