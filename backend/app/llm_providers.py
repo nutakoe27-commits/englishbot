@@ -265,18 +265,17 @@ async def translate_word(
         "model": llm.model_name,
         "messages": [
             {"role": "system", "content": _TRANSLATE_SYSTEM_PROMPT},
-            {"role": "user", "content": f"/no_think\n{user_payload}"},
+            {"role": "user", "content": user_payload},
         ],
         "temperature": 0.2,
-        # Запас: при reasoning-parser qwen3 модель может потратить
-        # значительную часть на <think>, JSON приходит после.
-        "max_tokens": 400,
+        # Большой буфер: reasoning-блок <think>...</think> Qwen3 может
+        # быть в сотни токенов; JSON приходит после него.
+        "max_tokens": 800,
         "stream": False,
-        # Выключаем reasoning через chat_template (работает с
-        # --reasoning-parser qwen3). Без response_format=json_object —
-        # тот конфликтует с reasoning_parser и обнуляет оба поля
-        # message (content="", reasoning_content="").
-        "chat_template_kwargs": {"enable_thinking": False},
+        # Намеренно НЕ отключаем thinking. Эмпирически: с enable_thinking=
+        # False + /no_think Qwen3 на JSON-промпте возвращает пустой content
+        # и finish_reason='stop' — модель просто ничего не генерирует.
+        # Reasoning-блок _strip_reasoning вырежет позже, JSON останется.
     }
     headers = {
         "Authorization": f"Bearer {llm.api_key}",
@@ -295,12 +294,12 @@ async def translate_word(
         return []
 
     # vLLM с --reasoning-parser qwen3 раздваивает ответ: финальный ответ →
-    # content, размышления → reasoning_content. Для Qwen3 на «думающем»
-    # промпте content нередко пустой — модель всё пишет в reasoning_content
-    # и не успевает дойти до финального блока за max_tokens. Поэтому ищем
-    # JSON в обоих полях и берём первый удачный matc.
+    # content, размышления → reasoning (или reasoning_content в старых
+    # версиях). Ищем JSON в обоих полях.
     content_raw = (message.get("content") or "").strip()
-    reasoning_raw = (message.get("reasoning_content") or "").strip()
+    reasoning_raw = (
+        message.get("reasoning") or message.get("reasoning_content") or ""
+    ).strip()
 
     def _try_extract_json(text: str) -> Optional[dict]:
         if not text:
