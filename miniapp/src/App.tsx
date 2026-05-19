@@ -157,6 +157,9 @@ export default function App() {
   const [lockMessage, setLockMessage] = useState<string>("");
   // Тап по слову в реплике тьютора → popover с переводом
   const [translateTarget, setTranslateTarget] = useState<TranslateTarget | null>(null);
+  // Confirm-модалка перед закрытием сессии. Чат-композер близко к "End
+  // session" → юзеры случайно тапают и теряют историю. Сначала спрашиваем.
+  const [endConfirmOpen, setEndConfirmOpen] = useState(false);
 
   const handleWordTap = useCallback(
     (word: string, context: string, evt: React.MouseEvent) => {
@@ -1325,7 +1328,10 @@ export default function App() {
                 {errorMsg || "Error"} — try again
               </button>
             ) : endSessionVisible ? (
-              <button className="link-button" onClick={closeConnection}>
+              <button
+                className="link-button"
+                onClick={() => setEndConfirmOpen(true)}
+              >
                 End session
               </button>
             ) : (
@@ -1403,7 +1409,10 @@ export default function App() {
                 {errorMsg || "Error"} — try again
               </button>
             ) : endSessionVisible ? (
-              <button className="link-button" onClick={closeConnection}>
+              <button
+                className="link-button"
+                onClick={() => setEndConfirmOpen(true)}
+              >
                 End session
               </button>
             ) : (
@@ -1456,6 +1465,40 @@ export default function App() {
           apiBase={API_BASE}
           onClose={() => setWordsOpen(false)}
         />
+      )}
+
+      {endConfirmOpen && (
+        <div
+          className="confirm-overlay"
+          onClick={() => setEndConfirmOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Завершить сессию?"
+        >
+          <div className="confirm-card" onClick={(e) => e.stopPropagation()}>
+            <p className="confirm-title">Закончить сессию?</p>
+            <p className="confirm-hint">
+              История чата будет удалена — её нельзя восстановить.
+            </p>
+            <div className="confirm-actions">
+              <button
+                className="confirm-btn confirm-btn--secondary"
+                onClick={() => setEndConfirmOpen(false)}
+              >
+                Продолжить
+              </button>
+              <button
+                className="confirm-btn confirm-btn--danger"
+                onClick={() => {
+                  setEndConfirmOpen(false);
+                  closeConnection();
+                }}
+              >
+                Завершить
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
