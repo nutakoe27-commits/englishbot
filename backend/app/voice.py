@@ -381,12 +381,15 @@ async def _run_chat_session(
                     await websocket.send_json({"type": "thinking_done"})
                 except Exception:
                     pass
-                await websocket.send_json({
+                payload = {
                     "type": "text",
                     "role": "tutor",
                     "text": body,
                     "correction": correction,
-                })
+                }
+                if correction:
+                    payload["correction_original"] = user_text
+                await websocket.send_json(payload)
             logger.warning("[chat] tutor: %s", body[:120])
     except WebSocketDisconnect:
         pass
@@ -771,12 +774,18 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
             del history[: len(history) - MAX_HISTORY_TURNS * 2]
 
         if websocket.client_state == WebSocketState.CONNECTED:
-            await websocket.send_json({
+            payload = {
                 "type": "text",
                 "role": "tutor",
                 "text": body_final,
                 "correction": correction_final,
-            })
+            }
+            # Если есть correction — прикрепляем оригинальную user-фразу,
+            # чтобы фронт мог отрисовать word-diff (что юзер сказал vs
+            # как правильно) и кнопку «🤔 почему».
+            if correction_final:
+                payload["correction_original"] = text
+            await websocket.send_json(payload)
 
     async def process_stt() -> None:
         """

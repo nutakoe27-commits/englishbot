@@ -18,8 +18,10 @@ import "./App.css";
 import { SettingsSheet } from "./SettingsSheet";
 import { LockScreen } from "./LockScreen";
 import { TranslatePopover } from "./TranslatePopover";
+import { ExplainPopover } from "./ExplainPopover";
 import { SessionSummary } from "./SessionSummary";
 import { WordsScreen } from "./WordsScreen";
+import { wordDiff, diffLooksMeaningful, type DiffOp } from "./wordDiff";
 import {
   loadSettings,
   saveSettings,
@@ -50,6 +52,12 @@ interface DialogEntry {
    */
   correction?: string | null;
   /**
+   * Оригинальная (ошибочная) user-фраза — то, что юзер сказал/написал,
+   * за что тьютор показал correction. Используется для word-diff и для
+   * запроса объяснения через /api/explain-correction.
+   */
+  correctionOriginal?: string | null;
+  /**
    * PCM-чанки TTS, накопленные между предыдущим и текущим text-сообщением
    * от тьютора. Заполняется только в voice-режиме; используется кнопкой
    * ▶ replay рядом с репликой.
@@ -62,6 +70,16 @@ interface TranslateTarget {
   context: string;
   x: number;
   y: number;
+}
+
+/** Рендер word-diff (см. wordDiff.ts) в JSX. del — было у юзера и убрали,
+ *  ins — добавил тьютор, eq — общее без изменений. */
+function renderDiff(ops: DiffOp[]): React.ReactNode[] {
+  return ops.map((op, i) => {
+    if (op.kind === "del") return <del key={i}>{op.text}</del>;
+    if (op.kind === "ins") return <ins key={i}>{op.text}</ins>;
+    return <span key={i}>{op.text}</span>;
+  });
 }
 
 /** Разбивает текст тьютора на токены: слова → кликабельные span'ы, остальное as-is.
@@ -160,6 +178,26 @@ export default function App() {
   // Confirm-модалка перед закрытием сессии. Чат-композер близко к "End
   // session" → юзеры случайно тапают и теряют историю. Сначала спрашиваем.
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
+  // Тап по 🤔 рядом с correction → popover с объяснением правила.
+  const [explainTarget, setExplainTarget] = useState<{
+    original: string;
+    corrected: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const handleWhyTap = useCallback(
+    (original: string, corrected: string, evt: React.MouseEvent) => {
+      const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect();
+      setExplainTarget({
+        original,
+        corrected,
+        x: rect.left - 220,
+        y: rect.bottom + 6,
+      });
+    },
+    [],
+  );
 
   const handleWordTap = useCallback(
     (word: string, context: string, evt: React.MouseEvent) => {
@@ -335,7 +373,12 @@ export default function App() {
 
   // ── Добавление реплики в лог ──────────────────────────────────────────────
   const addLogEntry = useCallback(
-    (role: "user" | "tutor", text: string, correction?: string | null) => {
+    (
+      role: "user" | "tutor",
+      text: string,
+      correction?: string | null,
+      correctionOriginal?: string | null,
+    ) => {
       // Для тьютора прикрепляем накопленный TTS-буфер и очищаем его.
       let audioChunks: ArrayBuffer[] | undefined;
       if (role === "tutor" && pendingTutorChunksRef.current.length > 0) {
@@ -348,6 +391,7 @@ export default function App() {
           role,
           text,
           correction: correction || null,
+          correctionOriginal: correctionOriginal || null,
           audioChunks,
         };
         const updated = [...prev, newEntry];
@@ -666,6 +710,9 @@ export default function App() {
                 msg.role as "user" | "tutor",
                 msg.text,
                 typeof msg.correction === "string" ? msg.correction : null,
+                typeof msg.correction_original === "string"
+                  ? msg.correction_original
+                  : null,
               );
               if (msg.role === "tutor") setChatThinking(false);
             } else if (msg.type === "thinking") {
@@ -1236,14 +1283,35 @@ export default function App() {
                   </button>
                 )}
               </span>
-              {entry.correction && (
-                <span className="msg__correction" aria-label="correction">
-                  <span className="msg__correction-icon" aria-hidden>
-                    ✏️
+              {entry.correction && (() => {
+                const original = entry.correctionOriginal || "";
+                const ops = original ? wordDiff(original, entry.correction) : null;
+                const useDiff = !!ops && diffLooksMeaningful(ops);
+                return (
+                  <span className="msg__correction" aria-label="correction">
+                    <span className="msg__correction-icon" aria-hidden>
+                      ✏️
+                    </span>
+                    <span className="msg__correction-diff">
+                      {useDiff && ops
+                        ? renderDiff(ops)
+                        : entry.correction}
+                    </span>
+                    {original && (
+                      <button
+                        type="button"
+                        className="msg__correction-why"
+                        aria-label="Почему так?"
+                        onClick={(e) =>
+                          handleWhyTap(original, entry.correction!, e)
+                        }
+                      >
+                        🤔
+                      </button>
+                    )}
                   </span>
-                  {entry.correction}
-                </span>
-              )}
+                );
+              })()}
               <span className="msg__text">
                 {entry.role === "tutor"
                   ? renderWithTaps(entry.text, handleWordTap)
@@ -1449,6 +1517,18 @@ export default function App() {
           x={translateTarget.x}
           y={translateTarget.y}
           onClose={() => setTranslateTarget(null)}
+        />
+      )}
+
+      {explainTarget && (
+        <ExplainPopover
+          apiBase={API_BASE}
+          initData={WebApp.initData || ""}
+          original={explainTarget.original}
+          corrected={explainTarget.corrected}
+          x={explainTarget.x}
+          y={explainTarget.y}
+          onClose={() => setExplainTarget(null)}
         />
       )}
 

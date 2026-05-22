@@ -28,7 +28,7 @@ from .battle_api import router as battle_router
 from .config import settings
 from .db import db_session, init_db
 from .limits import LimitsContext, build_limits_context
-from .llm_providers import get_llm_provider, translate_word
+from .llm_providers import explain_correction, get_llm_provider, translate_word
 from .voice import run_voice_session
 
 # ─── Конфигурация логирования ──────────────────────────────────────────
@@ -401,6 +401,51 @@ async def translate(body: _TranslateIn) -> dict:
     _enforce_rate_limit(tg_id)
     translations = await _get_translation_cached(word, body.context)
     return {"word": word, "translations": translations}
+
+
+# ─── Объяснение correction'а: «🤔 почему?» в Mini App ─────────────────────────
+
+_EXPLAIN_CACHE: dict[tuple[str, str], str] = {}
+_EXPLAIN_CACHE_MAX = 1000
+
+
+class _ExplainIn(BaseModel):
+    init_data: str
+    original: str = Field(..., min_length=1, max_length=300)
+    corrected: str = Field(..., min_length=1, max_length=300)
+
+
+@app.post("/api/explain-correction", tags=["Translate"])
+async def explain_correction_endpoint(body: _ExplainIn) -> dict:
+    """Короткое объяснение по-русски, что не так с user-фразой.
+
+    Возвращает {explanation: str}. На ошибку LLM — пустая строка.
+    """
+    tg_id = _tg_id_from_init_data(body.init_data)
+    # Переиспользуем существующий rate-limit бакет с translate'ом.
+    _enforce_rate_limit(tg_id)
+
+    original = body.original.strip()[:200]
+    corrected = body.corrected.strip()[:200]
+    if not original or not corrected:
+        raise HTTPException(status_code=400, detail="empty_text")
+    key = (original.lower(), corrected.lower())
+
+    cached = _EXPLAIN_CACHE.get(key)
+    if cached is not None:
+        return {"explanation": cached}
+
+    llm = get_llm_provider()
+    text = await explain_correction(llm, original=original, corrected=corrected)
+
+    # FIFO-вытеснение при переполнении (как в translate-кеше).
+    if len(_EXPLAIN_CACHE) >= _EXPLAIN_CACHE_MAX:
+        try:
+            _EXPLAIN_CACHE.pop(next(iter(_EXPLAIN_CACHE)), None)
+        except StopIteration:
+            pass
+    _EXPLAIN_CACHE[key] = text
+    return {"explanation": text}
 
 
 # ─── WebSocket — голосовой диалог ─────────────────────────────────────────────
