@@ -410,10 +410,11 @@ async def _build_metrics() -> MetricsResponse:
 async def search_users(
     q: str = Query(default="", description="username, имя или tg_id"),
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> list[UserBrief]:
     async with db_session() as s:
         repo = Repo(s)
-        users = await repo.search_users(q, limit=limit)
+        users = await repo.search_users(q, limit=limit, offset=offset)
         return [await _user_to_brief(repo, u) for u in users]
 
 

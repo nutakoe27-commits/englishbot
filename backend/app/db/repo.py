@@ -510,10 +510,15 @@ class Repo:
         )
         return int(res.scalar() or 0)
 
-    async def search_users(self, query: str, limit: int = 50) -> Sequence[User]:
-        """Поиск юзеров по tg_id или username/имени. Пустой query = последние созданные."""
+    async def search_users(
+        self, query: str, limit: int = 50, offset: int = 0,
+    ) -> Sequence[User]:
+        """Поиск юзеров по tg_id или username/имени. Пустой query = последние созданные.
+
+        offset нужен для пагинации в админке (кнопка «Загрузить ещё»).
+        """
         q = (query or "").strip()
-        stmt = select(User).order_by(User.created_at.desc()).limit(limit)
+        stmt = select(User)
         if q:
             like = f"%{q}%"
             conds = [
@@ -523,12 +528,12 @@ class Repo:
             ]
             if q.lstrip("-").isdigit():
                 conds.append(User.tg_id == int(q))
-            stmt = (
-                select(User)
-                .where(or_(*conds))
-                .order_by(User.created_at.desc())
+            stmt = stmt.where(or_(*conds))
+        stmt = (
+            stmt.order_by(User.created_at.desc())
+                .offset(offset)
                 .limit(limit)
-            )
+        )
         res = await self.s.execute(stmt)
         return list(res.scalars().all())
 
