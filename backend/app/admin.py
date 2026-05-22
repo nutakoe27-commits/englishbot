@@ -304,6 +304,14 @@ async def me() -> dict:
     dependencies=[Depends(require_admin_token)],
 )
 async def metrics() -> MetricsResponse:
+    # /metrics — самый тяжёлый запрос в админке (десяток aggregate-запросов).
+    # Кешируем 60 сек: дашборд опрашивает его при каждом открытии админки,
+    # а данные меняются медленно. На single-process бэкенде хватает простого
+    # in-memory TTL (_cached_60s ниже).
+    return await _cached_60s("admin:metrics", _build_metrics)
+
+
+async def _build_metrics() -> MetricsResponse:
     from datetime import datetime
     from sqlalchemy import select, func
     from .db.models import Battle, UserQuest, User as UserModel
@@ -800,3 +808,90 @@ async def admin_quests_stats() -> dict:
         "completion_rate": round(total_completed / total_assigned, 3) if total_assigned else 0.0,
         "per_quest": per_quest,
     }
+
+
+# ─── Admin v2: charts/retention/sessions ─────────────────────────────────────
+# Для дашборда с графиками. Метрики тяжёлые (агрегаты по datetime/group by),
+# поэтому держим в памяти 60-сек TTL-кеш. На single-worker'е этого хватает;
+# multi-worker — кеш per-process, что приемлемо.
+
+import time as _time_mod  # noqa: E402
+
+_METRICS_CACHE: dict[str, tuple[float, object]] = {}
+_METRICS_TTL_SEC = 60.0
+
+
+async def _cached_60s(key: str, builder):
+    """key → cached value. builder — async callable, вызывается при miss."""
+    now = _time_mod.time()
+    hit = _METRICS_CACHE.get(key)
+    if hit is not None and now - hit[0] < _METRICS_TTL_SEC:
+        return hit[1]
+    val = await builder()
+    _METRICS_CACHE[key] = (now, val)
+    return val
+
+
+def _clamp_days(d: int) -> int:
+    return max(7, min(d, 90))
+
+
+@router.get("/charts/dau", dependencies=[Depends(require_admin_token)])
+async def chart_dau(days: int = Query(30, ge=7, le=90)) -> dict:
+    days = _clamp_days(days)
+
+    async def build():
+        async with db_session() as s:
+            return await Repo(s).dau_series(days)
+
+    series = await _cached_60s(f"dau:{days}", build)
+    return {"series": series}
+
+
+@router.get("/charts/new-users", dependencies=[Depends(require_admin_token)])
+async def chart_new_users(days: int = Query(30, ge=7, le=90)) -> dict:
+    days = _clamp_days(days)
+
+    async def build():
+        async with db_session() as s:
+            return await Repo(s).new_users_series(days)
+
+    series = await _cached_60s(f"new_users:{days}", build)
+    return {"series": series}
+
+
+@router.get("/charts/revenue", dependencies=[Depends(require_admin_token)])
+async def chart_revenue(days: int = Query(30, ge=7, le=90)) -> dict:
+    days = _clamp_days(days)
+
+    async def build():
+        async with db_session() as s:
+            return await Repo(s).revenue_series(days)
+
+    series = await _cached_60s(f"revenue:{days}", build)
+    return {"series": series}
+
+
+@router.get("/retention", dependencies=[Depends(require_admin_token)])
+async def retention(days: int = Query(30, ge=7, le=90)) -> dict:
+    days = _clamp_days(days)
+
+    async def build():
+        async with db_session() as s:
+            return await Repo(s).retention_cohort(days)
+
+    cohorts = await _cached_60s(f"retention:{days}", build)
+    return {"cohorts": cohorts}
+
+
+@router.get(
+    "/users/{user_id}/sessions",
+    dependencies=[Depends(require_admin_token)],
+)
+async def user_sessions(
+    user_id: int, limit: int = Query(30, ge=1, le=100)
+) -> dict:
+    """Список последних сессий юзера (без транскрипта диалога)."""
+    async with db_session() as s:
+        sessions = await Repo(s).user_sessions(user_id, limit)
+    return {"sessions": sessions}

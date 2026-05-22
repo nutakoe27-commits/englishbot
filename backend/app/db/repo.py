@@ -583,6 +583,148 @@ class Repo:
         )
         return list(res.scalars().all())
 
+    # ─── Timeseries для admin v2 dashboard ──────────────────────────────
+    # Все *_series возвращают РОВНО `days` точек, включая дни с value=0.
+    # Так фронту не нужно заполнять дырки самому.
+
+    async def dau_series(self, days: int = 30) -> list[dict]:
+        """[{date: 'YYYY-MM-DD', value: int}] — DAU по МСК-датам."""
+        days = max(1, min(days, 90))
+        since = msk_today() - timedelta(days=days - 1)
+        res = await self.s.execute(
+            select(
+                DailyUsage.usage_date,
+                func.count(func.distinct(DailyUsage.user_id)),
+            )
+            .where(DailyUsage.usage_date >= since)
+            .group_by(DailyUsage.usage_date)
+        )
+        by_date = {d: int(v) for d, v in res.all()}
+        return [
+            {"date": (since + timedelta(days=i)).isoformat(),
+             "value": by_date.get(since + timedelta(days=i), 0)}
+            for i in range(days)
+        ]
+
+    async def new_users_series(self, days: int = 30) -> list[dict]:
+        days = max(1, min(days, 90))
+        since = msk_today() - timedelta(days=days - 1)
+        res = await self.s.execute(
+            select(func.date(User.created_at), func.count(User.id))
+            .where(User.created_at >= datetime.combine(since, time.min))
+            .group_by(func.date(User.created_at))
+        )
+        by_date: dict[date, int] = {}
+        for d, v in res.all():
+            # func.date возвращает date или строку — нормализуем.
+            if isinstance(d, str):
+                d = date.fromisoformat(d)
+            by_date[d] = int(v)
+        return [
+            {"date": (since + timedelta(days=i)).isoformat(),
+             "value": by_date.get(since + timedelta(days=i), 0)}
+            for i in range(days)
+        ]
+
+    async def revenue_series(self, days: int = 30) -> list[dict]:
+        """Сумма успешных платежей по дням (UTC-датам created_at)."""
+        days = max(1, min(days, 90))
+        since = msk_today() - timedelta(days=days - 1)
+        res = await self.s.execute(
+            select(
+                func.date(Payment.created_at),
+                func.coalesce(func.sum(Payment.amount_rub), 0),
+            )
+            .where(
+                Payment.status == "succeeded",
+                Payment.created_at >= datetime.combine(since, time.min),
+            )
+            .group_by(func.date(Payment.created_at))
+        )
+        by_date: dict[date, float] = {}
+        for d, v in res.all():
+            if isinstance(d, str):
+                d = date.fromisoformat(d)
+            by_date[d] = float(v or 0)
+        return [
+            {"date": (since + timedelta(days=i)).isoformat(),
+             "value": by_date.get(since + timedelta(days=i), 0.0)}
+            for i in range(days)
+        ]
+
+    async def retention_cohort(self, days: int = 30) -> list[dict]:
+        """Cohort-retention D1/D7/D30 за последние N дней регистраций.
+
+        Если cohort моложе порога (например, 5-дневный cohort и d7) —
+        возвращаем null, чтобы UI нарисовал «—» вместо нечестного 0%.
+        """
+        from sqlalchemy import text
+        days = max(1, min(days, 90))
+        sql = text(
+            """
+            SELECT
+              DATE(u.created_at) AS cohort_date,
+              COUNT(DISTINCT u.id) AS size,
+              COUNT(DISTINCT IF(du.usage_date = DATE(u.created_at) + INTERVAL 1 DAY,
+                                du.user_id, NULL)) AS d1,
+              COUNT(DISTINCT IF(du.usage_date = DATE(u.created_at) + INTERVAL 7 DAY,
+                                du.user_id, NULL)) AS d7,
+              COUNT(DISTINCT IF(du.usage_date = DATE(u.created_at) + INTERVAL 30 DAY,
+                                du.user_id, NULL)) AS d30
+            FROM users u
+            LEFT JOIN daily_usage du ON du.user_id = u.id
+            WHERE u.created_at >= CURDATE() - INTERVAL :days DAY
+            GROUP BY cohort_date
+            ORDER BY cohort_date DESC
+            """
+        )
+        res = await self.s.execute(sql, {"days": days})
+        today = msk_today()
+        out: list[dict] = []
+        for r in res.mappings().all():
+            cd = r["cohort_date"]
+            if isinstance(cd, datetime):
+                cd = cd.date()
+            elif isinstance(cd, str):
+                cd = date.fromisoformat(cd)
+            age = (today - cd).days
+            out.append({
+                "cohort_date": cd.isoformat(),
+                "size": int(r["size"] or 0),
+                "d1": int(r["d1"] or 0) if age >= 1 else None,
+                "d7": int(r["d7"] or 0) if age >= 7 else None,
+                "d30": int(r["d30"] or 0) if age >= 30 else None,
+            })
+        return out
+
+    async def user_sessions(
+        self, user_id: int, limit: int = 30
+    ) -> list[dict]:
+        """Последние сессии юзера (метаданные, без транскриптов)."""
+        limit = max(1, min(limit, 100))
+        res = await self.s.execute(
+            select(
+                SessionRow.id, SessionRow.started_at, SessionRow.ended_at,
+                SessionRow.used_seconds, SessionRow.mode,
+                SessionRow.level, SessionRow.role,
+            )
+            .where(SessionRow.user_id == user_id)
+            .order_by(SessionRow.started_at.desc())
+            .limit(limit)
+        )
+        return [
+            {
+                "id": int(row.id),
+                "started_at": row.started_at.isoformat() if row.started_at else None,
+                "ended_at": row.ended_at.isoformat() if row.ended_at else None,
+                "used_seconds": int(row.used_seconds),
+                "mode": row.mode,
+                "level": row.level,
+                "role": row.role,
+            }
+            for row in res.all()
+        ]
+
     # ─── Массовые операции ──────────────────────────────────────────────
     async def get_active_subscribers(self) -> Sequence[User]:
         """Юзеры с активной подпиской сейчас (subscription_until > now)."""

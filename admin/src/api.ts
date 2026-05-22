@@ -237,6 +237,23 @@ export const api = {
       { method: "POST" }
     ),
 
+  // ─── Admin v2: charts / retention / sessions ───────────
+  chartSeries: (
+    metric: "dau" | "new-users" | "revenue",
+    days = 30,
+  ) =>
+    request<{ series: ChartPoint[] }>(
+      `/api/admin/charts/${metric}?days=${days}`,
+    ),
+  retention: (days = 30) =>
+    request<{ cohorts: RetentionCohort[] }>(
+      `/api/admin/retention?days=${days}`,
+    ),
+  userSessions: (userId: number, limit = 30) =>
+    request<{ sessions: UserSession[] }>(
+      `/api/admin/users/${userId}/sessions?limit=${limit}`,
+    ),
+
   // ─── Battle Mode & Daily Quests ────────────────────────
   battlesList: (limit = 50, status?: string) => {
     const qs = new URLSearchParams({ limit: String(limit) });
@@ -298,4 +315,29 @@ export interface QuestsStats {
   total_expired: number;
   completion_rate: number;
   per_quest: QuestStatRow[];
+}
+
+// ─── Admin v2 ───────────────────────────────────────────
+
+export interface ChartPoint {
+  date: string;
+  value: number;
+}
+
+export interface RetentionCohort {
+  cohort_date: string;
+  size: number;
+  d1: number | null;
+  d7: number | null;
+  d30: number | null;
+}
+
+export interface UserSession {
+  id: number;
+  started_at: string | null;
+  ended_at: string | null;
+  used_seconds: number;
+  mode: string;
+  level: string | null;
+  role: string | null;
 }
