@@ -586,19 +586,31 @@ function RetentionTable({ data }: { data: RetentionCohort[] | null }) {
 }
 
 // ─── Users list ──────────────────────────────────────────────────────────────
+const USERS_PAGE = 50;
+
 function UsersList() {
   const [q, setQ] = useState("");
+  // appliedQ — текущий "зафиксированный" запрос, по которому уже идёт
+  // пагинация. Меняем только при submit/Enter, чтобы не дёргать запрос
+  // на каждый keypress.
+  const [appliedQ, setAppliedQ] = useState("");
   const [items, setItems] = useState<UserBrief[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [_, navigate] = useRoute();
 
-  const load = async (query: string) => {
+  const loadPage = async (query: string, offset: number) => {
     setLoading(true);
     setErr(null);
     try {
-      const list = await api.users(query);
-      setItems(Array.isArray(list) ? list : []);
+      const list = await api.users(query, USERS_PAGE, offset);
+      const batch = Array.isArray(list) ? list : [];
+      setItems((prev) => {
+        const base = offset === 0 || prev === null ? [] : prev;
+        return [...base, ...batch];
+      });
+      setHasMore(batch.length === USERS_PAGE);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -607,12 +619,20 @@ function UsersList() {
   };
 
   useEffect(() => {
-    load("");
+    loadPage("", 0);
   }, []);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    load(q);
+    setAppliedQ(q);
+    setItems([]);
+    setHasMore(true);
+    loadPage(q, 0);
+  };
+
+  const loadMore = () => {
+    if (loading || !hasMore || items === null) return;
+    loadPage(appliedQ, items.length);
   };
 
   return (
@@ -694,6 +714,28 @@ function UsersList() {
                 ))}
               </tbody>
             </table>
+          )}
+          {items.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                marginTop: 12,
+                gap: 12,
+                alignItems: "center",
+              }}
+            >
+              <span style={S.muted}>Показано: {items.length}</span>
+              {hasMore && (
+                <button
+                  style={S.btnSecondary}
+                  onClick={loadMore}
+                  disabled={loading}
+                >
+                  {loading ? "Загружаем…" : "Загрузить ещё"}
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

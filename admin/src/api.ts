@@ -177,9 +177,9 @@ export interface BroadcastStatusResponse {
 export const api = {
   me: (token?: string) => request<{ ok: boolean }>("/api/admin/me", { token }),
   metrics: () => request<Metrics>("/api/admin/metrics"),
-  users: (q: string, limit = 50) =>
+  users: (q: string, limit = 50, offset = 0) =>
     request<UserBrief[]>(
-      `/api/admin/users?q=${encodeURIComponent(q)}&limit=${limit}`
+      `/api/admin/users?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`,
     ),
   user: (id: number) => request<UserDetail>(`/api/admin/users/${id}`),
   grant: (

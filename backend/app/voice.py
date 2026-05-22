@@ -289,6 +289,22 @@ async def _run_chat_session(
     history: list[dict] = []
     chat_session_start = asyncio.get_event_loop().time()
 
+    # Запись сессии в БД для админ-вкладки «Сессии».
+    chat_session_db_id: Optional[int] = None
+    if limits_ctx is not None:
+        try:
+            from .db import Repo, db_session
+            async with db_session() as db:
+                row = await Repo(db).open_session(
+                    user_id=limits_ctx.user_db_id,
+                    mode="chat",
+                    level=session_settings.level,
+                    role=session_settings.role,
+                )
+                chat_session_db_id = int(row.id)
+        except Exception as exc:
+            logger.warning("[chat] open_session failed: %r", exc)
+
     watchdog: Optional[asyncio.Task] = (
         asyncio.create_task(_usage_watchdog(websocket, limits_ctx))
         if limits_ctx is not None
@@ -403,6 +419,16 @@ async def _run_chat_session(
             except asyncio.CancelledError:
                 pass
         duration_sec = int(asyncio.get_event_loop().time() - chat_session_start)
+        if chat_session_db_id is not None:
+            try:
+                from .db import Repo, db_session
+                async with db_session() as db:
+                    await Repo(db).close_session(
+                        session_id=chat_session_db_id,
+                        used_seconds=duration_sec,
+                    )
+            except Exception as exc:
+                logger.warning("[chat] close_session failed: %r", exc)
         asyncio.create_task(_bump_streak_after_session(
             limits_ctx=limits_ctx,
             duration_sec=duration_sec,
@@ -883,6 +909,23 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
     )
 
     session_start = asyncio.get_event_loop().time()
+    # Открываем запись сессии в БД — нужна для админ-вкладки «Сессии» и
+    # для будущей analytics. Best-effort: если БД упала, voice продолжает.
+    session_db_id: Optional[int] = None
+    if limits_ctx is not None:
+        try:
+            from .db import Repo, db_session
+            async with db_session() as db:
+                repo = Repo(db)
+                row = await repo.open_session(
+                    user_id=limits_ctx.user_db_id,
+                    mode="voice",
+                    level=session_settings.level,
+                    role=session_settings.role,
+                )
+                session_db_id = int(row.id)
+        except Exception as exc:
+            logger.warning("[voice] open_session failed: %r", exc)
     try:
         wait_set = {recv_task, proc_task}
         if watchdog_task is not None:
@@ -899,6 +942,17 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
         await asyncio.gather(*pending, return_exceptions=True)
     finally:
         duration_sec = int(asyncio.get_event_loop().time() - session_start)
+        # Закрываем запись сессии в БД (если открылась).
+        if session_db_id is not None:
+            try:
+                from .db import Repo, db_session
+                async with db_session() as db:
+                    await Repo(db).close_session(
+                        session_id=session_db_id,
+                        used_seconds=duration_sec,
+                    )
+            except Exception as exc:
+                logger.warning("[voice] close_session failed: %r", exc)
         # Streak: фиксируем сегодняшнюю практику + последнюю роль.
         asyncio.create_task(_bump_streak_after_session(
             limits_ctx=limits_ctx,
