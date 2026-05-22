@@ -1241,6 +1241,61 @@ button {
   font-size: 13px;
   line-height: 1.5;
   font-style: normal;
+  flex-shrink: 0;
+}
+
+/* Diff внутри correction-плашки. */
+.msg__correction-diff {
+  flex: 1;
+  font-style: normal;
+}
+.msg__correction-diff del {
+  color: #ff9c9c;
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: rgba(255, 156, 156, 0.7);
+  opacity: 0.85;
+}
+.msg__correction-diff ins {
+  color: #b8ffc4;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+/* Кнопка «🤔 почему?» в плашке correction. */
+.msg__correction-why {
+  appearance: none;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--text);
+  border-radius: 999px;
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.msg__correction-why:hover,
+.msg__correction-why:active {
+  background: rgba(164, 137, 255, 0.25);
+  border-color: rgba(164, 137, 255, 0.55);
+}
+
+/* ExplainPopover — переиспользует базовый translate-popover класс,
+   добавлен оверрайд для длинного русского текста. */
+.explain-popover .explain-popover__text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  margin-top: 4px;
+  white-space: pre-wrap;
 }
 
 /* ─── Post-session summary overlay ──────────────────────────────────── */

@@ -269,6 +269,56 @@ async def translate_word(
     return result
 
 
+# ─── Объяснение correction'а (для кнопки «🤔 почему?») ─────────────────────────
+
+_EXPLAIN_SYSTEM_PROMPT = (
+    "You are an English tutor explaining ONE small mistake to a Russian learner.\n"
+    "Reply in Russian, 1-2 short sentences. Focus on the SINGLE rule violated.\n"
+    "No code, no markdown, no lists. Plain conversational explanation.\n\n"
+    "Example:\n"
+    "User: I am working there for 5 years.\n"
+    "Correct: I have been working there for 5 years.\n"
+    "Assistant: Здесь нужен Present Perfect Continuous («have been working»), "
+    "потому что действие началось в прошлом и продолжается до сих пор."
+)
+
+
+async def explain_correction(
+    llm: "VLLMProvider",
+    *,
+    original: str,
+    corrected: str,
+) -> str:
+    """Просит LLM кратко объяснить по-русски, что не так с фразой юзера.
+
+    Возвращает текст объяснения (≤400 символов) или "" на ошибку.
+    """
+    original = (original or "").strip()
+    corrected = (corrected or "").strip()
+    if not original or not corrected:
+        return ""
+    user_payload = (
+        f"User: {original}\n"
+        f"Correct: {corrected}\n"
+        "Explain in Russian, 1-2 sentences. Focus on the one rule violated."
+    )
+    try:
+        raw = await llm.complete(
+            user_text=user_payload,
+            history=[],
+            system_prompt=_EXPLAIN_SYSTEM_PROMPT,
+        )
+    except Exception as exc:
+        logger.warning("[explain] LLM error: %r", exc)
+        return ""
+
+    cleaned = _strip_reasoning(raw).strip()
+    if not cleaned or cleaned.lower().startswith("sorry"):
+        logger.warning("[explain] пустой/sorry ответ raw=%r", raw[:200])
+        return ""
+    return cleaned[:400]
+
+
 # ─── Фабрика ─────────────────────────────────────────────────────────────────
 
 def get_llm_provider() -> LLMProvider:
