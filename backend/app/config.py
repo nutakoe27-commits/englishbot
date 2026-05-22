@@ -22,8 +22,10 @@ class Settings(BaseSettings):
     BOT_TOKEN: Optional[str] = None
 
     # ─── База данных ──────────────────────────────────────────────────────
-    # Формат: mysql+aiomysql://user:password@host:port/dbname?charset=utf8mb4
-    # На VPS: mysql+aiomysql://englishbot:PWD@host.docker.internal:3306/englishbot?charset=utf8mb4
+    # Формат: mysql+asyncmy://user:password@host:port/dbname?charset=utf8mb4
+    # На VPS: mysql+asyncmy://englishbot:PWD@host.docker.internal:3306/englishbot?charset=utf8mb4
+    # Старые .env с mysql+aiomysql://… продолжают работать — engine.py
+    # автоматически нормализует префикс при инициализации.
     DATABASE_URL: Optional[str] = None
 
     # ─── Админы ────────────────────────────────────────────────────────────

@@ -191,7 +191,7 @@ nano /var/www/englishbot/.env
 
 ```ini
 # ─── База данных ─────────────────────────────────────────────────────────
-DATABASE_URL=mysql+aiomysql://englishbot:<СЛОЖНЫЙ_ПАРОЛЬ>@host.docker.internal:3306/englishbot?charset=utf8mb4
+DATABASE_URL=mysql+asyncmy://englishbot:<СЛОЖНЫЙ_ПАРОЛЬ>@host.docker.internal:3306/englishbot?charset=utf8mb4
 
 # ─── Админы ──────────────────────────────────────────────────────────────
 # Свой Telegram ID можно узнать у @userinfobot
