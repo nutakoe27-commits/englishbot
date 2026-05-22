@@ -8,12 +8,26 @@ import {
   type BattleRow,
   type BattlesStats,
   type BroadcastJobStatus,
+  type ChartPoint,
   type Metrics,
   type PaymentRecord,
   type QuestsStats,
+  type RetentionCohort,
   type UserBrief,
   type UserDetail,
+  type UserSession,
 } from "./api";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from "recharts";
 import {
   S,
   colors,
@@ -233,18 +247,32 @@ function Shell({ onLogout }: { onLogout: () => void }) {
 function Dashboard() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [payments, setPayments] = useState<PaymentRecord[] | null>(null);
+  const [dauSeries, setDauSeries] = useState<ChartPoint[] | null>(null);
+  const [revSeries, setRevSeries] = useState<ChartPoint[] | null>(null);
+  const [newUsersSeries, setNewUsersSeries] = useState<ChartPoint[] | null>(null);
+  const [retention, setRetention] = useState<RetentionCohort[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [_dashRoute, dashNavigate] = useRoute();
 
   const load = async () => {
     setErr(null);
     try {
-      const [m, p] = await Promise.all([
+      // Графики и retention тянем параллельно с основными метриками — их
+      // ошибки не должны убивать основной дашборд (catch → пустые массивы).
+      const [m, p, dau, rev, nu, ret] = await Promise.all([
         api.metrics(),
         api.recentPayments().catch(() => [] as PaymentRecord[]),
+        api.chartSeries("dau", 30).catch(() => ({ series: [] as ChartPoint[] })),
+        api.chartSeries("revenue", 30).catch(() => ({ series: [] as ChartPoint[] })),
+        api.chartSeries("new-users", 30).catch(() => ({ series: [] as ChartPoint[] })),
+        api.retention(30).catch(() => ({ cohorts: [] as RetentionCohort[] })),
       ]);
       setMetrics(m);
       setPayments(Array.isArray(p) ? p : []);
+      setDauSeries(dau.series);
+      setRevSeries(rev.series);
+      setNewUsersSeries(nu.series);
+      setRetention(ret.cohorts);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -399,6 +427,160 @@ function Dashboard() {
           </table>
         )}
       </div>
+
+      <ChartBlock
+        title="DAU за 30 дней"
+        data={dauSeries}
+        color={colors.primary}
+        kind="line"
+      />
+      <ChartBlock
+        title="Выручка за 30 дней (₽)"
+        data={revSeries}
+        color={colors.success}
+        kind="bar"
+        valueFormatter={(v) => `${v.toLocaleString("ru-RU")} ₽`}
+      />
+      <ChartBlock
+        title="Новые юзеры за 30 дней"
+        data={newUsersSeries}
+        color={colors.warning}
+        kind="bar"
+      />
+
+      <RetentionTable data={retention} />
+    </div>
+  );
+}
+
+// ─── Чарты и retention для дашборда ──────────────────────────────────────────
+
+function ChartBlock({
+  title,
+  data,
+  color,
+  kind,
+  valueFormatter,
+}: {
+  title: string;
+  data: ChartPoint[] | null;
+  color: string;
+  kind: "line" | "bar";
+  valueFormatter?: (v: number) => string;
+}) {
+  if (data === null) {
+    return (
+      <div style={S.chartCard}>
+        <h3 style={S.chartTitle}>{title}</h3>
+        <div style={S.muted}>Загрузка…</div>
+      </div>
+    );
+  }
+  if (data.length === 0) {
+    return (
+      <div style={S.chartCard}>
+        <h3 style={S.chartTitle}>{title}</h3>
+        <div style={S.muted}>Нет данных</div>
+      </div>
+    );
+  }
+  // Короткая ось X: ДД.ММ, потому что 30 точек YYYY-MM-DD не влезает.
+  const formatted = data.map((p) => ({
+    ...p,
+    label: p.date.slice(5).replace("-", "."),
+  }));
+  return (
+    <div style={S.chartCard}>
+      <h3 style={S.chartTitle}>{title}</h3>
+      <div style={{ width: "100%", height: 220 }}>
+        <ResponsiveContainer>
+          {kind === "line" ? (
+            <LineChart data={formatted} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
+              <CartesianGrid stroke={colors.border} strokeDasharray="3 3" />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: colors.textMuted }} />
+              <YAxis tick={{ fontSize: 11, fill: colors.textMuted }} allowDecimals={false} />
+              <Tooltip
+                formatter={(v: number) =>
+                  valueFormatter ? valueFormatter(v) : String(v)
+                }
+                labelStyle={{ color: colors.text }}
+              />
+              <Line
+                type="monotone"
+                dataKey="value"
+                stroke={color}
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          ) : (
+            <BarChart data={formatted} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
+              <CartesianGrid stroke={colors.border} strokeDasharray="3 3" />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: colors.textMuted }} />
+              <YAxis tick={{ fontSize: 11, fill: colors.textMuted }} allowDecimals={false} />
+              <Tooltip
+                formatter={(v: number) =>
+                  valueFormatter ? valueFormatter(v) : String(v)
+                }
+                labelStyle={{ color: colors.text }}
+              />
+              <Bar dataKey="value" fill={color} isAnimationActive={false} />
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function RetentionTable({ data }: { data: RetentionCohort[] | null }) {
+  if (data === null) {
+    return (
+      <div style={S.chartCard}>
+        <h3 style={S.chartTitle}>Retention по cohort'ам (D1 / D7 / D30)</h3>
+        <div style={S.muted}>Загрузка…</div>
+      </div>
+    );
+  }
+  if (data.length === 0) {
+    return (
+      <div style={S.chartCard}>
+        <h3 style={S.chartTitle}>Retention по cohort'ам (D1 / D7 / D30)</h3>
+        <div style={S.muted}>Нет данных</div>
+      </div>
+    );
+  }
+  const cell = (val: number | null, size: number) => {
+    if (val === null) return "—";
+    const pct = size > 0 ? Math.round((val / size) * 100) : 0;
+    return `${val} (${pct}%)`;
+  };
+  return (
+    <div style={S.chartCard}>
+      <h3 style={S.chartTitle}>Retention по cohort'ам (D1 / D7 / D30)</h3>
+      <table style={S.table}>
+        <thead>
+          <tr>
+            <th style={S.th}>Cohort</th>
+            <th style={S.th}>Size</th>
+            <th style={S.th}>D1</th>
+            <th style={S.th}>D7</th>
+            <th style={S.th}>D30</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((c) => (
+            <tr key={c.cohort_date}>
+              <td style={S.td}>{c.cohort_date}</td>
+              <td style={S.td}>{c.size}</td>
+              <td style={S.td}>{cell(c.d1, c.size)}</td>
+              <td style={S.td}>{cell(c.d7, c.size)}</td>
+              <td style={S.td}>{cell(c.d30, c.size)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -524,6 +706,7 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
   const [u, setU] = useState<UserDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [tab, setTab] = useState<"overview" | "sessions">("overview");
 
   const load = async () => {
     setErr(null);
@@ -567,8 +750,26 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
       {msg && <div style={{ ...S.success, marginTop: 12 }}>{msg}</div>}
       {err && <div style={{ ...S.error, marginTop: 12 }}>{err}</div>}
 
+      <div style={{ ...S.tabs, marginTop: 16 }}>
+        <button
+          style={tab === "overview" ? S.tabActive : S.tab}
+          onClick={() => setTab("overview")}
+        >
+          Обзор
+        </button>
+        <button
+          style={tab === "sessions" ? S.tabActive : S.tab}
+          onClick={() => setTab("sessions")}
+        >
+          Сессии
+        </button>
+      </div>
+
+      {tab === "sessions" && <SessionsTab userId={id} />}
+      {tab === "overview" && (
+        <>
       {/* ── Статус ──────────────────────── */}
-      <div style={{ ...S.card, marginTop: 16 }}>
+      <div style={{ ...S.card, marginTop: 0 }}>
         <h3 style={S.h3}>Статус</h3>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <StatusPill
@@ -717,6 +918,87 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
 
       {/* ── Напоминание ─────────────────── */}
       <ReminderCard user={u} onDone={(nu) => setU(nu)} />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Sessions tab (на UserPage) ──────────────────────────────────────────────
+
+function SessionsTab({ userId }: { userId: number }) {
+  const [sessions, setSessions] = useState<UserSession[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSessions(null);
+    setErr(null);
+    api
+      .userSessions(userId, 30)
+      .then((r) => {
+        if (!cancelled) setSessions(r.sessions);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setErr(e instanceof Error ? e.message : String(e));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  if (err) return <div style={S.error}>{err}</div>;
+  if (sessions === null) return <div style={S.muted}>Загружаем…</div>;
+  if (sessions.length === 0) {
+    return (
+      <div style={S.card}>
+        <div style={S.muted}>Юзер ещё не занимался.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={S.card}>
+      <h3 style={S.h3}>Последние сессии</h3>
+      <table style={S.table}>
+        <thead>
+          <tr>
+            <th style={S.th}>Дата/время</th>
+            <th style={S.th}>Длительность</th>
+            <th style={S.th}>Режим</th>
+            <th style={S.th}>Уровень</th>
+            <th style={S.th}>Роль</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sessions.map((s) => (
+            <tr key={s.id}>
+              <td style={S.td}>{fmtDate(s.started_at)}</td>
+              <td style={S.td}>
+                {fmtSeconds(s.used_seconds)}
+                {s.ended_at === null && (
+                  <span style={{ ...S.muted, marginLeft: 6 }}>(в процессе)</span>
+                )}
+              </td>
+              <td style={S.td}>
+                <span
+                  style={
+                    s.mode === "voice"
+                      ? S.modeBadgeVoice
+                      : S.modeBadgeChat
+                  }
+                >
+                  {s.mode}
+                </span>
+              </td>
+              <td style={S.td}>{s.level || "—"}</td>
+              <td style={S.td}>{s.role || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
