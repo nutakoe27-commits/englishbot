@@ -1,7 +1,10 @@
 """SQLAlchemy async engine + session factory.
 
 Подключение задаётся через DATABASE_URL в .env, формат:
-    mysql+aiomysql://user:password@host:port/dbname?charset=utf8mb4
+    mysql+asyncmy://user:password@host:port/dbname?charset=utf8mb4
+
+Старые .env с mysql+aiomysql://… нормализуются автоматически (aiomysql
+заменён на asyncmy из-за бага ping(reconnect) в AsyncAdapt-обёртке).
 
 Если DATABASE_URL не задан — engine не создаётся, вся работа с БД
 выкидывает RuntimeError. Это позволяет постепенно включать БД-
@@ -38,6 +41,12 @@ def init_db() -> bool:
         return False
     if _engine is not None:
         return True
+    # Бесшовный переход с aiomysql на asyncmy: у aiomysql 0.2.0
+    # AsyncAdapt-обёртка ломает pool_pre_ping (TypeError в ping()).
+    # Старый .env с mysql+aiomysql://… продолжает работать.
+    if url.startswith("mysql+aiomysql://"):
+        url = "mysql+asyncmy://" + url[len("mysql+aiomysql://"):]
+        log.warning("[db] URL normalized: aiomysql → asyncmy")
     log.info("Инициализация БД, URL=%s", _mask_url(url))
     _engine = create_async_engine(
         url,

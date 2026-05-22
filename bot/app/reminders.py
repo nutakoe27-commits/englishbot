@@ -151,6 +151,10 @@ def _init_engine() -> bool:
     if not db_url:
         logger.warning("DATABASE_URL не задан — напоминания и /reminder отключены")
         return False
+    # Бесшовный переход с aiomysql на asyncmy — см. backend/app/db/engine.py.
+    if db_url.startswith("mysql+aiomysql://"):
+        db_url = "mysql+asyncmy://" + db_url[len("mysql+aiomysql://"):]
+        logger.warning("[reminders] URL normalized: aiomysql → asyncmy")
     try:
         _engine = create_async_engine(db_url, pool_pre_ping=True, pool_size=5)
         _SessionMaker = async_sessionmaker(_engine, expire_on_commit=False)
