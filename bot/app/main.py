@@ -1680,6 +1680,10 @@ async def main() -> None:
     if is_db_ready():
         logger.info("Starting reminders loop (DB ready)")
         asyncio.create_task(reminders_loop(bot, MINIAPP_URL))
+        # Win-back: реактивирует юзеров, не заходивших 3+ дня (миграция 0007).
+        from .reminders import winback_loop
+        asyncio.create_task(winback_loop(bot, MINIAPP_URL))
+        logger.info("Starting winback loop (DB ready)")
     else:
         logger.warning(
             "Reminders loop NOT started — DATABASE_URL not set or DB not reachable"

@@ -444,6 +444,10 @@ async def _run_chat_session(
                 role=session_settings.role,
                 duration_sec=duration_sec,
             ))
+            asyncio.create_task(_check_achievements_hook(
+                user_db_id=limits_ctx.user_db_id,
+                user_tg_id=limits_ctx.tg_id,
+            ))
         logger.warning("[chat] сессия завершена для %s (%dс)", websocket.client, duration_sec)
 
 
@@ -971,6 +975,11 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                 role=session_settings.role,
                 duration_sec=duration_sec,
             ))
+            # Achievements: после streak/recap/quest проверяем новые медали.
+            asyncio.create_task(_check_achievements_hook(
+                user_db_id=limits_ctx.user_db_id,
+                user_tg_id=limits_ctx.tg_id,
+            ))
         logger.warning("[voice] сессия завершена для %s (%dс)", websocket.client, duration_sec)
 
 
@@ -1007,6 +1016,55 @@ async def _capture_session_recap_hook(*, limits_ctx, history: list[dict], durati
             await session.commit()
     except Exception as exc:
         logger.warning("[voice][recap] capture failed: %s", exc)
+
+
+async def _check_achievements_hook(*, user_db_id: int, user_tg_id: int) -> None:
+    """Async fire-and-forget: после сессии проверяет новые медали.
+
+    На каждую выданную — push в TG через bot helper. Если бот недоступен
+    (нет BOT_TOKEN), медаль всё равно сохраняется в БД, юзер увидит её
+    в mini-app на экране «Мой прогресс».
+    """
+    import httpx as _httpx
+    # Один клиент на серию push'ей одной сессии — обычно 1-2 медали.
+    _client: Optional[_httpx.AsyncClient] = None
+    try:
+        from .achievements import check_and_award
+        from .db import Repo, db_session
+
+        async def notifier(ach) -> None:
+            nonlocal _client
+            try:
+                from . import broadcast as broadcast_mod
+                if _client is None:
+                    _client = _httpx.AsyncClient(timeout=10.0)
+                text = (
+                    f"{ach.icon} Новая медаль: {ach.title_ru}\n"
+                    f"{ach.description_ru}"
+                )
+                await broadcast_mod.send_message_to_tg(_client, user_tg_id, text)
+            except Exception as exc:
+                logger.warning("[achievements] tg push failed: %r", exc)
+
+        async with db_session() as session:
+            new_medals = await check_and_award(
+                Repo(session), user_db_id, notifier=notifier,
+            )
+            await session.commit()
+        if new_medals:
+            logger.warning(
+                "[achievements] user_db_id=%s awarded %d: %s",
+                user_db_id, len(new_medals),
+                ",".join(a.key for a in new_medals),
+            )
+    except Exception as exc:
+        logger.warning("[achievements] check_and_award failed: %r", exc)
+    finally:
+        if _client is not None:
+            try:
+                await _client.aclose()
+            except Exception:
+                pass
 
 
 async def _bump_streak_after_session(

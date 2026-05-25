@@ -448,6 +448,104 @@ async def explain_correction_endpoint(body: _ExplainIn) -> dict:
     return {"explanation": text}
 
 
+# ─── Retention v1: /api/me/progress + /api/me/achievements ──────────────────
+
+@app.get("/api/me/progress", tags=["Me"])
+async def me_progress(init_data: str = "") -> dict:
+    """Сводка прогресса для экрана «Мой прогресс» в mini-app."""
+    from fastapi import HTTPException, status
+    tg_id = _tg_id_from_init_data(init_data)
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.get_user_by_tg_id(tg_id)
+        if user is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
+        streak_current, streak_best, last_practice = await repo.get_streak(user.id)
+        total_seconds = await repo.user_total_seconds(user.id)
+        total_sessions = await repo.user_total_sessions(user.id)
+        total_words = await repo.count_user_words(user.id)
+        daily = await repo.user_daily_usage_series(user.id, days=30)
+    return {
+        "streak": {
+            "current": streak_current,
+            "best": streak_best,
+            "last_practice_date": last_practice.isoformat() if last_practice else None,
+        },
+        "total_minutes": total_seconds // 60,
+        "total_sessions": total_sessions,
+        "total_words": total_words,
+        "daily_usage": daily,
+    }
+
+
+@app.get("/api/me/achievements", tags=["Me"])
+async def me_achievements(init_data: str = "") -> dict:
+    """Каталог медалей с пометками earned/locked и current_value по каждой."""
+    from fastapi import HTTPException, status
+    from .achievements import ACHIEVEMENTS, collect_user_metrics, get_earned_keys
+    from .db import Repo
+
+    tg_id = _tg_id_from_init_data(init_data)
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.get_user_by_tg_id(tg_id)
+        if user is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
+        metrics = await collect_user_metrics(repo, user.id)
+        earned_keys = await get_earned_keys(repo, user.id)
+    return {
+        "achievements": [
+            {
+                "key": ach.key,
+                "title_ru": ach.title_ru,
+                "description_ru": ach.description_ru,
+                "icon": ach.icon,
+                "metric": ach.metric,
+                "target": ach.target,
+                "current_value": int(metrics.get(ach.metric, 0)),
+                "earned": ach.key in earned_keys,
+            }
+            for ach in ACHIEVEMENTS
+        ],
+    }
+
+
+# Backfill достижений для существующих юзеров — единоразово при старте.
+# Иначе при первой же сессии каждый активный юзер получит burst из 5+
+# push'ей. Маркер хранится в settings_kv['achievements_backfilled'].
+@app.on_event("startup")
+async def _backfill_achievements_on_startup() -> None:
+    if not settings.DATABASE_URL:
+        return
+    try:
+        from .achievements import backfill_existing_users
+        from .db import Repo
+        async with db_session() as session:
+            repo = Repo(session)
+            done = await repo.get_kv("achievements_backfilled")
+            if done == "1":
+                logging.getLogger(__name__).warning(
+                    "[achievements] backfill: already done"
+                )
+                return
+            users_n, medals_n = await backfill_existing_users(repo)
+            await repo.set_kv("achievements_backfilled", "1")
+            await session.commit()
+        logging.getLogger(__name__).warning(
+            "[achievements] backfill: %d users processed, %d medals seeded",
+            users_n, medals_n,
+        )
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[achievements] backfill failed: %r", exc,
+        )
+
+
 # ─── WebSocket — голосовой диалог ─────────────────────────────────────────────
 
 @app.websocket("/ws/voice")

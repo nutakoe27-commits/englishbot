@@ -62,6 +62,8 @@ class _User(_Base):
     learning_goal: Mapped[Optional[str]] = mapped_column(String(32))
     # Миграция 0005 — роль из последней сессии для умной выдачи role-quest.
     last_session_role: Mapped[Optional[str]] = mapped_column(String(64))
+    # Миграция 0007 — анти-спам для win-back-рассылки (не чаще 1/7 дней).
+    last_winback_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
 class _DailyUsage(_Base):
@@ -185,10 +187,39 @@ REMINDER_TEXT_FREE_PERIOD = (
 )
 
 
-def _render_reminder_text() -> str:
-    """Текст напоминания в зависимости от режима (Free Period vs обычный)."""
+def _render_reminder_text(user: Optional["_User"] = None) -> str:
+    """Текст напоминания. Если передан user — пытаемся подобрать
+    персонализированный вариант по streak/last_practice_date.
+
+    Без user или для streak=0 + новичков — старый generic-текст
+    (FREE_PERIOD имеет приоритет, чтобы сохранить акцию).
+    """
     if os.getenv("FREE_PERIOD", "0") == "1":
         return REMINDER_TEXT_FREE_PERIOD
+    if user is None:
+        return REMINDER_TEXT
+
+    streak = int(user.streak_days or 0)
+    if streak >= 30:
+        return (
+            f"🔥 <b>Стрик {streak} дней</b> — это уже привычка. "
+            "Не дай ему сгореть: 2 минуты сегодня — и плюс к рекорду."
+        )
+    if streak >= 7:
+        return (
+            f"🔥 <b>Стрик {streak} дней!</b> Не теряй темп — 2 минуты, "
+            "и поедем дальше."
+        )
+    if streak >= 3:
+        return (
+            f"У тебя стрик <b>{streak}</b>. Добьём до 7? "
+            "Сегодня — твоя минута."
+        )
+    if user.last_practice_date is None:
+        return (
+            "👋 Открой mini-app и поговори со мной по-английски — "
+            "2 минуты и ты в потоке."
+        )
     return REMINDER_TEXT
 
 
@@ -694,7 +725,7 @@ async def _send_reminders_for_hour(bot: Bot, hour_msk: int, miniapp_url: str) ->
         try:
             await bot.send_message(
                 chat_id=u.tg_id,
-                text=_render_reminder_text(),
+                text=_render_reminder_text(u),
                 parse_mode="HTML",
                 reply_markup=kb,
             )
@@ -756,4 +787,154 @@ async def reminders_loop(bot: Bot, miniapp_url: str) -> None:
         except Exception as exc:
             logger.error("[reminders] ошибка в цикле: %s", exc, exc_info=True)
             # Не спамим — ждём минуту перед повтором
+            await asyncio.sleep(60)
+
+
+# ─── Win-back для неактивных юзеров (retention v1) ────────────────────────────
+
+WINBACK_INACTIVE_DAYS = 3   # сколько дней без практики, прежде чем дергать
+WINBACK_COOLDOWN_DAYS = 7   # минимум дней между двумя win-back-сообщениями
+WINBACK_PUSH_HOURS_MSK = {10, 18}  # часы (МСК), когда шлём — не ночью
+
+_WINBACK_KB_CACHE: dict[str, InlineKeyboardMarkup] = {}
+
+
+def _winback_keyboard(miniapp_url: str) -> InlineKeyboardMarkup:
+    if miniapp_url not in _WINBACK_KB_CACHE:
+        _WINBACK_KB_CACHE[miniapp_url] = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🎤 Вернуться к практике",
+                        web_app=WebAppInfo(url=miniapp_url),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🔕 Отключить напоминания",
+                        callback_data="reminder:off",
+                    )
+                ],
+            ]
+        )
+    return _WINBACK_KB_CACHE[miniapp_url]
+
+
+def _winback_text(user: "_User") -> str:
+    """Подбираем тон по best_streak — у юзера с длинным streak больше потерь."""
+    best = int(user.best_streak_days or 0)
+    if best >= 7:
+        return (
+            f"У тебя был стрик <b>{best} дней</b> 🔥 Один разговор — и ты "
+            "вернёшься в форму. Сегодня хватит и одной минуты."
+        )
+    if user.last_practice_date is None:
+        return (
+            "👋 Так и не успел попробовать? Открой mini-app и поговори "
+            "со мной 1 минуту — почувствуешь, как это."
+        )
+    return (
+        "👋 Давно не виделись. 1 минута в mini-app — и ты снова в потоке. "
+        "Я подстроюсь под уровень."
+    )
+
+
+async def _select_winback_users() -> list["_User"]:
+    """SQL: кого пора дернуть. Реализация зеркалит repo.users_for_winback."""
+    if not is_db_ready():
+        return []
+    assert _SessionMaker is not None
+    today = _msk_today()
+    inactive_cutoff = today - timedelta(days=WINBACK_INACTIVE_DAYS)
+    cooldown_cutoff = datetime.utcnow() - timedelta(days=WINBACK_COOLDOWN_DAYS)
+    from sqlalchemy import and_, or_
+    async with _SessionMaker() as s:
+        res = await s.execute(
+            select(_User).where(
+                _User.reminder_enabled.is_(True),
+                _User.is_blocked.is_(False),
+                or_(
+                    _User.last_practice_date < inactive_cutoff,
+                    and_(
+                        _User.last_practice_date.is_(None),
+                        _User.updated_at < datetime.combine(inactive_cutoff, time.min),
+                    ),
+                ),
+                or_(
+                    _User.last_winback_at.is_(None),
+                    _User.last_winback_at < cooldown_cutoff,
+                ),
+            )
+        )
+        return list(res.scalars().all())
+
+
+async def _mark_winback_sent(tg_id: int) -> None:
+    if not is_db_ready():
+        return
+    assert _SessionMaker is not None
+    async with _SessionMaker() as s:
+        await s.execute(
+            update(_User).where(_User.tg_id == tg_id).values(
+                last_winback_at=datetime.utcnow(),
+            )
+        )
+        await s.commit()
+
+
+async def _send_winback_round(bot: Bot, miniapp_url: str) -> None:
+    """Один проход рассылки. Дедупликация через last_winback_at."""
+    users = await _select_winback_users()
+    if not users:
+        logger.info("[winback] никто не подходит")
+        return
+    logger.info("[winback] подходит %d юзеров", len(users))
+    kb = _winback_keyboard(miniapp_url)
+    sent, failed, blocked = 0, 0, 0
+    for u in users:
+        try:
+            await bot.send_message(
+                chat_id=u.tg_id,
+                text=_winback_text(u),
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+            sent += 1
+            await _mark_winback_sent(u.tg_id)
+        except TelegramForbiddenError:
+            blocked += 1
+            try:
+                await set_user_reminder(u.tg_id, enabled=False)
+            except Exception:
+                pass
+        except TelegramRetryAfter as exc:
+            await asyncio.sleep(exc.retry_after + 1)
+        except Exception as exc:
+            failed += 1
+            logger.warning("[winback] не отправлено tg_id=%s: %s", u.tg_id, exc)
+        await asyncio.sleep(0.05)
+    logger.info(
+        "[winback] итог: sent=%d failed=%d blocked=%d", sent, failed, blocked,
+    )
+
+
+async def winback_loop(bot: Bot, miniapp_url: str) -> None:
+    """Бесконечный цикл: на каждой границе часа МСК — если час в
+    WINBACK_PUSH_HOURS_MSK, делаем round. Это разделяет нагрузку и
+    избегает ночных push'ей.
+    """
+    logger.info("[winback] цикл запущен (hours=%s)", sorted(WINBACK_PUSH_HOURS_MSK))
+    await asyncio.sleep(15)  # позже reminders_loop'а, чтобы не толкаться
+    while True:
+        try:
+            sleep_s = _seconds_until_next_msk_hour()
+            await asyncio.sleep(sleep_s)
+            now_hour = datetime.now(MSK).hour
+            if now_hour in WINBACK_PUSH_HOURS_MSK:
+                await _send_winback_round(bot, miniapp_url)
+        except asyncio.CancelledError:
+            logger.info("[winback] цикл остановлен")
+            raise
+        except Exception as exc:
+            logger.error("[winback] ошибка в цикле: %s", exc, exc_info=True)
             await asyncio.sleep(60)

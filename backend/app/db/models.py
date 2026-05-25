@@ -64,6 +64,11 @@ class User(Base):
     # сидит в doctor — verify никогда не пройдёт.
     last_session_role: Mapped[Optional[str]] = mapped_column(String(64))
 
+    # ── Win-back (миграция 0007) ──
+    # Когда последний раз слали win-back-сообщение неактивному юзеру.
+    # Дедупликация: не чаще 1 раза в 7 дней.
+    last_winback_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -281,3 +286,19 @@ class UserMistake(Base):
     bad_phrase: Mapped[str] = mapped_column(String(255), nullable=False)
     good_phrase: Mapped[str] = mapped_column(String(255), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class UserAchievement(Base):
+    """Заработанные медали для retention v1 (миграция 0007).
+
+    PK (user_id, achievement_key) — INSERT идемпотентен: повторное награждение
+    не дублирует строку, IntegrityError ловится в check_and_award.
+    """
+
+    __tablename__ = "user_achievements"
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    achievement_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    earned_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
