@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, date, time, timedelta, timezone
 from typing import Optional, Sequence
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -573,6 +573,81 @@ class Repo:
             )
         )
         return list(res.scalars().all())
+
+    # ─── Win-back (retention v1, миграция 0007) ───────────────────────
+
+    async def users_for_winback(self, *, inactive_days: int = 3,
+                                cooldown_days: int = 7) -> Sequence[User]:
+        """Юзеры, которым пора слать win-back:
+        - reminder_enabled=TRUE, не заблокированы;
+        - last_practice_date < today - inactive_days (или NULL и created_at старый);
+        - last_winback_at NULL или > cooldown_days назад (анти-спам).
+        """
+        today = msk_today()
+        inactive_cutoff = today - timedelta(days=inactive_days)
+        cooldown_cutoff = utcnow() - timedelta(days=cooldown_days)
+
+        res = await self.s.execute(
+            select(User).where(
+                User.reminder_enabled.is_(True),
+                User.is_blocked.is_(False),
+                # либо была активность давно, либо вовсе не было +
+                # создан больше N дней назад (не дёргаем свежих).
+                or_(
+                    User.last_practice_date < inactive_cutoff,
+                    and_(
+                        User.last_practice_date.is_(None),
+                        User.created_at < datetime.combine(inactive_cutoff, time.min),
+                    ),
+                ),
+                or_(
+                    User.last_winback_at.is_(None),
+                    User.last_winback_at < cooldown_cutoff,
+                ),
+            )
+        )
+        return list(res.scalars().all())
+
+    async def mark_winback_sent(self, user_id: int) -> None:
+        await self.s.execute(
+            update(User).where(User.id == user_id).values(last_winback_at=utcnow())
+        )
+
+    # ─── Progress (для /api/me/progress в mini-app) ───────────────────
+
+    async def user_total_sessions(self, user_id: int) -> int:
+        res = await self.s.execute(
+            select(func.count(SessionRow.id)).where(SessionRow.user_id == user_id)
+        )
+        return int(res.scalar() or 0)
+
+    async def user_total_seconds(self, user_id: int) -> int:
+        res = await self.s.execute(
+            select(func.coalesce(func.sum(SessionRow.used_seconds), 0))
+            .where(SessionRow.user_id == user_id)
+        )
+        return int(res.scalar() or 0)
+
+    async def user_daily_usage_series(
+        self, user_id: int, days: int = 30,
+    ) -> list[dict]:
+        """[{date, minutes}] за последние N дней по МСК. Дни без активности
+        включены с minutes=0 — фронту не нужно заполнять дырки."""
+        days = max(1, min(days, 90))
+        since = msk_today() - timedelta(days=days - 1)
+        res = await self.s.execute(
+            select(DailyUsage.usage_date, DailyUsage.used_seconds)
+            .where(
+                DailyUsage.user_id == user_id,
+                DailyUsage.usage_date >= since,
+            )
+        )
+        by_date = {d: int(sec) // 60 for d, sec in res.all()}
+        return [
+            {"date": (since + timedelta(days=i)).isoformat(),
+             "minutes": by_date.get(since + timedelta(days=i), 0)}
+            for i in range(days)
+        ]
 
     async def total_revenue_rub(self) -> float:
         res = await self.s.execute(

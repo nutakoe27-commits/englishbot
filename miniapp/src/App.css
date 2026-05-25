@@ -1672,3 +1672,238 @@ button {
 .confirm-btn--danger:active {
   background: rgba(220, 64, 64, 1);
 }
+
+/* ─── ProgressScreen (retention v1) ─────────────────────────────────── */
+
+.progress-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 18, 0.85);
+  z-index: 220;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.progress-modal__sheet {
+  background: var(--bg-1);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  max-width: 560px;
+  width: 100%;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 24px;
+  margin-bottom: 24px;
+}
+.progress-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.progress-modal__title {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+}
+.progress-modal__close {
+  appearance: none;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  border-radius: 999px;
+  width: 30px;
+  height: 30px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.progress-modal__loading,
+.progress-modal__error {
+  padding: 12px;
+  color: var(--text-muted, rgba(255, 255, 255, 0.6));
+  font-size: 14px;
+  text-align: center;
+}
+.progress-modal__error {
+  color: #ff8a8a;
+}
+
+/* Streak-карточка с большим огоньком. */
+.progress-streak {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, rgba(255, 107, 53, 0.18), rgba(255, 177, 61, 0.10));
+  border: 1px solid rgba(255, 177, 61, 0.35);
+  border-radius: 14px;
+}
+.progress-streak__icon {
+  font-size: 36px;
+  line-height: 1;
+}
+.progress-streak__value {
+  font-size: 28px;
+  font-weight: 800;
+  color: #ffe28a;
+  line-height: 1;
+}
+.progress-streak__unit {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 226, 138, 0.7);
+}
+.progress-streak__sub {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  margin-top: 4px;
+}
+
+/* Метрики 3-в-ряд */
+.progress-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.progress-metric {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 12px 10px;
+  text-align: center;
+}
+.progress-metric__value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+}
+.progress-metric__label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Универсальная карточка для подсекций */
+.progress-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 14px;
+}
+.progress-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  opacity: 0.85;
+}
+
+/* CSS-bars для 30-дневной практики */
+.daily-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 80px;
+}
+.daily-bars__bar {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+.daily-bars__fill {
+  width: 100%;
+  background: var(--accent, #7c5cff);
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+}
+.daily-bars__fill[data-empty="1"] {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Сетка медалей */
+.achievements-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+@media (min-width: 480px) {
+  .achievements-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.achievement {
+  display: flex;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.achievement--earned {
+  background: linear-gradient(135deg, rgba(124, 92, 255, 0.18), rgba(51, 217, 166, 0.10));
+  border-color: rgba(124, 92, 255, 0.4);
+}
+.achievement--locked {
+  opacity: 0.7;
+}
+.achievement__icon {
+  font-size: 28px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.achievement--locked .achievement__icon {
+  filter: grayscale(0.8);
+  opacity: 0.6;
+}
+.achievement__body {
+  flex: 1;
+  min-width: 0;
+}
+.achievement__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.achievement__desc {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  margin-top: 2px;
+}
+.achievement__bar {
+  margin-top: 6px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.achievement__bar-fill {
+  height: 100%;
+  background: var(--accent, #7c5cff);
+  border-radius: inherit;
+  transition: width 0.2s ease;
+}
+.achievement__progress-text {
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.achievement__earned-badge {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8aff9d;
+}

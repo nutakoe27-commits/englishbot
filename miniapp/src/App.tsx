@@ -21,6 +21,7 @@ import { TranslatePopover } from "./TranslatePopover";
 import { ExplainPopover } from "./ExplainPopover";
 import { SessionSummary } from "./SessionSummary";
 import { WordsScreen } from "./WordsScreen";
+import { ProgressScreen } from "./ProgressScreen";
 import { wordDiff, diffLooksMeaningful, type DiffOp } from "./wordDiff";
 import {
   loadSettings,
@@ -164,6 +165,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   // Экран «Мои слова» (юзер добавляет слова, которые сейчас учит).
   const [wordsOpen, setWordsOpen] = useState<boolean>(false);
+  // Экран «Мой прогресс» (streak, минуты, медали).
+  const [progressOpen, setProgressOpen] = useState<boolean>(false);
   // Черновик текстового сообщения в chat-режиме
   const [chatDraft, setChatDraft] = useState<string>("");
   // Тьютор сейчас «думает» (индикация в chat-режиме пока LLM формирует ответ)
@@ -1219,6 +1222,15 @@ export default function App() {
           <button
             type="button"
             className="icon-button"
+            onClick={() => setProgressOpen(true)}
+            aria-label="Мой прогресс"
+            title="Мой прогресс"
+          >
+            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>📊</span>
+          </button>
+          <button
+            type="button"
+            className="icon-button"
             onClick={() => setWordsOpen(true)}
             aria-label="Мои слова"
             title="Мои слова"
@@ -1544,6 +1556,14 @@ export default function App() {
         <WordsScreen
           apiBase={API_BASE}
           onClose={() => setWordsOpen(false)}
+        />
+      )}
+
+      {progressOpen && lockState === null && (
+        <ProgressScreen
+          apiBase={API_BASE}
+          initData={WebApp.initData || ""}
+          onClose={() => setProgressOpen(false)}
         />
       )}
 
