@@ -13,6 +13,8 @@ import "./App.css";
 import { ListeningSettingsPanel } from "./ListeningSettingsPanel";
 import { PodcastPlayer } from "./PodcastPlayer";
 import { Transcript } from "./Transcript";
+import { ProgressScreen } from "./ProgressScreen";
+import { WordsScreen } from "./WordsScreen";
 import {
   loadListeningSettings,
   saveListeningSettings,
@@ -41,6 +43,8 @@ export function ListeningScreen({ onExit }: Props) {
   const [result, setResult] = useState<PodcastResult | null>(null);
   const [error, setError] = useState<string>("");
   const [userName, setUserName] = useState<string>("there");
+  const [progressOpen, setProgressOpen] = useState<boolean>(false);
+  const [wordsOpen, setWordsOpen] = useState<boolean>(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -133,6 +137,24 @@ export function ListeningScreen({ onExit }: Props) {
         </div>
         <div className="tutor-header__right">
           <p className="tutor-hello">Hi, {userName}</p>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setProgressOpen(true)}
+            aria-label="Мой прогресс"
+            title="Мой прогресс"
+          >
+            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>📊</span>
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setWordsOpen(true)}
+            aria-label="Мои слова"
+            title="Мои слова"
+          >
+            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>📖</span>
+          </button>
         </div>
       </header>
 
@@ -196,6 +218,21 @@ export function ListeningScreen({ onExit }: Props) {
           </div>
         )}
       </main>
+
+      {wordsOpen && (
+        <WordsScreen
+          apiBase={API_BASE}
+          onClose={() => setWordsOpen(false)}
+        />
+      )}
+
+      {progressOpen && (
+        <ProgressScreen
+          apiBase={API_BASE}
+          initData={WebApp.initData || ""}
+          onClose={() => setProgressOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -2075,23 +2075,46 @@ button {
   color: var(--text);
 }
 
-.lst-slider {
+.lst-custom-input {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 10px 4px 2px;
+  gap: 12px;
+  padding: 4px 2px 2px;
 }
-.lst-slider input[type="range"] {
-  flex: 1;
-  accent-color: var(--accent);
-  height: 4px;
+.lst-custom-input input[type="number"] {
+  width: 96px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-1);
+  color: var(--text);
+  font-size: 16px;     /* >=16 чтобы iOS Safari не зумил при focus */
+  font-weight: 600;
+  font-family: inherit;
+  text-align: center;
+  outline: none;
+  -moz-appearance: textfield;
+  transition: border-color 0.15s, background 0.15s;
 }
-.lst-slider__value {
-  min-width: 64px;
-  text-align: right;
-  font-size: 14px;
+.lst-custom-input input[type="number"]:focus {
+  border-color: var(--accent);
+  background: rgba(124, 92, 255, 0.1);
+}
+/* Прячем спиннеры number-input на WebKit/Blink */
+.lst-custom-input input[type="number"]::-webkit-outer-spin-button,
+.lst-custom-input input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.lst-custom-input__suffix {
+  font-size: 15px;
+  color: var(--text);
   font-weight: 500;
-  color: var(--text-dim);
+}
+.lst-custom-input__hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-faint);
 }
 
 .lst-categories {
@@ -2131,10 +2154,11 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 18px;
+  margin: 6px 0;                  /* воздух от соседних секций */
+  padding: 18px 20px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
-  background: var(--bg-1);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
   cursor: pointer;
 }
 .lst-toggle__main {
