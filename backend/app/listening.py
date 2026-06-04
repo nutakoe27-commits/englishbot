@@ -209,10 +209,18 @@ async def _synthesize_full(text: str, speed: float) -> bytes:
     """Сгенерить весь PCM целиком через Kokoro. Возвращает raw s16le 24kHz mono."""
     if not settings.KOKORO_TTS_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "TTS not configured")
+    # Kokoro не стримит синтез: считает целиком, потом отдаёт чанками. На
+    # 10-15-минутном тексте до первого чанка может уйти 30-60 сек. Дефолтные
+    # 15с (для голосовых сессий) — мало; ставим запас по длине.
+    char_count = len(text)
+    first_chunk_to = max(30.0, min(180.0, char_count / 60))   # ~60 чар/сек синтеза
+    next_chunk_to = max(30.0, min(120.0, char_count / 120))
     provider = KokoroTTSProvider(
         url=settings.KOKORO_TTS_URL,
         voice=settings.KOKORO_TTS_VOICE or "af_heart",
         speed=speed,
+        first_chunk_timeout=first_chunk_to,
+        next_chunk_timeout=next_chunk_to,
     )
     buf = io.BytesIO()
     async for chunk in provider.synthesize(text):
