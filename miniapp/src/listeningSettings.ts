@@ -38,7 +38,8 @@ export const DEFAULT_LISTENING: ListeningSettings = {
   level: "B1",
 };
 
-export const DURATION_PRESETS: number[] = [1, 3, 5, 10];
+export const DURATION_PRESETS: number[] = [1, 3, 5, 10, 15];
+// Backend всё ещё валидирует diapason 1..20, но в UI Custom-ввода больше нет.
 export const MAX_CUSTOM_DURATION = 20;
 
 export const CATEGORY_OPTIONS: { value: ListeningCategory; label: string; emoji: string }[] = [
@@ -65,10 +66,18 @@ export function loadListeningSettings(): ListeningSettings {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_LISTENING };
     const parsed = JSON.parse(raw) as Partial<ListeningSettings>;
+    let durationMin = clampDuration(parsed.durationMin);
+    // Migration: Custom-режим убран из UI, но в localStorage у старых юзеров
+    // мог сохраниться durationMode='custom' с произвольным числом. Нормализуем:
+    // если значение не из текущих пресетов — берём ближайший доступный.
+    if (!DURATION_PRESETS.includes(durationMin)) {
+      durationMin = DURATION_PRESETS.reduce((best, p) =>
+        Math.abs(p - durationMin) < Math.abs(best - durationMin) ? p : best,
+      );
+    }
     return {
-      durationMin: clampDuration(parsed.durationMin),
-      durationMode:
-        parsed.durationMode === "custom" ? "custom" : DEFAULT_LISTENING.durationMode,
+      durationMin,
+      durationMode: "preset",
       category: isCategory(parsed.category) ? parsed.category : DEFAULT_LISTENING.category,
       useVocab:
         typeof parsed.useVocab === "boolean" ? parsed.useVocab : DEFAULT_LISTENING.useVocab,
