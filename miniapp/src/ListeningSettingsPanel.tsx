@@ -4,7 +4,6 @@
 import {
   CATEGORY_OPTIONS,
   DURATION_PRESETS,
-  MAX_CUSTOM_DURATION,
   SPEED_OPTIONS,
   type ListeningSettings,
 } from "./listeningSettings";
@@ -16,8 +15,6 @@ interface Props {
 }
 
 export function ListeningSettingsPanel({ value, onChange }: Props) {
-  const isCustomMode = value.durationMode === "custom";
-
   return (
     <div className="lst-config">
       {/* Длительность */}
@@ -29,7 +26,7 @@ export function ListeningSettingsPanel({ value, onChange }: Props) {
               key={n}
               type="button"
               className="lst-chip"
-              data-active={!isCustomMode && value.durationMin === n ? "true" : "false"}
+              data-active={value.durationMin === n ? "true" : "false"}
               onClick={() =>
                 onChange({ ...value, durationMode: "preset", durationMin: n })
               }
@@ -37,61 +34,7 @@ export function ListeningSettingsPanel({ value, onChange }: Props) {
               {n} мин
             </button>
           ))}
-          <button
-            type="button"
-            className="lst-chip"
-            data-active={isCustomMode ? "true" : "false"}
-            onClick={() =>
-              onChange({
-                ...value,
-                durationMode: "custom",
-                // если переключаемся ИЗ preset В custom — оставляем текущее
-                // значение durationMin, пользователь сам введёт другое.
-              })
-            }
-          >
-            Custom
-          </button>
         </div>
-        {isCustomMode && (
-          <div className="lst-custom-input">
-            <input
-              type="number"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              min={1}
-              max={MAX_CUSTOM_DURATION}
-              step={1}
-              value={value.durationMin}
-              onChange={(e) => {
-                const raw = e.target.value;
-                if (raw === "") {
-                  // временно сохраняем 1, чтобы поле можно было редактировать
-                  onChange({ ...value, durationMode: "custom", durationMin: 1 });
-                  return;
-                }
-                const parsed = parseInt(raw, 10);
-                if (Number.isFinite(parsed)) {
-                  const clamped = Math.min(MAX_CUSTOM_DURATION, Math.max(1, parsed));
-                  onChange({ ...value, durationMode: "custom", durationMin: clamped });
-                }
-              }}
-              onBlur={(e) => {
-                const parsed = parseInt(e.target.value || "1", 10);
-                const clamped = Math.min(
-                  MAX_CUSTOM_DURATION,
-                  Math.max(1, Number.isFinite(parsed) ? parsed : 1),
-                );
-                if (clamped !== value.durationMin) {
-                  onChange({ ...value, durationMode: "custom", durationMin: clamped });
-                }
-              }}
-              aria-label="Длительность в минутах"
-            />
-            <span className="lst-custom-input__suffix">мин</span>
-            <span className="lst-custom-input__hint">от 1 до {MAX_CUSTOM_DURATION}</span>
-          </div>
-        )}
       </section>
 
       {/* Уровень */}
