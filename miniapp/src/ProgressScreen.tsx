@@ -28,6 +28,8 @@ interface Progress {
   total_sessions: number;
   total_words: number;
   daily_usage: DailyPoint[];
+  speaking_minutes?: number;
+  listening_minutes?: number;
 }
 
 interface Achievement {
@@ -115,10 +117,30 @@ export function ProgressScreen({ apiBase, initData, onClose }: Props) {
             </div>
 
             <div className="progress-metrics">
-              <Metric label="Минут разговоров" value={progress.total_minutes} />
+              <Metric label="Минут практики" value={progress.total_minutes} />
               <Metric label="Сессий" value={progress.total_sessions} />
               <Metric label="Слов" value={progress.total_words} />
             </div>
+
+            {(progress.speaking_minutes !== undefined ||
+              progress.listening_minutes !== undefined) && (
+              <div className="progress-breakdown">
+                <div className="progress-breakdown__row">
+                  <span className="progress-breakdown__emoji" aria-hidden>🎙️</span>
+                  <span className="progress-breakdown__label">Разговор</span>
+                  <span className="progress-breakdown__value">
+                    {progress.speaking_minutes ?? 0} мин
+                  </span>
+                </div>
+                <div className="progress-breakdown__row">
+                  <span className="progress-breakdown__emoji" aria-hidden>🎧</span>
+                  <span className="progress-breakdown__label">Слушание</span>
+                  <span className="progress-breakdown__value">
+                    {progress.listening_minutes ?? 0} мин
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div className="progress-card">
               <h3 className="progress-card__title">Последние 30 дней</h3>

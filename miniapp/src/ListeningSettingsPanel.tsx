@@ -8,6 +8,7 @@ import {
   SPEED_OPTIONS,
   type ListeningSettings,
 } from "./listeningSettings";
+import { LEVEL_OPTIONS } from "./tutorSettings";
 
 interface Props {
   value: ListeningSettings;
@@ -15,7 +16,7 @@ interface Props {
 }
 
 export function ListeningSettingsPanel({ value, onChange }: Props) {
-  const isCustomDuration = !DURATION_PRESETS.includes(value.durationMin);
+  const isCustomMode = value.durationMode === "custom";
 
   return (
     <div className="lst-config">
@@ -28,8 +29,10 @@ export function ListeningSettingsPanel({ value, onChange }: Props) {
               key={n}
               type="button"
               className="lst-chip"
-              data-active={value.durationMin === n && !isCustomDuration ? "true" : "false"}
-              onClick={() => onChange({ ...value, durationMin: n })}
+              data-active={!isCustomMode && value.durationMin === n ? "true" : "false"}
+              onClick={() =>
+                onChange({ ...value, durationMode: "preset", durationMin: n })
+              }
             >
               {n} мин
             </button>
@@ -37,18 +40,20 @@ export function ListeningSettingsPanel({ value, onChange }: Props) {
           <button
             type="button"
             className="lst-chip"
-            data-active={isCustomDuration ? "true" : "false"}
+            data-active={isCustomMode ? "true" : "false"}
             onClick={() =>
               onChange({
                 ...value,
-                durationMin: isCustomDuration ? value.durationMin : 7,
+                durationMode: "custom",
+                // если переключаемся ИЗ preset В custom — оставляем текущее
+                // значение durationMin, пользователь сам введёт другое.
               })
             }
           >
             Custom
           </button>
         </div>
-        {isCustomDuration && (
+        {isCustomMode && (
           <div className="lst-custom-input">
             <input
               type="number"
@@ -61,26 +66,24 @@ export function ListeningSettingsPanel({ value, onChange }: Props) {
               onChange={(e) => {
                 const raw = e.target.value;
                 if (raw === "") {
-                  // даём временно очистить поле для редактирования
-                  onChange({ ...value, durationMin: 1 });
+                  // временно сохраняем 1, чтобы поле можно было редактировать
+                  onChange({ ...value, durationMode: "custom", durationMin: 1 });
                   return;
                 }
                 const parsed = parseInt(raw, 10);
                 if (Number.isFinite(parsed)) {
                   const clamped = Math.min(MAX_CUSTOM_DURATION, Math.max(1, parsed));
-                  onChange({ ...value, durationMin: clamped });
+                  onChange({ ...value, durationMode: "custom", durationMin: clamped });
                 }
               }}
               onBlur={(e) => {
-                // На blur гарантируем, что в поле валидное число (например,
-                // если юзер очистил поле и не ввёл ничего).
                 const parsed = parseInt(e.target.value || "1", 10);
                 const clamped = Math.min(
                   MAX_CUSTOM_DURATION,
                   Math.max(1, Number.isFinite(parsed) ? parsed : 1),
                 );
                 if (clamped !== value.durationMin) {
-                  onChange({ ...value, durationMin: clamped });
+                  onChange({ ...value, durationMode: "custom", durationMin: clamped });
                 }
               }}
               aria-label="Длительность в минутах"
@@ -89,6 +92,26 @@ export function ListeningSettingsPanel({ value, onChange }: Props) {
             <span className="lst-custom-input__hint">от 1 до {MAX_CUSTOM_DURATION}</span>
           </div>
         )}
+      </section>
+
+      {/* Уровень */}
+      <section className="lst-section">
+        <h3 className="lst-section__title">Уровень</h3>
+        <div className="lst-chips">
+          {LEVEL_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className="lst-chip lst-chip--level"
+              data-active={value.level === opt.value ? "true" : "false"}
+              onClick={() => onChange({ ...value, level: opt.value })}
+              title={opt.hint}
+            >
+              <span className="lst-chip__main">{opt.label}</span>
+              <span className="lst-chip__sub">{opt.hint}</span>
+            </button>
+          ))}
+        </div>
       </section>
 
       {/* Категория */}

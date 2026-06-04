@@ -305,10 +305,12 @@ async def generate_podcast(body: _GenerateIn, request: Request) -> _GenerateOut:
     audio_id = secrets.token_urlsafe(16)
     _AUDIO_STORE[audio_id] = (wav_bytes, time.time() + _AUDIO_TTL_SEC)
 
-    # ── Запись в sessions для streak/progress ───────────────────────────
+    # ── Запись сессии + общая статистика + стрик ────────────────────────
     session_id = 0
+    duration_seconds = audio_duration_sec or (body.duration_min * 60)
     if user_id is not None and settings.DATABASE_URL:
         from .db import Repo
+        from .voice import STREAK_MIN_DURATION_SEC
         async with db_session() as session:
             repo = Repo(session)
             row = await repo.open_session(
@@ -319,8 +321,19 @@ async def generate_podcast(body: _GenerateIn, request: Request) -> _GenerateOut:
             )
             await repo.close_session(
                 session_id=row.id,
-                used_seconds=audio_duration_sec or (body.duration_min * 60),
+                used_seconds=duration_seconds,
             )
+            # DailyUsage — чтобы listening шёл в общий счётчик минут (ProgressScreen,
+            # «Мой прогресс» использует user_total_seconds + daily series).
+            await repo.add_used_seconds(user_id=user_id, seconds=duration_seconds)
+            # Streak — поднимаем, если подкаст ≥ STREAK_MIN_DURATION_SEC.
+            # role=body.category — категория сохраняется в users.last_session_role,
+            # как и в speaking-сессиях (для умной выдачи role-quest).
+            if duration_seconds >= STREAK_MIN_DURATION_SEC:
+                try:
+                    await repo.bump_streak(user_id, role=body.category)
+                except Exception as exc:
+                    logger.warning("[listening] bump_streak failed: %s", exc)
             session_id = row.id
             await session.commit()
 

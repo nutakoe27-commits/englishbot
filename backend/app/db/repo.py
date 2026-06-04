@@ -628,6 +628,19 @@ class Repo:
         )
         return int(res.scalar() or 0)
 
+    async def user_total_seconds_by_mode(self, user_id: int) -> dict[str, int]:
+        """{'voice': N, 'chat': N, 'listening': N} — суммарные секунды по режимам.
+        Возвращает только режимы, где есть >0 секунд; нулевые ключи опускаем."""
+        res = await self.s.execute(
+            select(
+                SessionRow.mode,
+                func.coalesce(func.sum(SessionRow.used_seconds), 0),
+            )
+            .where(SessionRow.user_id == user_id)
+            .group_by(SessionRow.mode)
+        )
+        return {mode: int(secs) for mode, secs in res.all() if int(secs or 0) > 0}
+
     async def user_daily_usage_series(
         self, user_id: int, days: int = 30,
     ) -> list[dict]:

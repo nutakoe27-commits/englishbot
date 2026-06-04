@@ -470,6 +470,10 @@ async def me_progress(init_data: str = "") -> dict:
         total_sessions = await repo.user_total_sessions(user.id)
         total_words = await repo.count_user_words(user.id)
         daily = await repo.user_daily_usage_series(user.id, days=30)
+        by_mode = await repo.user_total_seconds_by_mode(user.id)
+    # voice + chat = «разговор» (оба speaking-режима в мини-апе); listening — отдельно.
+    speaking_seconds = int(by_mode.get("voice", 0)) + int(by_mode.get("chat", 0))
+    listening_seconds = int(by_mode.get("listening", 0))
     return {
         "streak": {
             "current": streak_current,
@@ -480,6 +484,8 @@ async def me_progress(init_data: str = "") -> dict:
         "total_sessions": total_sessions,
         "total_words": total_words,
         "daily_usage": daily,
+        "speaking_minutes": speaking_seconds // 60,
+        "listening_minutes": listening_seconds // 60,
     }
 
 
