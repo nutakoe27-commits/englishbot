@@ -49,18 +49,44 @@ export function ListeningSettingsPanel({ value, onChange }: Props) {
           </button>
         </div>
         {isCustomDuration && (
-          <div className="lst-slider">
+          <div className="lst-custom-input">
             <input
-              type="range"
+              type="number"
+              inputMode="numeric"
+              pattern="[0-9]*"
               min={1}
               max={MAX_CUSTOM_DURATION}
               step={1}
               value={value.durationMin}
-              onChange={(e) =>
-                onChange({ ...value, durationMin: parseInt(e.target.value, 10) })
-              }
+              onChange={(e) => {
+                const raw = e.target.value;
+                if (raw === "") {
+                  // даём временно очистить поле для редактирования
+                  onChange({ ...value, durationMin: 1 });
+                  return;
+                }
+                const parsed = parseInt(raw, 10);
+                if (Number.isFinite(parsed)) {
+                  const clamped = Math.min(MAX_CUSTOM_DURATION, Math.max(1, parsed));
+                  onChange({ ...value, durationMin: clamped });
+                }
+              }}
+              onBlur={(e) => {
+                // На blur гарантируем, что в поле валидное число (например,
+                // если юзер очистил поле и не ввёл ничего).
+                const parsed = parseInt(e.target.value || "1", 10);
+                const clamped = Math.min(
+                  MAX_CUSTOM_DURATION,
+                  Math.max(1, Number.isFinite(parsed) ? parsed : 1),
+                );
+                if (clamped !== value.durationMin) {
+                  onChange({ ...value, durationMin: clamped });
+                }
+              }}
+              aria-label="Длительность в минутах"
             />
-            <span className="lst-slider__value">{value.durationMin} мин</span>
+            <span className="lst-custom-input__suffix">мин</span>
+            <span className="lst-custom-input__hint">от 1 до {MAX_CUSTOM_DURATION}</span>
           </div>
         )}
       </section>
