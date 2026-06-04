@@ -354,7 +354,10 @@ async def generate_podcast(body: _GenerateIn, request: Request) -> _GenerateOut:
 
 
 @router.get("/audio/{audio_id}.wav")
-async def get_audio(audio_id: str) -> Response:
+async def get_audio(audio_id: str, request: Request) -> Response:
+    """Отдаёт WAV из in-memory store. Поддерживает HTTP Range Requests —
+    без этого iOS Safari WebView не умеет проигрывать большие (>10 МБ) аудио
+    и помечает источник как «Ошибка» рядом с play."""
     entry = _AUDIO_STORE.get(audio_id)
     if entry is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "audio_not_found")
@@ -362,7 +365,46 @@ async def get_audio(audio_id: str) -> Response:
     if expires_at < time.time():
         _AUDIO_STORE.pop(audio_id, None)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "audio_expired")
-    return Response(content=wav_bytes, media_type="audio/wav")
+
+    total = len(wav_bytes)
+    range_header = request.headers.get("range") or request.headers.get("Range")
+
+    if range_header:
+        import re as _re
+        m = _re.match(r"bytes=(\d+)-(\d*)", range_header.strip())
+        if m:
+            start = int(m.group(1))
+            end = int(m.group(2)) if m.group(2) else total - 1
+            end = min(end, total - 1)
+            if start > end or start >= total:
+                return Response(
+                    status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                    headers={"Content-Range": f"bytes */{total}"},
+                )
+            chunk = wav_bytes[start : end + 1]
+            return Response(
+                content=chunk,
+                status_code=status.HTTP_206_PARTIAL_CONTENT,
+                media_type="audio/wav",
+                headers={
+                    "Content-Range": f"bytes {start}-{end}/{total}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(len(chunk)),
+                    "Cache-Control": "no-cache",
+                },
+            )
+
+    # Без Range — отдаём целиком, но с Accept-Ranges чтобы клиент знал
+    # что endpoint их поддерживает и переспросил с Range при необходимости.
+    return Response(
+        content=wav_bytes,
+        media_type="audio/wav",
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(total),
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 @router.get("/quota")
