@@ -1,15 +1,15 @@
-import React from "react";
+import React, { useState } from "react";
 import ReactDOM from "react-dom/client";
 import WebApp from "@twa-dev/sdk";
 import App from "./App";
 import { BattleScreen } from "./BattleScreen";
+import { ModeSelector, type Mode } from "./ModeSelector";
+import { ListeningScreen } from "./ListeningScreen";
 
 // Диспетчер: читаем Telegram startapp payload. Если это «battle_<id>_<side>» —
-// показываем экран баттла. Иначе — обычный голосовой режим.
+// показываем экран баттла. Иначе — ModeSelector с выбором между speaking и listening.
 function Root() {
   const rawParam = (WebApp.initDataUnsafe?.start_param as string | undefined) || "";
-  // Telegram в some cases кладёт payload в hash вроде #tgWebAppStartParam=battle_12_a
-  // @twa-dev/sdk парсит это сам, но оставим фолбэк на window.location для dev.
   let startParam = rawParam;
   if (!startParam && typeof window !== "undefined") {
     const m = window.location.hash.match(/tgWebAppStartParam=([^&]+)/);
@@ -17,7 +17,6 @@ function Root() {
   }
 
   if (startParam.startsWith("battle_")) {
-    // формат: battle_<id>_<side>
     const parts = startParam.split("_");
     const id = parseInt(parts[1] || "0", 10);
     const side = (parts[2] === "b" ? "b" : "a") as "a" | "b";
@@ -26,7 +25,12 @@ function Root() {
     }
   }
 
-  return <App />;
+  const [screen, setScreen] = useState<Mode | "selector">("selector");
+  const backToSelector = () => setScreen("selector");
+
+  if (screen === "speaking") return <App onExit={backToSelector} />;
+  if (screen === "listening") return <ListeningScreen onExit={backToSelector} />;
+  return <ModeSelector onPick={setScreen} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
