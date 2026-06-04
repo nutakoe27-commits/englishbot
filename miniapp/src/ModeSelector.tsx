@@ -14,8 +14,8 @@ export function ModeSelector({ onPick }: Props) {
   const [userName, setUserName] = useState<string>("there");
 
   useEffect(() => {
-    WebApp.ready();
-    WebApp.expand();
+    try { WebApp.ready(); } catch { /* старые клиенты */ }
+    try { WebApp.expand(); } catch { /* старые клиенты */ }
     const user = WebApp.initDataUnsafe?.user;
     if (user?.first_name) setUserName(user.first_name);
   }, []);
