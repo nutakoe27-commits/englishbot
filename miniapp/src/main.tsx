@@ -31,7 +31,7 @@ class ErrorBoundary extends React.Component<BoundaryProps, BoundaryState> {
           minHeight: "100vh", fontFamily: "monospace", fontSize: 13,
           whiteSpace: "pre-wrap", wordBreak: "break-word",
         }}>
-          <strong>Mini App crashed</strong>{"\n\n"}
+          <strong style={{ color: "#ff8a8a" }}>Mini App crashed</strong>{"\n\n"}
           {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
         </div>
       );
@@ -40,19 +40,25 @@ class ErrorBoundary extends React.Component<BoundaryProps, BoundaryState> {
   }
 }
 
-// Battle deep-link читается один раз при старте приложения — он не меняется
-// в течение mount-сессии, можно безопасно вычислить в модульной области.
-function readStartParam(): string {
-  const raw = (WebApp.initDataUnsafe?.start_param as string | undefined) || "";
-  if (raw) return raw;
-  if (typeof window !== "undefined") {
-    const m = window.location.hash.match(/tgWebAppStartParam=([^&]+)/);
-    if (m) return decodeURIComponent(m[1]);
+function safeReadStartParam(): string {
+  // На iOS WebKit обращение к WebApp.* может бросать в момент module-evaluation,
+  // если Telegram SDK ещё не готов / страница открыта вне Telegram. Защищаемся.
+  try {
+    const raw = (WebApp.initDataUnsafe?.start_param as string | undefined) || "";
+    if (raw) return raw;
+  } catch {
+    /* fallthrough */
+  }
+  try {
+    if (typeof window !== "undefined") {
+      const m = window.location.hash.match(/tgWebAppStartParam=([^&]+)/);
+      if (m) return decodeURIComponent(m[1]);
+    }
+  } catch {
+    /* malformed payload */
   }
   return "";
 }
-
-const START_PARAM = readStartParam();
 
 function parseBattle(param: string): { id: number; side: "a" | "b" } | null {
   if (!param.startsWith("battle_")) return null;
@@ -66,10 +72,11 @@ function parseBattle(param: string): { id: number; side: "a" | "b" } | null {
 function Root() {
   // ВАЖНО: хук всегда первый, до любых условных return — иначе React 18
   // в production может выкинуть «rendered fewer hooks than expected» при
-  // повторных рендерах и положить всё mini-app в чёрный экран.
+  // повторных рендерах.
   const [screen, setScreen] = useState<Mode | "selector">("selector");
+  const [startParam] = useState<string>(() => safeReadStartParam());
 
-  const battle = parseBattle(START_PARAM);
+  const battle = parseBattle(startParam);
   if (battle) {
     return <BattleScreen battleId={battle.id} side={battle.side} />;
   }
@@ -80,10 +87,30 @@ function Root() {
   return <ModeSelector onPick={setScreen} />;
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
+// Всё monting'ование в try/catch — если падает createRoot или первый рендер,
+// выведем причину в #root напрямую (без зависимости от ErrorBoundary, который
+// сам по себе живёт внутри React-дерева).
+try {
+  const rootEl = document.getElementById("root");
+  if (!rootEl) {
+    throw new Error("#root element not found in index.html");
+  }
+  ReactDOM.createRoot(rootEl).render(
+    // StrictMode временно отключён — на iOS WebKit двойной рендер иногда
+    // ловит несовместимости со сторонним SDK; в дев-режиме включим обратно.
     <ErrorBoundary>
       <Root />
     </ErrorBoundary>
-  </React.StrictMode>
-);
+  );
+} catch (e) {
+  const err = e as Error;
+  const root = document.getElementById("root");
+  if (root) {
+    root.textContent = "MOUNT ERROR\n" + (err?.stack || err?.message || String(err));
+    root.setAttribute(
+      "style",
+      "padding:20px;font-family:monospace;font-size:13px;color:#ff8a8a;white-space:pre-wrap;word-break:break-word;",
+    );
+  }
+  throw e;
+}
