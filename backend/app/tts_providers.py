@@ -52,10 +52,23 @@ class KokoroTTSProvider:
     Под каждый синтез открываем отдельное WS-соединение.
     """
 
-    def __init__(self, url: str, voice: str, speed: float = 1.0):
+    def __init__(
+        self,
+        url: str,
+        voice: str,
+        speed: float = 1.0,
+        *,
+        first_chunk_timeout: float = 15.0,
+        next_chunk_timeout: float = 30.0,
+    ):
         self.url = url
         self.voice = voice
         self.speed = speed
+        # Для voice-сессий 15с/30с — норм: короткие фразы синтезируются <2с.
+        # Для длинных текстов (подкаст 10-15 мин ≈ 1500-2200 слов) Kokoro
+        # может крутить синтез 30-60с до первого чанка — listening повышает оба.
+        self.first_chunk_timeout = first_chunk_timeout
+        self.next_chunk_timeout = next_chunk_timeout
 
     async def synthesize(self, text: str) -> AsyncIterator[bytes]:
         try:
@@ -111,7 +124,7 @@ class KokoroTTSProvider:
             # Для фразы из 1-2 предложений это обычно 0.5-1.5 сек.
             first_chunk = True
             while True:
-                timeout = 15.0 if first_chunk else 30.0
+                timeout = self.first_chunk_timeout if first_chunk else self.next_chunk_timeout
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
                 except asyncio.TimeoutError:
