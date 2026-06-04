@@ -40,9 +40,7 @@ class ErrorBoundary extends React.Component<BoundaryProps, BoundaryState> {
   }
 }
 
-function safeReadStartParam(): string {
-  // На iOS WebKit обращение к WebApp.* может бросать в момент module-evaluation,
-  // если Telegram SDK ещё не готов / страница открыта вне Telegram. Защищаемся.
+function readStartParam(): string {
   try {
     const raw = (WebApp.initDataUnsafe?.start_param as string | undefined) || "";
     if (raw) return raw;
@@ -70,11 +68,10 @@ function parseBattle(param: string): { id: number; side: "a" | "b" } | null {
 }
 
 function Root() {
-  // ВАЖНО: хук всегда первый, до любых условных return — иначе React 18
-  // в production может выкинуть «rendered fewer hooks than expected» при
-  // повторных рендерах.
+  // Хук всегда первый, до условных return — иначе React 18 в проде может
+  // выкинуть «rendered fewer hooks than expected».
   const [screen, setScreen] = useState<Mode | "selector">("selector");
-  const [startParam] = useState<string>(() => safeReadStartParam());
+  const [startParam] = useState<string>(() => readStartParam());
 
   const battle = parseBattle(startParam);
   if (battle) {
@@ -87,30 +84,10 @@ function Root() {
   return <ModeSelector onPick={setScreen} />;
 }
 
-// Всё monting'ование в try/catch — если падает createRoot или первый рендер,
-// выведем причину в #root напрямую (без зависимости от ErrorBoundary, который
-// сам по себе живёт внутри React-дерева).
-try {
-  const rootEl = document.getElementById("root");
-  if (!rootEl) {
-    throw new Error("#root element not found in index.html");
-  }
-  ReactDOM.createRoot(rootEl).render(
-    // StrictMode временно отключён — на iOS WebKit двойной рендер иногда
-    // ловит несовместимости со сторонним SDK; в дев-режиме включим обратно.
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
     <ErrorBoundary>
       <Root />
     </ErrorBoundary>
-  );
-} catch (e) {
-  const err = e as Error;
-  const root = document.getElementById("root");
-  if (root) {
-    root.textContent = "MOUNT ERROR\n" + (err?.stack || err?.message || String(err));
-    root.setAttribute(
-      "style",
-      "padding:20px;font-family:monospace;font-size:13px;color:#ff8a8a;white-space:pre-wrap;word-break:break-word;",
-    );
-  }
-  throw e;
-}
+  </React.StrictMode>
+);
