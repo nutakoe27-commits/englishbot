@@ -1,5 +1,7 @@
 // listeningSettings.ts — типы и localStorage helpers для listening-режима.
-// Параллелен tutorSettings.ts; level берётся из общего TutorSettings.
+// Параллелен tutorSettings.ts.
+
+import type { Level } from "./tutorSettings";
 
 export type ListeningCategory =
   | "news"
@@ -13,18 +15,27 @@ export type ListeningCategory =
 
 export type ListeningSpeed = 0.75 | 1.0 | 1.25;
 
+// Режим выбора длительности: пресетные chips или произвольный ввод.
+// Храним отдельно от durationMin, чтобы ввод «1» в Custom не схлопывал секцию
+// обратно в preset-чип «1 мин».
+export type DurationMode = "preset" | "custom";
+
 export interface ListeningSettings {
-  durationMin: number; // 1..20
+  durationMin: number;       // 1..20
+  durationMode: DurationMode;
   category: ListeningCategory;
   useVocab: boolean;
   speed: ListeningSpeed;
+  level: Level;
 }
 
 export const DEFAULT_LISTENING: ListeningSettings = {
   durationMin: 3,
+  durationMode: "preset",
   category: "news",
   useVocab: true,
   speed: 1.0,
+  level: "B1",
 };
 
 export const DURATION_PRESETS: number[] = [1, 3, 5, 10];
@@ -56,10 +67,13 @@ export function loadListeningSettings(): ListeningSettings {
     const parsed = JSON.parse(raw) as Partial<ListeningSettings>;
     return {
       durationMin: clampDuration(parsed.durationMin),
+      durationMode:
+        parsed.durationMode === "custom" ? "custom" : DEFAULT_LISTENING.durationMode,
       category: isCategory(parsed.category) ? parsed.category : DEFAULT_LISTENING.category,
       useVocab:
         typeof parsed.useVocab === "boolean" ? parsed.useVocab : DEFAULT_LISTENING.useVocab,
       speed: isSpeed(parsed.speed) ? parsed.speed : DEFAULT_LISTENING.speed,
+      level: isLevel(parsed.level) ? parsed.level : DEFAULT_LISTENING.level,
     };
   } catch {
     return { ...DEFAULT_LISTENING };
@@ -94,4 +108,8 @@ function isCategory(v: unknown): v is ListeningCategory {
 
 function isSpeed(v: unknown): v is ListeningSpeed {
   return v === 0.75 || v === 1.0 || v === 1.25;
+}
+
+function isLevel(v: unknown): v is Level {
+  return v === "A2" || v === "B1" || v === "B2" || v === "C1";
 }

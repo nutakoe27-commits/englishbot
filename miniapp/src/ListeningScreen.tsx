@@ -16,11 +16,11 @@ import { Transcript } from "./Transcript";
 import { ProgressScreen } from "./ProgressScreen";
 import { WordsScreen } from "./WordsScreen";
 import {
+  CATEGORY_OPTIONS,
   loadListeningSettings,
   saveListeningSettings,
   type ListeningSettings,
 } from "./listeningSettings";
-import { loadSettings as loadTutorSettings } from "./tutorSettings";
 
 const API_BASE = "https://api-english.krichigindocs.ru";
 
@@ -67,8 +67,6 @@ export function ListeningScreen({ onExit }: Props) {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const tutor = loadTutorSettings();
-
     try {
       const res = await fetch(`${API_BASE}/api/listening/generate`, {
         method: "POST",
@@ -79,7 +77,7 @@ export function ListeningScreen({ onExit }: Props) {
           category: settings.category,
           use_vocab: settings.useVocab,
           speed: settings.speed,
-          level: tutor.level,
+          level: settings.level,
         }),
         signal: controller.signal,
       });
@@ -187,7 +185,11 @@ export function ListeningScreen({ onExit }: Props) {
           <div className="lst-player-wrap">
             <div className="lst-meta">
               <span className="lst-meta__pill">{settings.durationMin} мин</span>
-              <span className="lst-meta__pill">{settings.category}</span>
+              <span className="lst-meta__pill">{settings.level}</span>
+              <span className="lst-meta__pill">
+                {CATEGORY_OPTIONS.find((c) => c.value === settings.category)?.label
+                  ?? settings.category}
+              </span>
               <span className="lst-meta__pill">{settings.speed}×</span>
               {result.used_words.length > 0 && (
                 <span

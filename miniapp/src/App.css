@@ -1794,6 +1794,45 @@ button {
   letter-spacing: 0.3px;
 }
 
+/* Breakdown — разбивка минут по режимам (Разговор / Слушание) */
+.progress-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+}
+.progress-breakdown__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 2px;
+}
+.progress-breakdown__row + .progress-breakdown__row {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+.progress-breakdown__emoji {
+  font-size: 18px;
+  line-height: 1;
+  width: 22px;
+  text-align: center;
+}
+.progress-breakdown__label {
+  flex: 1;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.85);
+}
+.progress-breakdown__value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
 /* Универсальная карточка для подсекций */
 .progress-card {
   background: rgba(255, 255, 255, 0.03);
@@ -2073,6 +2112,30 @@ button {
   border-color: var(--accent);
   background: rgba(124, 92, 255, 0.18);
   color: var(--text);
+}
+
+/* Level-chip с двумя строками: код CEFR + расшифровка */
+.lst-chip--level {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 16px;
+  min-width: 78px;
+  line-height: 1.15;
+}
+.lst-chip--level .lst-chip__main {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.lst-chip--level .lst-chip__sub {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.lst-chip--level[data-active="true"] .lst-chip__sub {
+  color: var(--accent-soft);
 }
 
 .lst-custom-input {
