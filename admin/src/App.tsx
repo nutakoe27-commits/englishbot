@@ -36,6 +36,32 @@ import {
   fmtSeconds,
   userFullName,
 } from "./ui";
+import { useIsMobile } from "./useIsMobile";
+
+// На узких экранах делаем саму таблицу горизонтально прокручиваемой
+// (display:block + overflow-x), чтобы колонки не сжимались до нечитаемости.
+// whiteSpace:nowrap не даёт ячейкам переноситься — таблица скроллится целиком.
+function tableStyle(isMobile: boolean, extra?: React.CSSProperties): React.CSSProperties {
+  const base = { ...S.table, ...(extra ?? {}) };
+  if (!isMobile) return base;
+  return {
+    ...base,
+    display: "block",
+    overflowX: "auto",
+    whiteSpace: "nowrap",
+    WebkitOverflowScrolling: "touch",
+  };
+}
+
+// Сетка метрик: на мобиле уже минимальная ширина колонки → 2 в ряд на телефоне.
+function metricsGridStyle(isMobile: boolean): React.CSSProperties {
+  return {
+    ...S.metricsGrid,
+    gridTemplateColumns: isMobile
+      ? "repeat(auto-fit, minmax(130px, 1fr))"
+      : "repeat(auto-fit, minmax(170px, 1fr))",
+  };
+}
 
 // ─── Простейший hash-router: #/dashboard, #/users, #/user/123, #/settings ────
 function useRoute(): [string, (r: string) => void] {
@@ -134,13 +160,15 @@ function Login({ onAuthed }: { onAuthed: () => void }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        padding: 16,
       }}
     >
       <form
         onSubmit={submit}
         style={{
           ...S.card,
-          width: 360,
+          width: "100%",
+          maxWidth: 360,
           margin: 0,
         }}
       >
@@ -176,6 +204,7 @@ function Login({ onAuthed }: { onAuthed: () => void }) {
 // ─── Shell (header + routes) ─────────────────────────────────────────────────
 function Shell({ onLogout }: { onLogout: () => void }) {
   const [route, navigate] = useRoute();
+  const isMobile = useIsMobile();
 
   const logout = () => {
     clearToken();
@@ -214,6 +243,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
         style={{
           ...S.navLink,
           ...(active ? S.navLinkActive : {}),
+          whiteSpace: "nowrap",
+          flexShrink: 0,
         }}
         onClick={() => navigate(path)}
       >
@@ -224,9 +255,35 @@ function Shell({ onLogout }: { onLogout: () => void }) {
 
   return (
     <div style={S.page}>
-      <header style={S.header}>
-        <h1 style={S.headerTitle}>🛠 Admin · English Tutor</h1>
-        <nav style={S.nav}>
+      <header
+        style={{
+          ...S.header,
+          ...(isMobile
+            ? { flexDirection: "column", alignItems: "stretch", gap: 10, padding: "12px 14px" }
+            : {}),
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <h1 style={{ ...S.headerTitle, ...(isMobile ? { fontSize: 16 } : {}) }}>
+            🛠 Admin · English Tutor
+          </h1>
+          {isMobile && (
+            <button style={S.btnSecondary} onClick={logout}>
+              Выйти
+            </button>
+          )}
+        </div>
+        <nav
+          style={{ ...S.nav, ...(isMobile ? { gap: 6, flex: "none" } : {}) }}
+          className={isMobile ? "adm-nav-scroll" : undefined}
+        >
           {navBtn("/dashboard", "Метрики")}
           {navBtn("/users", "Пользователи")}
           {navBtn("/broadcast", "Массовые")}
@@ -234,11 +291,20 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           {navBtn("/quests", "Quests")}
           {navBtn("/settings", "Настройки")}
         </nav>
-        <button style={S.btnSecondary} onClick={logout}>
-          Выйти
-        </button>
+        {!isMobile && (
+          <button style={S.btnSecondary} onClick={logout}>
+            Выйти
+          </button>
+        )}
       </header>
-      <div style={S.container}>{view}</div>
+      <div
+        style={{
+          ...S.container,
+          ...(isMobile ? { padding: 14 } : {}),
+        }}
+      >
+        {view}
+      </div>
     </div>
   );
 }
@@ -262,6 +328,7 @@ function modeBadgeStyle(mode: string): React.CSSProperties {
 
 // ─── Онлайн-панель: кто сейчас занимается (автообновление 5с) ─────────────────
 function OnlinePanel({ onOpenUser }: { onOpenUser: (id: number) => void }) {
+  const isMobile = useIsMobile();
   const [online, setOnline] = useState<OnlineResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -314,7 +381,7 @@ function OnlinePanel({ onOpenUser }: { onOpenUser: (id: number) => void }) {
       {count === 0 ? (
         <div style={{ ...S.muted, marginTop: 12 }}>Сейчас никого нет онлайн.</div>
       ) : (
-        <table style={{ ...S.table, marginTop: 12 }}>
+        <table style={tableStyle(isMobile, { marginTop: 12 })}>
           <thead>
             <tr>
               <th style={S.th}>Юзер</th>
@@ -360,6 +427,7 @@ function OnlinePanel({ onOpenUser }: { onOpenUser: (id: number) => void }) {
 
 // ─── Карточка «Режимы сегодня» + топ listening-категорий ─────────────────────
 function ModesTodayCard({ metrics }: { metrics: Metrics }) {
+  const isMobile = useIsMobile();
   const modes = metrics.modes_today ?? {};
   const order = ["voice", "chat", "listening"];
   const topCats = metrics.listening_top_categories ?? [];
@@ -367,7 +435,7 @@ function ModesTodayCard({ metrics }: { metrics: Metrics }) {
   return (
     <div style={{ ...S.card, marginTop: 20 }}>
       <h3 style={S.h3}>Режимы сегодня</h3>
-      <div style={S.metricsGrid}>
+      <div style={metricsGridStyle(isMobile)}>
         {order.map((mode) => {
           const stat = modes[mode] ?? { sessions: 0, minutes: 0 };
           const meta = modeMeta(mode);
@@ -404,6 +472,7 @@ function ModesTodayCard({ metrics }: { metrics: Metrics }) {
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 function Dashboard() {
+  const isMobile = useIsMobile();
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [dauSeries, setDauSeries] = useState<ChartPoint[] | null>(null);
   const [revSeries, setRevSeries] = useState<ChartPoint[] | null>(null);
@@ -491,7 +560,7 @@ function Dashboard() {
       <OnlinePanel onOpenUser={(uid) => dashNavigate(`/user/${uid}`)} />
 
       <h2 style={S.h2}>Метрики</h2>
-      <div style={S.metricsGrid}>
+      <div style={metricsGridStyle(isMobile)}>
         {items.map((it) => (
           <div key={it.label} style={S.metricCard}>
             <p style={S.metricValue}>{it.value}</p>
@@ -519,7 +588,7 @@ function Dashboard() {
             Подробнее
           </button>
         </div>
-        <div style={S.metricsGrid}>
+        <div style={metricsGridStyle(isMobile)}>
           {battleItems.map((it) => (
             <div key={it.label} style={S.metricCard}>
               <p style={S.metricValue}>{it.value}</p>
@@ -546,7 +615,7 @@ function Dashboard() {
             Подробнее
           </button>
         </div>
-        <div style={S.metricsGrid}>
+        <div style={metricsGridStyle(isMobile)}>
           {questItems.map((it) => (
             <div key={it.label} style={S.metricCard}>
               <p style={S.metricValue}>{it.value}</p>
@@ -663,6 +732,7 @@ function ChartBlock({
 }
 
 function RetentionTable({ data }: { data: RetentionCohort[] | null }) {
+  const isMobile = useIsMobile();
   if (data === null) {
     return (
       <div style={S.chartCard}>
@@ -687,7 +757,7 @@ function RetentionTable({ data }: { data: RetentionCohort[] | null }) {
   return (
     <div style={S.chartCard}>
       <h3 style={S.chartTitle}>Retention по cohort'ам (D1 / D7 / D30)</h3>
-      <table style={S.table}>
+      <table style={tableStyle(isMobile)}>
         <thead>
           <tr>
             <th style={S.th}>Cohort</th>
@@ -717,6 +787,7 @@ function RetentionTable({ data }: { data: RetentionCohort[] | null }) {
 const USERS_PAGE = 50;
 
 function UsersList() {
+  const isMobile = useIsMobile();
   const [q, setQ] = useState("");
   // appliedQ — текущий "зафиксированный" запрос, по которому уже идёт
   // пагинация. Меняем только при submit/Enter, чтобы не дёргать запрос
@@ -784,7 +855,7 @@ function UsersList() {
           {items.length === 0 ? (
             <div style={S.muted}>Никого не нашли.</div>
           ) : (
-            <table style={S.table}>
+            <table style={tableStyle(isMobile)}>
               <thead>
                 <tr>
                   <th style={S.th}>Имя</th>
@@ -1141,6 +1212,7 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
 // ─── Sessions tab (на UserPage) ──────────────────────────────────────────────
 
 function SessionsTab({ userId }: { userId: number }) {
+  const isMobile = useIsMobile();
   const [sessions, setSessions] = useState<UserSession[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -1176,7 +1248,7 @@ function SessionsTab({ userId }: { userId: number }) {
   return (
     <div style={S.card}>
       <h3 style={S.h3}>Последние сессии</h3>
-      <table style={S.table}>
+      <table style={tableStyle(isMobile)}>
         <thead>
           <tr>
             <th style={S.th}>Дата/время</th>
@@ -2101,6 +2173,7 @@ function BroadcastCard() {
 // ─── BattlesPage ─────────────────────────────────────────────────────────────
 
 function BattlesPage() {
+  const isMobile = useIsMobile();
   const [stats, setStats] = useState<BattlesStats | null>(null);
   const [battles, setBattles] = useState<BattleRow[] | null>(null);
   const [filter, setFilter] = useState<string>("");
@@ -2129,7 +2202,7 @@ function BattlesPage() {
       <h2 style={{ marginTop: 0 }}>⚔️ Battle Mode</h2>
 
       {stats && (
-        <div style={S.metricsGrid}>
+        <div style={metricsGridStyle(isMobile)}>
           <div style={S.metricCard}>
             <div style={S.metricValue}>{stats.total}</div>
             <div style={S.metricLabel}>Всего</div>
@@ -2177,7 +2250,7 @@ function BattlesPage() {
 
         {battles && (
           <div style={{ overflowX: "auto" }}>
-            <table style={S.table}>
+            <table style={tableStyle(isMobile)}>
               <thead>
                 <tr>
                   <th style={S.th}>#</th>
@@ -2237,6 +2310,7 @@ function BattlesPage() {
 // ─── QuestsPage ──────────────────────────────────────────────────────────────
 
 function QuestsPage() {
+  const isMobile = useIsMobile();
   const [stats, setStats] = useState<QuestsStats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -2258,7 +2332,7 @@ function QuestsPage() {
       <h2 style={{ marginTop: 0 }}>🎯 Daily Quests</h2>
 
       {stats && (
-        <div style={S.metricsGrid}>
+        <div style={metricsGridStyle(isMobile)}>
           <div style={S.metricCard}>
             <div style={S.metricValue}>{stats.total_assigned}</div>
             <div style={S.metricLabel}>Выдано всего</div>
@@ -2290,7 +2364,7 @@ function QuestsPage() {
         <div style={S.card}>
           <h3 style={{ marginTop: 0 }}>По каждому квесту</h3>
           <div style={{ overflowX: "auto" }}>
-            <table style={S.table}>
+            <table style={tableStyle(isMobile)}>
               <thead>
                 <tr>
                   <th style={S.th}>Квест</th>
