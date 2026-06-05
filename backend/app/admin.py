@@ -22,6 +22,7 @@
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Optional
 
@@ -30,9 +31,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from . import broadcast as broadcast_mod
+from . import presence
 from .config import settings
 from .db import db_session
 from .db.repo import Repo, msk_today
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -73,6 +77,11 @@ class QuestMetrics(BaseModel):
     completion_rate: float = 0.0
 
 
+class ModeStat(BaseModel):
+    sessions: int = 0
+    minutes: int = 0
+
+
 class MetricsResponse(BaseModel):
     total_users: int
     active_subscriptions: int
@@ -85,6 +94,10 @@ class MetricsResponse(BaseModel):
     new_users_today: int = 0
     battles: BattleMetrics = BattleMetrics()
     quests: QuestMetrics = QuestMetrics()
+    # Разбивка сессий за сегодня по режимам (voice/chat/listening).
+    modes_today: dict[str, ModeStat] = Field(default_factory=dict)
+    # Топ категорий listening-подкастов за 7 дней.
+    listening_top_categories: list[dict] = Field(default_factory=list)
 
 
 class UserBrief(BaseModel):
@@ -126,6 +139,14 @@ class UserDetail(UserBrief):
     used_seconds_total: int = 0
     battles: UserBattleStats = UserBattleStats()
     quests: UserQuestStats = UserQuestStats()
+    # Активность (retention v1 + listening)
+    streak_current: int = 0
+    streak_best: int = 0
+    last_practice_date: Optional[str] = None
+    minutes_by_mode: dict[str, int] = Field(default_factory=dict)  # {'voice': N, ...}
+    words_count: int = 0
+    achievements_earned: int = 0
+    achievements_total: int = 0
 
 
 class GrantRequest(BaseModel):
@@ -260,6 +281,21 @@ async def _user_to_detail(repo: Repo, u) -> UserDetail:
         quests_stats.active_title_ru = qc.title_ru if qc else None
         quests_stats.active_assigned_at = uq.assigned_at.isoformat() if uq.assigned_at else None
 
+    # Активность: стрик, минуты по режимам, словарь, медали.
+    streak_current, streak_best, last_practice = await repo.get_streak(u.id)
+    seconds_by_mode = await repo.user_total_seconds_by_mode(u.id)
+    minutes_by_mode = {m: sec // 60 for m, sec in seconds_by_mode.items()}
+    words_count = await repo.count_user_words(u.id)
+    try:
+        from .achievements import ACHIEVEMENTS, get_earned_keys
+        earned = await get_earned_keys(repo, u.id)
+        achievements_earned = len(earned)
+        achievements_total = len(ACHIEVEMENTS)
+    except Exception as exc:
+        logger.warning("[admin] achievements load failed: %r", exc)
+        achievements_earned = 0
+        achievements_total = 0
+
     return UserDetail(
         **brief.model_dump(),
         language_code=u.language_code,
@@ -271,6 +307,13 @@ async def _user_to_detail(repo: Repo, u) -> UserDetail:
         used_seconds_total=used_total,
         battles=battles_stats,
         quests=quests_stats,
+        streak_current=streak_current,
+        streak_best=streak_best,
+        last_practice_date=last_practice.isoformat() if last_practice else None,
+        minutes_by_mode=minutes_by_mode,
+        words_count=words_count,
+        achievements_earned=achievements_earned,
+        achievements_total=achievements_total,
     )
 
 
@@ -387,6 +430,16 @@ async def _build_metrics() -> MetricsResponse:
             round(qm.completed_total / qm.assigned_total, 3) if qm.assigned_total else 0.0
         )
 
+        # Разбивка сегодняшних сессий по режимам + топ listening-категорий (7д).
+        breakdown = await repo.sessions_breakdown_since(day_start_utc)
+        modes_today = {
+            mode: ModeStat(sessions=cnt, minutes=secs // 60)
+            for mode, (cnt, secs) in breakdown.items()
+        }
+        top_categories = await repo.listening_top_categories(
+            day_start_utc - timedelta(days=6), limit=5,
+        )
+
         return MetricsResponse(
             total_users=total,
             active_subscriptions=subs,
@@ -399,7 +452,61 @@ async def _build_metrics() -> MetricsResponse:
             new_users_today=new_users_today,
             battles=bm,
             quests=qm,
+            modes_today=modes_today,
+            listening_top_categories=top_categories,
         )
+
+
+# ─── Онлайн: кто сейчас занимается ─────────────────────────────────────────────
+
+class OnlineSession(BaseModel):
+    user_id: int
+    tg_id: Optional[int] = None
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    mode: str
+    level: Optional[str] = None
+    role: Optional[str] = None
+    duration_sec: int = 0
+
+
+class OnlineResponse(BaseModel):
+    count: int = 0
+    by_mode: dict[str, int] = Field(default_factory=dict)
+    sessions: list[OnlineSession] = Field(default_factory=list)
+
+
+@router.get(
+    "/online",
+    response_model=OnlineResponse,
+    dependencies=[Depends(require_admin_token)],
+)
+async def admin_online() -> OnlineResponse:
+    """In-memory снапшот активных сессий (voice/chat WS + listening-генерация).
+    Обновляется онлайн-панелью каждые ~5с. Работает на single-worker backend."""
+    entries = presence.snapshot()
+    by_mode: dict[str, int] = {"voice": 0, "chat": 0, "listening": 0}
+    for e in entries:
+        by_mode[e["mode"]] = by_mode.get(e["mode"], 0) + 1
+
+    sessions: list[OnlineSession] = []
+    if entries:
+        async with db_session() as s:
+            repo = Repo(s)
+            for e in entries:
+                u = await repo.get_user_by_id(e["user_id"])
+                sessions.append(OnlineSession(
+                    user_id=e["user_id"],
+                    tg_id=u.tg_id if u else None,
+                    username=u.username if u else None,
+                    first_name=u.first_name if u else None,
+                    mode=e["mode"],
+                    level=e["level"],
+                    role=e["role"],
+                    duration_sec=e["duration_sec"],
+                ))
+    sessions.sort(key=lambda x: x.duration_sec, reverse=True)
+    return OnlineResponse(count=len(entries), by_mode=by_mode, sessions=sessions)
 
 
 @router.get(

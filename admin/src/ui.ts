@@ -250,6 +250,15 @@ export const S: Record<string, CSSProperties> = {
     backgroundColor: colors.successBg,
     color: colors.success,
   },
+  modeBadgeListening: {
+    display: "inline-block",
+    padding: "2px 8px",
+    borderRadius: 10,
+    fontSize: 12,
+    fontWeight: 500,
+    backgroundColor: "#f3eefe",
+    color: "#7c5cff",
+  },
 };
 
 export function fmtDate(iso: string | null): string {
