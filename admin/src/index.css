@@ -1,0 +1,52 @@
+/* Глобальная база для админки. Основной стиль — inline через ui.ts (S),
+   здесь только то, что нельзя задать инлайном: сброс, поведение скролла,
+   утилита горизонтальной прокрутки таблиц на узких экранах. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* iOS Safari не должен авто-увеличивать шрифт в landscape. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Обёртка для таблиц: на мобиле таблица не сжимается до нечитаемости,
+   а прокручивается по горизонтали. Импульсный скролл на iOS. */
+.adm-scroll-x {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Тонкий скроллбар у горизонтальных контейнеров (нав, таблицы). */
+.adm-scroll-x::-webkit-scrollbar,
+.adm-nav-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+.adm-scroll-x::-webkit-scrollbar-thumb,
+.adm-nav-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+/* Навигация: на мобиле горизонтальный скролл без переноса, чтобы пункты
+   не «лесенкой». Скрываем уродливый скроллбар, оставляя свайп. */
+.adm-nav-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.adm-nav-scroll::-webkit-scrollbar {
+  display: none;
+}
