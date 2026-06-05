@@ -27,6 +27,7 @@ from typing import Optional
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from . import presence
 from .config import settings as app_settings
 from .llm_providers import get_llm_provider
 from .stt_providers import get_stt_provider
@@ -48,6 +49,11 @@ MAX_HISTORY_TURNS = 4
 
 # Период «тика» учёта времени для бесплатных юзеров (секунды).
 USAGE_HEARTBEAT_SECONDS = 5
+
+# TTL онлайн-присутствия для WS-сессий: heartbeat продлевает каждые 5с,
+# берём 3× с запасом — сессия пропадёт из «онлайна» через ~15с после обрыва,
+# если finally не успел/не сработал.
+PRESENCE_WS_TTL = USAGE_HEARTBEAT_SECONDS * 3
 
 # ─── Language guard: отказ принимать русскую речь ─────────────────────
 # Whisper при language="en" в большинстве случаев переводит/транслитерирует
@@ -198,13 +204,18 @@ def _is_russian_utterance(text: str) -> bool:
     return total > 0 and (len(cyr) / total) >= 0.3
 
 
-async def _usage_watchdog(websocket: WebSocket, limits_ctx) -> None:
+async def _usage_watchdog(
+    websocket: WebSocket, limits_ctx, presence_user_id: Optional[int] = None,
+) -> None:
     """Каждые USAGE_HEARTBEAT_SECONDS списывает порцию с дневного лимита.
 
     Если у юзера активная подписка — продолжает писать в daily_usage
     (для аналитики), но никогда не закрывает WS.
     Если бесплатный и лимит исчерпан — отправляет {"type":"limit_reached"}
     и закрывает WS кодом 4004.
+
+    presence_user_id — db id юзера для продления онлайн-присутствия (admin
+    панель «кто сейчас занимается»). None → присутствие не трогаем.
     """
     if limits_ctx is None:
         return
@@ -214,6 +225,8 @@ async def _usage_watchdog(websocket: WebSocket, limits_ctx) -> None:
             if websocket.client_state != WebSocketState.CONNECTED:
                 return
             await limits_ctx.heartbeat(USAGE_HEARTBEAT_SECONDS)
+            if presence_user_id is not None:
+                presence.touch(presence_user_id, PRESENCE_WS_TTL)
             if limits_ctx.is_exceeded():
                 logger.warning(
                     "[limits] бесплатный лимит исчерпан, закрываем WS user_db_id=%s",
@@ -305,8 +318,21 @@ async def _run_chat_session(
         except Exception as exc:
             logger.warning("[chat] open_session failed: %r", exc)
 
+    # Онлайн-присутствие для админки.
+    if limits_ctx is not None:
+        presence.mark(
+            limits_ctx.user_db_id,
+            mode="chat",
+            level=session_settings.level,
+            role=session_settings.role,
+            ttl=PRESENCE_WS_TTL,
+        )
+
     watchdog: Optional[asyncio.Task] = (
-        asyncio.create_task(_usage_watchdog(websocket, limits_ctx))
+        asyncio.create_task(_usage_watchdog(
+            websocket, limits_ctx,
+            presence_user_id=limits_ctx.user_db_id if limits_ctx else None,
+        ))
         if limits_ctx is not None
         else None
     )
@@ -412,6 +438,8 @@ async def _run_chat_session(
     except Exception as exc:
         logger.error("[chat] ошибка в цикле: %s", exc, exc_info=True)
     finally:
+        if limits_ctx is not None:
+            presence.clear(limits_ctx.user_db_id)
         if watchdog and not watchdog.done():
             watchdog.cancel()
             try:
@@ -907,10 +935,26 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
     recv_task = asyncio.create_task(receive_from_client(), name="recv_from_client")
     proc_task = asyncio.create_task(process_stt(), name="process_stt")
     watchdog_task: Optional[asyncio.Task] = (
-        asyncio.create_task(_usage_watchdog(websocket, limits_ctx), name="usage_watchdog")
+        asyncio.create_task(
+            _usage_watchdog(
+                websocket, limits_ctx,
+                presence_user_id=limits_ctx.user_db_id,
+            ),
+            name="usage_watchdog",
+        )
         if limits_ctx is not None
         else None
     )
+
+    # Онлайн-присутствие для админки.
+    if limits_ctx is not None:
+        presence.mark(
+            limits_ctx.user_db_id,
+            mode="voice",
+            level=session_settings.level,
+            role=session_settings.role,
+            ttl=PRESENCE_WS_TTL,
+        )
 
     session_start = asyncio.get_event_loop().time()
     # Открываем запись сессии в БД — нужна для админ-вкладки «Сессии» и
@@ -945,6 +989,8 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
         # Даём им завершиться корректно
         await asyncio.gather(*pending, return_exceptions=True)
     finally:
+        if limits_ctx is not None:
+            presence.clear(limits_ctx.user_db_id)
         duration_sec = int(asyncio.get_event_loop().time() - session_start)
         # Закрываем запись сессии в БД (если открылась).
         if session_db_id is not None:

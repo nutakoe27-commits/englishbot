@@ -10,7 +10,7 @@ import {
   type BroadcastJobStatus,
   type ChartPoint,
   type Metrics,
-  type PaymentRecord,
+  type OnlineResponse,
   type QuestsStats,
   type RetentionCohort,
   type UserBrief,
@@ -243,10 +243,168 @@ function Shell({ onLogout }: { onLogout: () => void }) {
   );
 }
 
+// ─── Режимы: метки и бейджи ──────────────────────────────────────────────────
+const MODE_META: Record<string, { label: string; emoji: string }> = {
+  voice: { label: "Разговор", emoji: "🎙" },
+  chat: { label: "Чат", emoji: "💬" },
+  listening: { label: "Слушание", emoji: "🎧" },
+};
+
+function modeMeta(mode: string): { label: string; emoji: string } {
+  return MODE_META[mode] ?? { label: mode, emoji: "•" };
+}
+
+function modeBadgeStyle(mode: string): React.CSSProperties {
+  if (mode === "voice") return S.modeBadgeVoice;
+  if (mode === "listening") return S.modeBadgeListening;
+  return S.modeBadgeChat;
+}
+
+// ─── Онлайн-панель: кто сейчас занимается (автообновление 5с) ─────────────────
+function OnlinePanel({ onOpenUser }: { onOpenUser: (id: number) => void }) {
+  const [online, setOnline] = useState<OnlineResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const r = await api.online();
+        if (!cancelled) {
+          setOnline(r);
+          setErr(null);
+        }
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+      }
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  const count = online?.count ?? 0;
+  const bm = online?.by_mode ?? {};
+
+  return (
+    <div style={{ ...S.card, marginBottom: 20 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 14,
+          flexWrap: "wrap",
+        }}
+      >
+        <h3 style={{ ...S.h3, margin: 0 }}>
+          🟢 Сейчас занимается: {count}
+        </h3>
+        <span style={S.muted}>
+          {modeMeta("voice").emoji} {bm.voice ?? 0} ·{" "}
+          {modeMeta("chat").emoji} {bm.chat ?? 0} ·{" "}
+          {modeMeta("listening").emoji} {bm.listening ?? 0}
+        </span>
+      </div>
+
+      {err && <div style={{ ...S.muted, marginTop: 8 }}>Не удалось обновить: {err}</div>}
+
+      {count === 0 ? (
+        <div style={{ ...S.muted, marginTop: 12 }}>Сейчас никого нет онлайн.</div>
+      ) : (
+        <table style={{ ...S.table, marginTop: 12 }}>
+          <thead>
+            <tr>
+              <th style={S.th}>Юзер</th>
+              <th style={S.th}>Режим</th>
+              <th style={S.th}>Уровень</th>
+              <th style={S.th}>Тема/роль</th>
+              <th style={S.th}>В сессии</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(online?.sessions ?? []).map((s) => (
+              <tr key={s.user_id}>
+                <td style={S.td}>
+                  <a
+                    href={`#/user/${s.user_id}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      onOpenUser(s.user_id);
+                    }}
+                    style={{ color: colors.primary, cursor: "pointer" }}
+                  >
+                    {s.username
+                      ? `@${s.username}`
+                      : s.first_name || `#${s.user_id}`}
+                  </a>
+                </td>
+                <td style={S.td}>
+                  <span style={modeBadgeStyle(s.mode)}>
+                    {modeMeta(s.mode).emoji} {modeMeta(s.mode).label}
+                  </span>
+                </td>
+                <td style={S.td}>{s.level || "—"}</td>
+                <td style={S.td}>{s.role || "—"}</td>
+                <td style={S.td}>{fmtSeconds(s.duration_sec)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ─── Карточка «Режимы сегодня» + топ listening-категорий ─────────────────────
+function ModesTodayCard({ metrics }: { metrics: Metrics }) {
+  const modes = metrics.modes_today ?? {};
+  const order = ["voice", "chat", "listening"];
+  const topCats = metrics.listening_top_categories ?? [];
+
+  return (
+    <div style={{ ...S.card, marginTop: 20 }}>
+      <h3 style={S.h3}>Режимы сегодня</h3>
+      <div style={S.metricsGrid}>
+        {order.map((mode) => {
+          const stat = modes[mode] ?? { sessions: 0, minutes: 0 };
+          const meta = modeMeta(mode);
+          return (
+            <div key={mode} style={S.metricCard}>
+              <p style={S.metricValue}>
+                {meta.emoji} {stat.sessions}
+              </p>
+              <p style={S.metricLabel}>
+                {meta.label} · {stat.minutes} мин
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
+      {topCats.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{ ...S.metricLabel, marginBottom: 8 }}>
+            🎧 Топ тем подкастов (7 дней)
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {topCats.map((c) => (
+              <span key={c.category} style={S.modeBadgeListening}>
+                {c.category} · {c.count}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 function Dashboard() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
-  const [payments, setPayments] = useState<PaymentRecord[] | null>(null);
   const [dauSeries, setDauSeries] = useState<ChartPoint[] | null>(null);
   const [revSeries, setRevSeries] = useState<ChartPoint[] | null>(null);
   const [newUsersSeries, setNewUsersSeries] = useState<ChartPoint[] | null>(null);
@@ -259,16 +417,14 @@ function Dashboard() {
     try {
       // Графики и retention тянем параллельно с основными метриками — их
       // ошибки не должны убивать основной дашборд (catch → пустые массивы).
-      const [m, p, dau, rev, nu, ret] = await Promise.all([
+      const [m, dau, rev, nu, ret] = await Promise.all([
         api.metrics(),
-        api.recentPayments().catch(() => [] as PaymentRecord[]),
         api.chartSeries("dau", 30).catch(() => ({ series: [] as ChartPoint[] })),
         api.chartSeries("revenue", 30).catch(() => ({ series: [] as ChartPoint[] })),
         api.chartSeries("new-users", 30).catch(() => ({ series: [] as ChartPoint[] })),
         api.retention(30).catch(() => ({ cohorts: [] as RetentionCohort[] })),
       ]);
       setMetrics(m);
-      setPayments(Array.isArray(p) ? p : []);
       setDauSeries(dau.series);
       setRevSeries(rev.series);
       setNewUsersSeries(nu.series);
@@ -332,6 +488,8 @@ function Dashboard() {
 
   return (
     <div>
+      <OnlinePanel onOpenUser={(uid) => dashNavigate(`/user/${uid}`)} />
+
       <h2 style={S.h2}>Метрики</h2>
       <div style={S.metricsGrid}>
         {items.map((it) => (
@@ -341,6 +499,8 @@ function Dashboard() {
           </div>
         ))}
       </div>
+
+      <ModesTodayCard metrics={metrics} />
 
       <div style={{ ...S.card, marginTop: 20 }}>
         <div
@@ -394,38 +554,6 @@ function Dashboard() {
             </div>
           ))}
         </div>
-      </div>
-
-      <div style={{ ...S.card, marginTop: 20 }}>
-        <h3 style={S.h3}>Последние платежи</h3>
-        {!payments || payments.length === 0 ? (
-          <div style={S.muted}>Пока ничего.</div>
-        ) : (
-          <table style={S.table}>
-            <thead>
-              <tr>
-                <th style={S.th}>Когда</th>
-                <th style={S.th}>TG ID</th>
-                <th style={S.th}>Тариф</th>
-                <th style={S.th}>Сумма</th>
-                <th style={S.th}>Статус</th>
-                <th style={S.th}>Заметки</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payments.map((p) => (
-                <tr key={p.id}>
-                  <td style={S.td}>{fmtDate(p.created_at)}</td>
-                  <td style={S.td}>{p.tg_id ?? p.user_id ?? "—"}</td>
-                  <td style={S.td}>{p.plan ?? "—"}</td>
-                  <td style={S.td}>{fmtRub(p.amount_rub ?? 0)}</td>
-                  <td style={S.td}>{p.status ?? "—"}</td>
-                  <td style={S.td}>{p.notes ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
       </div>
 
       <ChartBlock
@@ -857,7 +985,51 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
         </div>
       </div>
 
-      {/* ── Подписка ────────────────────── */}
+      {/* ── Активность (стрик / режимы / словарь / медали) ── */}
+      <div style={{ ...S.card, marginTop: 16 }}>
+        <h3 style={S.h3}>Активность</h3>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <StatusPill
+            label="Стрик"
+            value={
+              (u.streak_current ?? 0) > 0
+                ? `🔥 ${u.streak_current} дн. · рекорд ${u.streak_best ?? 0}`
+                : `нет · рекорд ${u.streak_best ?? 0}`
+            }
+            tone={(u.streak_current ?? 0) > 0 ? "success" : "muted"}
+          />
+          <StatusPill
+            label="Последняя практика"
+            value={u.last_practice_date ? fmtDate(u.last_practice_date) : "—"}
+            tone="muted"
+          />
+          <StatusPill
+            label="Слов в словаре"
+            value={(u.words_count ?? 0).toString()}
+            tone={(u.words_count ?? 0) > 0 ? "success" : "muted"}
+          />
+          <StatusPill
+            label="Медали"
+            value={`${u.achievements_earned ?? 0} / ${u.achievements_total ?? 0}`}
+            tone={(u.achievements_earned ?? 0) > 0 ? "success" : "muted"}
+          />
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+          {["voice", "chat", "listening"].map((mode) => {
+            const mins = (u.minutes_by_mode ?? {})[mode] ?? 0;
+            const meta = modeMeta(mode);
+            return (
+              <StatusPill
+                key={mode}
+                label={`${meta.emoji} ${meta.label}`}
+                value={`${mins} мин`}
+                tone={mins > 0 ? "success" : "muted"}
+              />
+            );
+          })}
+        </div>
+      </div>
+
       {/* Battle-статистика */}
       <div style={{ ...S.card, marginTop: 16 }}>
         <h3 style={S.h3}>Battle-статистика</h3>
@@ -1025,14 +1197,8 @@ function SessionsTab({ userId }: { userId: number }) {
                 )}
               </td>
               <td style={S.td}>
-                <span
-                  style={
-                    s.mode === "voice"
-                      ? S.modeBadgeVoice
-                      : S.modeBadgeChat
-                  }
-                >
-                  {s.mode}
+                <span style={modeBadgeStyle(s.mode)}>
+                  {modeMeta(s.mode).emoji} {modeMeta(s.mode).label}
                 </span>
               </td>
               <td style={S.td}>{s.level || "—"}</td>

@@ -641,6 +641,40 @@ class Repo:
         )
         return {mode: int(secs) for mode, secs in res.all() if int(secs or 0) > 0}
 
+    async def sessions_breakdown_since(
+        self, since_dt: datetime,
+    ) -> dict[str, tuple[int, int]]:
+        """{'voice': (count, seconds), ...} по всем юзерам, сессии с
+        started_at >= since_dt. Для дашборд-карточки «Режимы сегодня»."""
+        res = await self.s.execute(
+            select(
+                SessionRow.mode,
+                func.count(SessionRow.id),
+                func.coalesce(func.sum(SessionRow.used_seconds), 0),
+            )
+            .where(SessionRow.started_at >= since_dt)
+            .group_by(SessionRow.mode)
+        )
+        return {mode: (int(cnt or 0), int(secs or 0)) for mode, cnt, secs in res.all()}
+
+    async def listening_top_categories(
+        self, since_dt: datetime, *, limit: int = 5,
+    ) -> list[dict]:
+        """[{category, count}] — топ категорий listening-подкастов (role)
+        за период since_dt..now. Для дашборда."""
+        res = await self.s.execute(
+            select(SessionRow.role, func.count(SessionRow.id))
+            .where(
+                SessionRow.mode == "listening",
+                SessionRow.started_at >= since_dt,
+                SessionRow.role.is_not(None),
+            )
+            .group_by(SessionRow.role)
+            .order_by(func.count(SessionRow.id).desc())
+            .limit(limit)
+        )
+        return [{"category": role, "count": int(cnt or 0)} for role, cnt in res.all()]
+
     async def user_daily_usage_series(
         self, user_id: int, days: int = 30,
     ) -> list[dict]:

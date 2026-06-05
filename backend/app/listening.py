@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from .config import settings
 from .db import db_session
+from . import presence
 from .tts_providers import KokoroTTSProvider, OUTPUT_SAMPLE_RATE
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,9 @@ router = APIRouter(prefix="/api/listening", tags=["Listening"])
 
 # Kokoro выдаёт ~150 wpm; берём это за target words/min для промпта.
 WORDS_PER_MINUTE = 150
+# TTL онлайн-присутствия на время генерации подкаста (нет heartbeat — снимаем
+# в finally; это лишь safety-net на случай жёсткого краша посреди генерации).
+PRESENCE_GEN_TTL = 210
 MAX_DURATION_MIN = 20
 ALLOWED_CATEGORIES = {
     "news", "tech", "psychology", "history",
@@ -282,75 +286,90 @@ async def generate_podcast(body: _GenerateIn, request: Request) -> _GenerateOut:
                 vocab_words = await repo.get_user_words_for_prompt(user.id, limit=10)
             await session.commit()
 
-    # ── Генерация текста ────────────────────────────────────────────────
-    sys_prompt, usr_prompt = _build_listening_prompt(
-        category=body.category,
-        duration_min=body.duration_min,
-        level=body.level,
-        vocab_words=vocab_words,
-    )
-    # Запас по токенам: ~2 токена на слово + buffer.
-    max_tokens = max(512, body.duration_min * WORDS_PER_MINUTE * 2 + 256)
-    transcript = await _call_llm_for_script(sys_prompt, usr_prompt, max_tokens=max_tokens)
+    # Онлайн-присутствие: на время генерации юзер виден в админке как 🎧.
+    # Снимаем в finally — даже при ошибке LLM/TTS не оставляем «фантом».
+    if user_id is not None:
+        presence.mark(
+            user_id,
+            mode="listening",
+            level=body.level,
+            role=body.category,
+            ttl=PRESENCE_GEN_TTL,
+        )
 
-    # Если клиент отвалился пока ждали LLM — не тратим TTS.
-    if await request.is_disconnected():
-        raise HTTPException(status.HTTP_499_CLIENT_CLOSED_REQUEST
-                            if hasattr(status, "HTTP_499_CLIENT_CLOSED_REQUEST") else 499,
-                            "client_disconnected")
+    try:
+        # ── Генерация текста ────────────────────────────────────────────
+        sys_prompt, usr_prompt = _build_listening_prompt(
+            category=body.category,
+            duration_min=body.duration_min,
+            level=body.level,
+            vocab_words=vocab_words,
+        )
+        # Запас по токенам: ~2 токена на слово + buffer.
+        max_tokens = max(512, body.duration_min * WORDS_PER_MINUTE * 2 + 256)
+        transcript = await _call_llm_for_script(sys_prompt, usr_prompt, max_tokens=max_tokens)
 
-    # ── Какие vocab-слова реально вошли в текст ─────────────────────────
-    transcript_lower = transcript.lower()
-    used_words = [w for w in vocab_words if w.lower() in transcript_lower]
+        # Если клиент отвалился пока ждали LLM — не тратим TTS.
+        if await request.is_disconnected():
+            raise HTTPException(status.HTTP_499_CLIENT_CLOSED_REQUEST
+                                if hasattr(status, "HTTP_499_CLIENT_CLOSED_REQUEST") else 499,
+                                "client_disconnected")
 
-    # ── TTS ─────────────────────────────────────────────────────────────
-    pcm = await _synthesize_full(transcript, speed=body.speed)
-    wav_bytes = _wrap_pcm_to_wav(pcm)
-    audio_duration_sec = len(pcm) // 2 // OUTPUT_SAMPLE_RATE
+        # ── Какие vocab-слова реально вошли в текст ─────────────────────
+        transcript_lower = transcript.lower()
+        used_words = [w for w in vocab_words if w.lower() in transcript_lower]
 
-    # ── Кешируем аудио в памяти ─────────────────────────────────────────
-    _gc_audio_store()
-    audio_id = secrets.token_urlsafe(16)
-    _AUDIO_STORE[audio_id] = (wav_bytes, time.time() + _AUDIO_TTL_SEC)
+        # ── TTS ─────────────────────────────────────────────────────────
+        pcm = await _synthesize_full(transcript, speed=body.speed)
+        wav_bytes = _wrap_pcm_to_wav(pcm)
+        audio_duration_sec = len(pcm) // 2 // OUTPUT_SAMPLE_RATE
 
-    # ── Запись сессии + общая статистика + стрик ────────────────────────
-    session_id = 0
-    duration_seconds = audio_duration_sec or (body.duration_min * 60)
-    if user_id is not None and settings.DATABASE_URL:
-        from .db import Repo
-        from .voice import STREAK_MIN_DURATION_SEC
-        async with db_session() as session:
-            repo = Repo(session)
-            row = await repo.open_session(
-                user_id=user_id,
-                mode="listening",
-                level=body.level,
-                role=body.category,
-            )
-            await repo.close_session(
-                session_id=row.id,
-                used_seconds=duration_seconds,
-            )
-            # DailyUsage — чтобы listening шёл в общий счётчик минут (ProgressScreen,
-            # «Мой прогресс» использует user_total_seconds + daily series).
-            await repo.add_used_seconds(user_id=user_id, seconds=duration_seconds)
-            # Streak — поднимаем, если подкаст ≥ STREAK_MIN_DURATION_SEC.
-            # role=body.category — категория сохраняется в users.last_session_role,
-            # как и в speaking-сессиях (для умной выдачи role-quest).
-            if duration_seconds >= STREAK_MIN_DURATION_SEC:
-                try:
-                    await repo.bump_streak(user_id, role=body.category)
-                except Exception as exc:
-                    logger.warning("[listening] bump_streak failed: %s", exc)
-            session_id = row.id
-            await session.commit()
+        # ── Кешируем аудио в памяти ─────────────────────────────────────
+        _gc_audio_store()
+        audio_id = secrets.token_urlsafe(16)
+        _AUDIO_STORE[audio_id] = (wav_bytes, time.time() + _AUDIO_TTL_SEC)
 
-    return _GenerateOut(
-        session_id=session_id,
-        transcript=transcript,
-        audio_url=f"/api/listening/audio/{audio_id}.wav",
-        used_words=used_words,
-    )
+        # ── Запись сессии + общая статистика + стрик ────────────────────
+        session_id = 0
+        duration_seconds = audio_duration_sec or (body.duration_min * 60)
+        if user_id is not None and settings.DATABASE_URL:
+            from .db import Repo
+            from .voice import STREAK_MIN_DURATION_SEC
+            async with db_session() as session:
+                repo = Repo(session)
+                row = await repo.open_session(
+                    user_id=user_id,
+                    mode="listening",
+                    level=body.level,
+                    role=body.category,
+                )
+                await repo.close_session(
+                    session_id=row.id,
+                    used_seconds=duration_seconds,
+                )
+                # DailyUsage — чтобы listening шёл в общий счётчик минут (ProgressScreen,
+                # «Мой прогресс» использует user_total_seconds + daily series).
+                await repo.add_used_seconds(user_id=user_id, seconds=duration_seconds)
+                # Streak — поднимаем, если подкаст ≥ STREAK_MIN_DURATION_SEC.
+                # role=body.category — категория сохраняется в users.last_session_role,
+                # как и в speaking-сессиях (для умной выдачи role-quest).
+                if duration_seconds >= STREAK_MIN_DURATION_SEC:
+                    try:
+                        await repo.bump_streak(user_id, role=body.category)
+                    except Exception as exc:
+                        logger.warning("[listening] bump_streak failed: %s", exc)
+                session_id = row.id
+                await session.commit()
+
+        return _GenerateOut(
+            session_id=session_id,
+            transcript=transcript,
+            audio_url=f"/api/listening/audio/{audio_id}.wav",
+            used_words=used_words,
+        )
+    finally:
+        if user_id is not None:
+            presence.clear(user_id)
 
 
 @router.get("/audio/{audio_id}.wav")

@@ -78,6 +78,11 @@ export interface QuestMetrics {
   completion_rate: number;
 }
 
+export interface ModeStat {
+  sessions: number;
+  minutes: number;
+}
+
 export interface Metrics {
   total_users: number;
   active_subscriptions: number;
@@ -90,6 +95,25 @@ export interface Metrics {
   new_users_today: number;
   battles: BattleMetrics;
   quests: QuestMetrics;
+  modes_today?: Record<string, ModeStat>;
+  listening_top_categories?: { category: string; count: number }[];
+}
+
+export interface OnlineSession {
+  user_id: number;
+  tg_id: number | null;
+  username: string | null;
+  first_name: string | null;
+  mode: string;
+  level: string | null;
+  role: string | null;
+  duration_sec: number;
+}
+
+export interface OnlineResponse {
+  count: number;
+  by_mode: Record<string, number>;
+  sessions: OnlineSession[];
 }
 
 export interface UserBrief {
@@ -131,22 +155,18 @@ export interface UserDetail extends UserBrief {
   used_seconds_total: number;
   battles: UserBattleStats;
   quests: UserQuestStats;
+  streak_current: number;
+  streak_best: number;
+  last_practice_date: string | null;
+  minutes_by_mode: Record<string, number>;
+  words_count: number;
+  achievements_earned: number;
+  achievements_total: number;
 }
 
 export interface MaintenanceSettings {
   enabled: boolean;
   message: string;
-}
-
-export interface PaymentRecord {
-  id: number;
-  user_id: number;
-  tg_id: number;
-  amount_rub: number;
-  plan: string;
-  status: string;
-  created_at: string;
-  notes: string | null;
 }
 
 export interface BulkExtendResponse {
@@ -210,8 +230,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  recentPayments: () =>
-    request<PaymentRecord[]>("/api/admin/payments/recent"),
+  online: () => request<OnlineResponse>("/api/admin/online"),
 
   // ─── Массовые операции ───────────────────────────────────────
   extendAllSubscriptions: (days: number, notes?: string) =>
