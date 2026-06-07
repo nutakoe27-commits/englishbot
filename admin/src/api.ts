@@ -93,6 +93,8 @@ export interface Metrics {
   minutes_today: number;
   total_revenue_rub: number;
   new_users_today: number;
+  bot_activated_total?: number;
+  bot_activated_today?: number;
   battles: BattleMetrics;
   quests: QuestMetrics;
   modes_today?: Record<string, ModeStat>;

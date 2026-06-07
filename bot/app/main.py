@@ -34,6 +34,7 @@ from .reminders import (
     get_user_profile,
     get_user_reminder,
     is_db_ready,
+    mark_bot_activated,
     reminders_loop,
     set_user_learning_goal,
     set_user_reminder,
@@ -162,6 +163,37 @@ async def _maintenance_middleware(handler, event: Update, data: dict):
         logger.warning("[maintenance] не удалось ответить: %s", exc)
     logger.info("[maintenance] апдейт от tg_id=%s заблокирован", tg_id)
     return None
+
+
+# ─── Bot-activation middleware (миграция 0009) ────────────────────────
+# Помечаем, что юзер активировал бота в Telegram. Это нужно для
+# отдельной метрики в админке «Активировали бота» — до этого в БД
+# попадали только те, кто открыл Mini App.
+#
+# Стоит ПОСЛЕ maintenance, чтобы фейковые/служебные апдейты в режиме
+# тех.работ не засчитывались. Best-effort: ошибка БД не блокирует ответ.
+
+@dp.update.outer_middleware()
+async def _bot_activation_middleware(handler, event: Update, data: dict):
+    user = None
+    if event.message and event.message.from_user:
+        user = event.message.from_user
+    elif event.callback_query and event.callback_query.from_user:
+        user = event.callback_query.from_user
+
+    if user is not None and not user.is_bot:
+        # Fire-and-forget: не ждём ответа БД, чтобы не задерживать handler.
+        # Ошибки логируются внутри mark_bot_activated.
+        asyncio.create_task(
+            mark_bot_activated(
+                tg_id=user.id,
+                username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                language_code=user.language_code,
+            )
+        )
+    return await handler(event, data)
 
 
 def _miniapp_keyboard() -> InlineKeyboardMarkup:
