@@ -92,6 +92,11 @@ class MetricsResponse(BaseModel):
     minutes_today: int = Field(description="Суммарное время за сегодня (минуты)")
     total_revenue_rub: float
     new_users_today: int = 0
+    # Сколько юзеров вообще активировали бота в Telegram (написали /start
+    # или хоть что-то). Считается отдельно от total_users, т.к. до миграции
+    # 0009 в users попадали только те, кто открыл Mini App.
+    bot_activated_total: int = 0
+    bot_activated_today: int = 0
     battles: BattleMetrics = BattleMetrics()
     quests: QuestMetrics = QuestMetrics()
     # Разбивка сессий за сегодня по режимам (voice/chat/listening).
@@ -379,6 +384,10 @@ async def _build_metrics() -> MetricsResponse:
         )
         new_users_today = int(new_today_res.scalar() or 0)
 
+        # Bot activations (миграция 0009): сколько вообще написало боту.
+        bot_activated_total = await repo.count_bot_activated()
+        bot_activated_today = await repo.count_bot_activated_today()
+
         # Battle metrics.
         bm = BattleMetrics()
         battle_rows = await s.execute(
@@ -450,6 +459,8 @@ async def _build_metrics() -> MetricsResponse:
             minutes_today=seconds_today // 60,
             total_revenue_rub=revenue,
             new_users_today=new_users_today,
+            bot_activated_total=bot_activated_total,
+            bot_activated_today=bot_activated_today,
             battles=bm,
             quests=qm,
             modes_today=modes_today,

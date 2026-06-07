@@ -64,6 +64,8 @@ class _User(_Base):
     last_session_role: Mapped[Optional[str]] = mapped_column(String(64))
     # Миграция 0007 — анти-спам для win-back-рассылки (не чаще 1/7 дней).
     last_winback_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # Миграция 0009 — первый апдейт от юзера в Telegram-боте (NULL = только Mini App).
+    bot_activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
 class _DailyUsage(_Base):
@@ -292,6 +294,71 @@ async def get_maintenance_status() -> tuple[bool, str]:
     except Exception as exc:
         logger.warning("[maintenance] не удалось читать флаг: %s", exc)
         return False, ""
+
+
+async def mark_bot_activated(
+    tg_id: int,
+    *,
+    username: Optional[str] = None,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+    language_code: Optional[str] = None,
+) -> None:
+    """Зафиксировать, что юзер написал боту в Telegram (миграция 0009).
+
+    Вызывается из outer-middleware на ЛЮБОМ апдейте от юзера.
+
+    Поведение:
+      - Если юзера нет в `users` — INSERT с bot_activated_at=now (дефолтные
+        reminder_time=19:00, reminder_enabled=TRUE, is_blocked=FALSE).
+        Так юзеры, которые написали /start, но никогда не открыли Mini App,
+        теперь тоже попадают в БД.
+      - Если юзер уже есть и bot_activated_at IS NULL — проставляем (первая
+        активация после миграции). При желании заодно обновляем профиль.
+      - Если bot_activated_at уже не NULL — ничего не делаем (single-write).
+
+    Best-effort: исключение проглатывается и логируется. БД-сбой не должен
+    рушить ответ бота.
+    """
+    if not is_db_ready():
+        return
+    assert _SessionMaker is not None
+    try:
+        from sqlalchemy import text as _sql
+        async with _SessionMaker() as s:
+            await s.execute(
+                _sql(
+                    """
+                    INSERT INTO users (
+                        tg_id, username, first_name, last_name, language_code,
+                        reminder_time, reminder_enabled, is_blocked,
+                        created_at, updated_at, bot_activated_at
+                    )
+                    VALUES (
+                        :tg_id, :username, :first_name, :last_name, :language_code,
+                        '19:00:00', TRUE, FALSE,
+                        UTC_TIMESTAMP(), UTC_TIMESTAMP(), UTC_TIMESTAMP()
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        username = COALESCE(VALUES(username), users.username),
+                        first_name = COALESCE(VALUES(first_name), users.first_name),
+                        last_name = COALESCE(VALUES(last_name), users.last_name),
+                        language_code = COALESCE(VALUES(language_code), users.language_code),
+                        updated_at = UTC_TIMESTAMP(),
+                        bot_activated_at = COALESCE(users.bot_activated_at, UTC_TIMESTAMP())
+                    """
+                ),
+                {
+                    "tg_id": tg_id,
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "language_code": language_code,
+                },
+            )
+            await s.commit()
+    except Exception as exc:
+        logger.warning("[bot-activation] mark failed для tg_id=%s: %s", tg_id, exc)
 
 
 async def get_user_reminder(tg_id: int) -> Optional[tuple[bool, int]]:

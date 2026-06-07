@@ -69,6 +69,12 @@ class User(Base):
     # Дедупликация: не чаще 1 раза в 7 дней.
     last_winback_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
+    # ── Bot activation (миграция 0009) ──
+    # Когда юзер впервые написал боту в Telegram (любой апдейт). NULL = юзер
+    # появился только из Mini App, бота в чате не открывал. Заполняется один
+    # раз — bot middleware пишет только если поле было NULL.
+    bot_activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
 
 class Session(Base):
     __tablename__ = "sessions"

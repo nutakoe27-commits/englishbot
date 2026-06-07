@@ -515,8 +515,10 @@ function Dashboard() {
   const num = (v: number | null | undefined): string =>
     (v == null ? 0 : v).toString();
   const items: { label: string; value: string }[] = [
-    { label: "Всего юзеров", value: num(metrics.total_users) },
-    { label: "Новых сегодня", value: num(metrics.new_users_today) },
+    { label: "В Mini App всего", value: num(metrics.total_users) },
+    { label: "Активировали бота", value: num(metrics.bot_activated_total) },
+    { label: "Новых в Mini App сегодня", value: num(metrics.new_users_today) },
+    { label: "Активаций бота сегодня", value: num(metrics.bot_activated_today) },
     { label: "Активных подписок", value: num(metrics.active_subscriptions) },
     { label: "Заблокировано", value: num(metrics.blocked_users) },
     { label: "DAU (сегодня)", value: num(metrics.dau) },

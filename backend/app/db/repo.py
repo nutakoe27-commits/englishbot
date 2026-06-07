@@ -493,6 +493,25 @@ class Repo:
         )
         return int(res.scalar() or 0)
 
+    async def count_bot_activated(self) -> int:
+        """Сколько юзеров когда-либо активировали бота в Telegram
+        (написали /start или любое сообщение). См. миграцию 0009."""
+        res = await self.s.execute(
+            select(func.count(User.id)).where(User.bot_activated_at.is_not(None))
+        )
+        return int(res.scalar() or 0)
+
+    async def count_bot_activated_today(self) -> int:
+        """Сколько юзеров активировали бота сегодня (по МСК).
+        Хорошо ловит органический трафик от рекламы/постов."""
+        from datetime import datetime as _dt
+        today = msk_today()
+        day_start_utc = _dt.combine(today, _dt.min.time())
+        res = await self.s.execute(
+            select(func.count(User.id)).where(User.bot_activated_at >= day_start_utc)
+        )
+        return int(res.scalar() or 0)
+
     async def count_active_users_since(self, since_date: date) -> int:
         """Сколько уникальных юзеров было активно начиная с since_date включительно."""
         res = await self.s.execute(
