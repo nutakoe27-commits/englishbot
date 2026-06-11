@@ -314,6 +314,7 @@ const MODE_META: Record<string, { label: string; emoji: string }> = {
   voice: { label: "Разговор", emoji: "🎙" },
   chat: { label: "Чат", emoji: "💬" },
   listening: { label: "Слушание", emoji: "🎧" },
+  grammar: { label: "Грамматика", emoji: "📝" },
 };
 
 function modeMeta(mode: string): { label: string; emoji: string } {
@@ -323,6 +324,7 @@ function modeMeta(mode: string): { label: string; emoji: string } {
 function modeBadgeStyle(mode: string): React.CSSProperties {
   if (mode === "voice") return S.modeBadgeVoice;
   if (mode === "listening") return S.modeBadgeListening;
+  if (mode === "grammar") return S.modeBadgeGrammar;
   return S.modeBadgeChat;
 }
 
@@ -372,7 +374,8 @@ function OnlinePanel({ onOpenUser }: { onOpenUser: (id: number) => void }) {
         <span style={S.muted}>
           {modeMeta("voice").emoji} {bm.voice ?? 0} ·{" "}
           {modeMeta("chat").emoji} {bm.chat ?? 0} ·{" "}
-          {modeMeta("listening").emoji} {bm.listening ?? 0}
+          {modeMeta("listening").emoji} {bm.listening ?? 0} ·{" "}
+          {modeMeta("grammar").emoji} {bm.grammar ?? 0}
         </span>
       </div>
 
@@ -429,7 +432,7 @@ function OnlinePanel({ onOpenUser }: { onOpenUser: (id: number) => void }) {
 function ModesTodayCard({ metrics }: { metrics: Metrics }) {
   const isMobile = useIsMobile();
   const modes = metrics.modes_today ?? {};
-  const order = ["voice", "chat", "listening"];
+  const order = ["voice", "chat", "listening", "grammar"];
   const topCats = metrics.listening_top_categories ?? [];
 
   return (

@@ -30,6 +30,7 @@ interface Progress {
   daily_usage: DailyPoint[];
   speaking_minutes?: number;
   listening_minutes?: number;
+  grammar_minutes?: number;
 }
 
 interface Achievement {
@@ -123,7 +124,8 @@ export function ProgressScreen({ apiBase, initData, onClose }: Props) {
             </div>
 
             {(progress.speaking_minutes !== undefined ||
-              progress.listening_minutes !== undefined) && (
+              progress.listening_minutes !== undefined ||
+              progress.grammar_minutes !== undefined) && (
               <div className="progress-breakdown">
                 <div className="progress-breakdown__row">
                   <span className="progress-breakdown__emoji" aria-hidden>🎙️</span>
@@ -137,6 +139,13 @@ export function ProgressScreen({ apiBase, initData, onClose }: Props) {
                   <span className="progress-breakdown__label">Слушание</span>
                   <span className="progress-breakdown__value">
                     {progress.listening_minutes ?? 0} мин
+                  </span>
+                </div>
+                <div className="progress-breakdown__row">
+                  <span className="progress-breakdown__emoji" aria-hidden>📝</span>
+                  <span className="progress-breakdown__label">Грамматика</span>
+                  <span className="progress-breakdown__value">
+                    {progress.grammar_minutes ?? 0} мин
                   </span>
                 </div>
               </div>

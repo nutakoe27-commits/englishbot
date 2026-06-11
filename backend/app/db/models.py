@@ -87,7 +87,7 @@ class Session(Base):
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     used_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     mode: Mapped[str] = mapped_column(
-        SAEnum("voice", "chat", "listening", name="session_mode"),
+        SAEnum("voice", "chat", "listening", "grammar", name="session_mode"),
         nullable=False,
         default="voice",
     )
