@@ -60,6 +60,10 @@ services:
         # Username бота без '@' — используется в LockScreen для deep-link в /subscribe.
         # Значение впечатывается в JS-бандл на этапе build (Vite).
         VITE_BOT_USERNAME: ${BOT_USERNAME:-kmo_ai_english_bot}
+        # Базовый URL backend API. На staging переопределить на
+        # https://api-english-test.krichigindocs.ru, иначе Mini App
+        # будет стучаться в прод.
+        VITE_API_BASE: ${VITE_API_BASE:-https://api-english.krichigindocs.ru}
     restart: unless-stopped
     ports:
       - "127.0.0.1:8081:80"

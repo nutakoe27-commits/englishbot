@@ -8,6 +8,12 @@ WORKDIR /app
 ARG VITE_BOT_USERNAME=kmo_ai_english_bot
 ENV VITE_BOT_USERNAME=$VITE_BOT_USERNAME
 
+# Базовый URL backend API. Дефолт = прод, чтобы старые билды (без явного
+# build-arg) продолжали работать. Staging пересобирается с
+# VITE_API_BASE=https://api-english-test.krichigindocs.ru.
+ARG VITE_API_BASE=https://api-english.krichigindocs.ru
+ENV VITE_API_BASE=$VITE_API_BASE
+
 # Устанавливаем зависимости
 COPY package.json ./
 RUN npm install --no-audit --no-fund

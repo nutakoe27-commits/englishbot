@@ -16,7 +16,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import WebApp from "@twa-dev/sdk";
 
-const API_BASE = "https://api-english.krichigindocs.ru";
+// Backend API URL. См. miniapp/Dockerfile (build-arg VITE_API_BASE).
+const API_BASE =
+  (import.meta.env.VITE_API_BASE as string | undefined) ||
+  "https://api-english.krichigindocs.ru";
 const MAX_RECORDING_SECONDS = 60;
 
 type BattleSide = "a" | "b";
