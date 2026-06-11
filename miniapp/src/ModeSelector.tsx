@@ -16,6 +16,8 @@ export function ModeSelector({ onPick }: Props) {
   useEffect(() => {
     try { WebApp.ready(); } catch { /* старые клиенты */ }
     try { WebApp.expand(); } catch { /* старые клиенты */ }
+    // Без этого свайп вниз при скролле карточек сворачивает Mini App.
+    try { WebApp.disableVerticalSwipes?.(); } catch { /* старые клиенты */ }
     const user = WebApp.initDataUnsafe?.user;
     if (user?.first_name) setUserName(user.first_name);
   }, []);

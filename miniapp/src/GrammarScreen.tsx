@@ -68,6 +68,8 @@ export function GrammarScreen({ onExit }: Props) {
   useEffect(() => {
     try { WebApp.ready(); } catch { /* ignore */ }
     try { WebApp.expand(); } catch { /* ignore */ }
+    // Без этого свайп вниз при скролле конфига/заданий сворачивает Mini App.
+    try { WebApp.disableVerticalSwipes?.(); } catch { /* ignore */ }
     const user = WebApp.initDataUnsafe?.user;
     if (user?.first_name) setUserName(user.first_name);
   }, []);
