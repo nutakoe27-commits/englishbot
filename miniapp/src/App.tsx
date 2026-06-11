@@ -108,8 +108,14 @@ function renderWithTaps(
 
 // ─── Константы ────────────────────────────────────────────────────────────────
 
-const WS_URL = "wss://api-english.krichigindocs.ru/ws/voice";
-const API_BASE = "https://api-english.krichigindocs.ru";
+// Backend API URL. Берётся из build-arg VITE_API_BASE (см. Dockerfile).
+// Дефолт — прод; staging-сборка переопределяет на api-english-test.*.
+const API_BASE =
+  (import.meta.env.VITE_API_BASE as string | undefined) ||
+  "https://api-english.krichigindocs.ru";
+// WebSocket-URL для voice выводится из API_BASE заменой схемы:
+// https → wss, http → ws. Так staging автоматически попадает на свой WS.
+const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws/voice";
 const OUTPUT_SAMPLE_RATE = 24000; // TTS отдаёт 24 kHz PCM
 const MAX_LOG_ENTRIES = 20;
 // Сессия должна продлиться хотя бы столько, чтобы показать summary-экран.

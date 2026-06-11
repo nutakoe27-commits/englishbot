@@ -22,7 +22,10 @@ import {
   type ListeningSettings,
 } from "./listeningSettings";
 
-const API_BASE = "https://api-english.krichigindocs.ru";
+// Backend API URL. См. miniapp/Dockerfile (build-arg VITE_API_BASE).
+const API_BASE =
+  (import.meta.env.VITE_API_BASE as string | undefined) ||
+  "https://api-english.krichigindocs.ru";
 
 interface Props {
   onExit: () => void;
