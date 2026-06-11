@@ -496,7 +496,7 @@ async def admin_online() -> OnlineResponse:
     """In-memory снапшот активных сессий (voice/chat WS + listening-генерация).
     Обновляется онлайн-панелью каждые ~5с. Работает на single-worker backend."""
     entries = presence.snapshot()
-    by_mode: dict[str, int] = {"voice": 0, "chat": 0, "listening": 0}
+    by_mode: dict[str, int] = {"voice": 0, "chat": 0, "listening": 0, "grammar": 0}
     for e in entries:
         by_mode[e["mode"]] = by_mode.get(e["mode"], 0) + 1
 

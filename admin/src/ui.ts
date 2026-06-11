@@ -259,6 +259,15 @@ export const S: Record<string, CSSProperties> = {
     backgroundColor: "#f3eefe",
     color: "#7c5cff",
   },
+  modeBadgeGrammar: {
+    display: "inline-block",
+    padding: "2px 8px",
+    borderRadius: 10,
+    fontSize: 12,
+    fontWeight: 500,
+    backgroundColor: "#fff7e6",
+    color: "#d97706",
+  },
 };
 
 export function fmtDate(iso: string | null): string {

@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from .admin import router as admin_router
 from .battle_api import router as battle_router
+from .grammar import router as grammar_router
 from .listening import router as listening_router
 from .config import settings
 from .db import db_session, init_db
@@ -125,6 +126,7 @@ def validate_telegram_init_data(init_data_raw: str, bot_token: str) -> Optional[
 app.include_router(admin_router)
 app.include_router(battle_router)
 app.include_router(listening_router)
+app.include_router(grammar_router)
 
 
 @app.get("/health", tags=["System"])
@@ -474,6 +476,7 @@ async def me_progress(init_data: str = "") -> dict:
     # voice + chat = «разговор» (оба speaking-режима в мини-апе); listening — отдельно.
     speaking_seconds = int(by_mode.get("voice", 0)) + int(by_mode.get("chat", 0))
     listening_seconds = int(by_mode.get("listening", 0))
+    grammar_seconds = int(by_mode.get("grammar", 0))
     return {
         "streak": {
             "current": streak_current,
@@ -486,6 +489,7 @@ async def me_progress(init_data: str = "") -> dict:
         "daily_usage": daily,
         "speaking_minutes": speaking_seconds // 60,
         "listening_minutes": listening_seconds // 60,
+        "grammar_minutes": grammar_seconds // 60,
     }
 
 

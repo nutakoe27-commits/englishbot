@@ -4,7 +4,7 @@
 import WebApp from "@twa-dev/sdk";
 import { useEffect, useState } from "react";
 
-export type Mode = "speaking" | "listening";
+export type Mode = "speaking" | "listening" | "grammar";
 
 interface Props {
   onPick: (mode: Mode) => void;
@@ -61,6 +61,18 @@ export function ModeSelector({ onPick }: Props) {
             <span className="mode-card__title">Слушание</span>
             <span className="mode-card__hint">
               Сгенерированный подкаст на твою тему и слова.
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className="mode-card"
+            onClick={() => onPick("grammar")}
+          >
+            <span className="mode-card__emoji" aria-hidden>📝</span>
+            <span className="mode-card__title">Грамматика</span>
+            <span className="mode-card__hint">
+              10 упражнений по твоим ошибкам или выбранной теме.
             </span>
           </button>
         </div>
