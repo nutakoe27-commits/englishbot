@@ -321,7 +321,8 @@ class GrammarTopic(Base):
 
     key: Mapped[str] = mapped_column("key", String(64), primary_key=True)
     level: Mapped[str] = mapped_column(
-        SAEnum("A2", "B1", "B2", "C1", name="grammar_topic_level"), nullable=False
+        SAEnum("A1", "A2", "B1", "B2", "C1", name="grammar_topic_level"),
+        nullable=False,
     )
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
     title_ru: Mapped[str] = mapped_column(String(200), nullable=False)

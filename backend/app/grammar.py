@@ -350,10 +350,12 @@ async def generate_exercises(body: _GenerateIn, request: Request) -> _GenerateOu
                 recent_mistakes = await repo.get_recent_mistakes(
                     user_id, limit=5, days=30,
                 )
-                # Если ни одной — деградируем в topic с дефолтной категорией
-                if not recent_mistakes:
-                    default_category = "tense"
             await session.commit()
+
+    # Нет накопленных ошибок — фронт показывает заглушку «сначала поговори
+    # с AI Tutor». 409, чтобы отличался от настоящих ошибок генерации.
+    if body.mode == "weak_points" and not recent_mistakes:
+        raise HTTPException(status.HTTP_409_CONFLICT, "no_mistakes")
 
     # ── Онлайн-присутствие на момент генерации ────────────────────────────
     if user_id is not None:
@@ -591,52 +593,34 @@ def _compute_topic_statuses(
     return statuses
 
 
-def _parse_lesson_json(raw: str) -> Optional[dict]:
-    """Парсит {"theory": "...", "exercises": [...]} с той же терпимостью,
-    что _parse_exercises_json. Возвращает dict или None."""
-    text = (raw or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict) and "theory" in data:
-            return data
-    except Exception:
-        pass
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if m:
-        try:
-            data = json.loads(m.group(0))
-            if isinstance(data, dict) and "theory" in data:
-                return data
-        except Exception:
-            pass
-    return None
 
-
-def _build_lesson_prompt(*, level: str, title_ru: str, category: str) -> tuple[str, str]:
+def _build_lesson_exercises_prompt(
+    *, level: str, title_ru: str, category: str, theory: str,
+) -> tuple[str, str]:
+    """Промпт ТОЛЬКО для упражнений: теория рукописная (grammar_lessons.py),
+    LLM получает её как контекст и генерит каждому юзеру свежие задания."""
     cat_hint = CATEGORY_HINTS.get(category, category)
     system = (
-        f"You are an expert English grammar teacher writing a lesson for CEFR "
-        f"{level} Russian-speaking learners. "
+        f"You are an English grammar drill author for CEFR {level} "
+        "Russian-speaking learners. "
         f'The lesson topic is: "{title_ru}" (focus area: {cat_hint}). '
-        "Produce STRICT JSON: a single object with two keys.\n"
-        '1. "theory": a string IN RUSSIAN. Structure: 2-4 short paragraphs '
-        "explaining the rule plainly (when to use, how to form, common traps "
-        "for Russian speakers), then 4-5 example sentences. Each example on "
-        "its own line in the format: EN sentence — RU перевод. Separate "
-        "paragraphs with \\n\\n. Plain text, no markdown headers.\n"
-        f'2. "exercises": an array of EXACTLY {LESSON_EXERCISES} exercise '
-        "objects practising THIS topic. Each: {id, type ('mcq'|'fill'), "
-        "category, prompt (use ___ for the blank), choices (4 plausible "
-        "options, only for mcq), correct, explanation (in Russian, 1-2 "
-        "sentences)}. Mix mcq and fill roughly 50/50.\n"
-        "Output the JSON object only. NO markdown fences, NO commentary."
+        "The learner has just read this lesson theory (in Russian):\n"
+        "---\n"
+        f"{theory[:2500]}\n"
+        "---\n"
+        f"Generate EXACTLY {LESSON_EXERCISES} exercises that practise "
+        "PRECISELY the rules and traps described in this theory. "
+        "Each: {id, type ('mcq'|'fill'), category, prompt (use ___ for the "
+        "blank), choices (4 plausible options, only for mcq), correct, "
+        "explanation (in Russian, 1-2 sentences)}. Mix mcq and fill "
+        "roughly 50/50. Vary vocabulary and situations — do not copy the "
+        "theory examples verbatim. "
+        "Output STRICT JSON: a single top-level array. NO markdown fences, "
+        "NO commentary."
     )
     user = (
         "/no_think\n"
-        f"Write the lesson now. JSON object with \"theory\" and \"exercises\" only."
+        f"Generate the {LESSON_EXERCISES} exercises now. JSON array only."
     )
     return system, user
 
@@ -690,11 +674,18 @@ async def get_lesson(body: _LessonIn, request: Request) -> _LessonOut:
         statuses = _compute_topic_statuses(topics, progress)
         if statuses.get(body.topic_key) == "locked":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "topic_locked")
-        cached = await repo.get_grammar_lesson_cache(body.topic_key)
         topic_level = topic.level
         topic_title = topic.title_ru
         topic_category = topic.category
         await session.commit()
+
+    # ── Теория: рукописная, из grammar_lessons.py ────────────────────────
+    from .grammar_lessons import THEORY
+    theory = THEORY.get(body.topic_key, "").strip()
+    if not theory:
+        # Тема есть в каталоге, но урок не написан — контентный баг.
+        logger.error("[grammar lesson] нет теории для topic_key=%s", body.topic_key)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "lesson_content_missing")
 
     presence.mark(
         user_id,
@@ -704,43 +695,24 @@ async def get_lesson(body: _LessonIn, request: Request) -> _LessonOut:
         ttl=PRESENCE_TTL,
     )
 
-    # ── Контент: кеш или генерация ──────────────────────────────────────
-    if cached is not None:
-        theory = cached.theory
-        raw_exercises = cached.exercises if isinstance(cached.exercises, list) else []
-        exercises = _coerce_exercises(raw_exercises, default_category=topic_category)
-    else:
-        sys_prompt, usr_prompt = _build_lesson_prompt(
-            level=topic_level, title_ru=topic_title, category=topic_category,
+    # ── Упражнения: LLM каждому юзеру свежие (не кешируются) ────────────
+    sys_prompt, usr_prompt = _build_lesson_exercises_prompt(
+        level=topic_level,
+        title_ru=topic_title,
+        category=topic_category,
+        theory=theory,
+    )
+    raw = await _call_llm(sys_prompt, usr_prompt, max_tokens=2500)
+    if await request.is_disconnected():
+        raise HTTPException(499, "client_disconnected")
+    raw_items = _parse_exercises_json(raw)
+    exercises = _coerce_exercises(raw_items, default_category=topic_category)
+    if len(exercises) < 4:
+        logger.warning(
+            "[grammar lesson] слишком мало упражнений: %d, raw=%s",
+            len(exercises), raw[:300],
         )
-        raw = await _call_llm(sys_prompt, usr_prompt, max_tokens=3000)
-        if await request.is_disconnected():
-            raise HTTPException(499, "client_disconnected")
-        lesson = _parse_lesson_json(raw)
-        if not lesson:
-            logger.warning("[grammar lesson] LLM не вернул JSON: %s", raw[:300])
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "llm_bad_json")
-        theory = str(lesson.get("theory") or "").strip()
-        raw_items = lesson.get("exercises") or []
-        exercises = _coerce_exercises(
-            raw_items if isinstance(raw_items, list) else [],
-            default_category=topic_category,
-        )
-        if not theory or len(exercises) < 4:
-            logger.warning(
-                "[grammar lesson] слабый урок: theory=%d chars, exercises=%d",
-                len(theory), len(exercises),
-            )
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "lesson_too_weak")
-        # Кешируем для всех юзеров (model_dump для JSON-колонки).
-        async with db_session() as session:
-            repo = Repo(session)
-            await repo.save_grammar_lesson_cache(
-                topic_key=body.topic_key,
-                theory=theory,
-                exercises=[e.model_dump() for e in exercises],
-            )
-            await session.commit()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "too_few_exercises")
 
     # ── Открываем Session ────────────────────────────────────────────────
     async with db_session() as session:
