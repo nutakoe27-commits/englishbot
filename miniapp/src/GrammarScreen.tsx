@@ -1,11 +1,20 @@
-// GrammarScreen.tsx — режим «Грамматика».
+// GrammarScreen.tsx — режим «Грамматика». Два трека:
+//
+//   learn — «Учить правила»: каталог тем по уровням (GET /topics) →
+//           урок: теория → 8 упражнений → итог с порогом 70% и
+//           разблокировкой следующей темы (Duolingo-style).
+//   test  — «Проверить себя»: существующий генератор 10 заданий
+//           (weak_points по user_mistakes / topic по категории).
 //
 // Фазы:
-//   config   — выбор weak_points / topic + level + category
-//   loading  — спиннер пока LLM генерит 10 заданий
-//   exercise — цикл из EXERCISES_PER_SESSION заданий с мгновенным feedback
-//   summary  — % правильных, разбивка по категориям
-//   error    — что-то пошло не так, кнопка повтора
+//   home     — выбор трека (стартовая)
+//   topics   — дерево тем Learn-трека (табы уровней, ✅/🔓/🔒)
+//   theory   — карточка правила + примеры, кнопка «К практике»
+//   config   — настройки test-трека (уровень + категория + 2 кнопки)
+//   loading  — спиннер (генерация LLM)
+//   exercise — цикл заданий с мгновенным feedback (общий для треков)
+//   summary  — итог (для learn — с passed-бейджем и «Следующая тема»)
+//   error    — ошибка + retry
 
 import { useEffect, useRef, useState } from "react";
 import WebApp from "@twa-dev/sdk";
@@ -21,7 +30,7 @@ import {
   type GrammarSettings,
   type MistakeCategory,
 } from "./grammarSettings";
-import { LEVEL_OPTIONS } from "./tutorSettings";
+import { LEVEL_OPTIONS, type Level } from "./tutorSettings";
 
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
@@ -42,7 +51,17 @@ interface Props {
   onExit: () => void;
 }
 
-type Phase = "config" | "loading" | "exercise" | "summary" | "error";
+type Phase =
+  | "home"
+  | "topics"
+  | "theory"
+  | "config"
+  | "loading"
+  | "exercise"
+  | "summary"
+  | "error";
+
+type Track = "learn" | "test";
 
 interface AnswerLog {
   exercise_id: string;
@@ -51,9 +70,31 @@ interface AnswerLog {
   is_correct: boolean;
 }
 
+interface TopicInfo {
+  key: string;
+  title_ru: string;
+  category: string;
+  status: "done" | "available" | "locked";
+  best_score: number;
+}
+
+interface LessonData {
+  topic_key: string;
+  title_ru: string;
+  theory: string;
+}
+
+interface LessonResult {
+  passed: boolean;
+  score: number;
+  best_score: number;
+  next_topic_key: string | null;
+}
+
 export function GrammarScreen({ onExit }: Props) {
   const [settings, setSettings] = useState<GrammarSettings>(() => loadGrammarSettings());
-  const [phase, setPhase] = useState<Phase>("config");
+  const [phase, setPhase] = useState<Phase>("home");
+  const [track, setTrack] = useState<Track>("test");
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [answers, setAnswers] = useState<AnswerLog[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
@@ -64,6 +105,13 @@ export function GrammarScreen({ onExit }: Props) {
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
   const [wordsOpen, setWordsOpen] = useState<boolean>(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Learn-трек
+  const [topicLevels, setTopicLevels] = useState<Record<string, TopicInfo[]> | null>(null);
+  const [topicsLevel, setTopicsLevel] = useState<Level>(settings.level);
+  const [topicsError, setTopicsError] = useState<string>("");
+  const [lesson, setLesson] = useState<LessonData | null>(null);
+  const [lessonResult, setLessonResult] = useState<LessonResult | null>(null);
 
   useEffect(() => {
     try { WebApp.ready(); } catch { /* ignore */ }
@@ -97,13 +145,99 @@ export function GrammarScreen({ onExit }: Props) {
     return () => window.clearInterval(id);
   }, [phase, sessionId]);
 
+  // ── Learn: список тем ─────────────────────────────────────────────────
+  const openTopics = async () => {
+    setTrack("learn");
+    setPhase("topics");
+    setTopicsError("");
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/grammar/topics?init_data=${encodeURIComponent(WebApp.initData || "")}`,
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: { levels: Record<string, TopicInfo[]> } = await res.json();
+      setTopicLevels(data.levels || {});
+    } catch (e: unknown) {
+      setTopicsError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  // ── Learn: открыть урок ───────────────────────────────────────────────
+  const openLesson = async (topicKey: string) => {
+    setError("");
+    setExercises([]);
+    setAnswers([]);
+    setCurrentIndex(0);
+    setSessionId("");
+    setLessonResult(null);
+    setPhase("loading");
+    setTrack("learn");
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/grammar/lesson`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          init_data: WebApp.initData || "",
+          topic_key: topicKey,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
+      }
+      const data: {
+        topic_key: string;
+        title_ru: string;
+        theory: string;
+        exercises: Exercise[];
+        session_id: string;
+      } = await res.json();
+      if (!Array.isArray(data.exercises) || data.exercises.length === 0) {
+        throw new Error("Сервер не вернул упражнений");
+      }
+      setLesson({
+        topic_key: data.topic_key,
+        title_ru: data.title_ru,
+        theory: data.theory,
+      });
+      setExercises(data.exercises);
+      setSessionId(data.session_id);
+      setSettings((s) => ({ ...s, lastTopicKey: data.topic_key }));
+      setPhase("theory");
+    } catch (e: unknown) {
+      if (controller.signal.aborted) {
+        setPhase("topics");
+        return;
+      }
+      setError(e instanceof Error ? e.message : String(e));
+      setPhase("error");
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
+    }
+  };
+
+  const startLessonPractice = () => {
+    sessionStartRef.current = Date.now();
+    setPhase("exercise");
+  };
+
+  // ── Test: генерация (существующий путь) ───────────────────────────────
   const startGeneration = async (mode: GrammarMode) => {
     setError("");
     setExercises([]);
     setAnswers([]);
     setCurrentIndex(0);
     setSessionId("");
+    setLesson(null);
+    setLessonResult(null);
     setPhase("loading");
+    setTrack("test");
+    setSettings((s) => ({ ...s, defaultMode: mode }));
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -163,18 +297,20 @@ export function GrammarScreen({ onExit }: Props) {
   const handleNext = () => {
     if (currentIndex + 1 < exercises.length) {
       setCurrentIndex(currentIndex + 1);
+    } else if (track === "learn") {
+      void finishLesson();
     } else {
       void finishSession();
     }
   };
 
+  // ── Test: финиш ───────────────────────────────────────────────────────
   const finishSession = async () => {
     const durationSec = Math.max(
       0,
       Math.round((Date.now() - sessionStartRef.current) / 1000),
     );
     setPhase("summary");
-    // POST /finish best-effort: если не дойдёт — фронт UI остаётся
     try {
       await fetch(`${API_BASE}/api/grammar/finish`, {
         method: "POST",
@@ -192,7 +328,37 @@ export function GrammarScreen({ onExit }: Props) {
         }),
       });
     } catch {
-      /* лог не критичен — fail тихо */
+      /* fail тихо */
+    }
+  };
+
+  // ── Learn: финиш урока ────────────────────────────────────────────────
+  const finishLesson = async () => {
+    const durationSec = Math.max(
+      0,
+      Math.round((Date.now() - sessionStartRef.current) / 1000),
+    );
+    const correctCount = answers.filter((a) => a.is_correct).length;
+    setPhase("summary");
+    try {
+      const res = await fetch(`${API_BASE}/api/grammar/lesson/finish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          init_data: WebApp.initData || "",
+          topic_key: lesson?.topic_key || "",
+          session_id: sessionId,
+          correct: correctCount,
+          total: exercises.length,
+          duration_sec: durationSec,
+        }),
+      });
+      if (res.ok) {
+        const data: LessonResult = await res.json();
+        setLessonResult(data);
+      }
+    } catch {
+      /* fail тихо — summary покажет локальный счёт */
     }
   };
 
@@ -207,13 +373,36 @@ export function GrammarScreen({ onExit }: Props) {
     if (a.is_correct) byCategory[a.category].correct += 1;
   }
 
-  const restart = () => {
+  const resetRound = () => {
     setExercises([]);
     setAnswers([]);
     setCurrentIndex(0);
     setSessionId("");
-    setPhase("config");
+    setLesson(null);
+    setLessonResult(null);
   };
+
+  // Назад в шапке — фазозависимый.
+  const handleBack = () => {
+    if (phase === "home") {
+      onExit();
+    } else if (phase === "topics" || phase === "config") {
+      resetRound();
+      setPhase("home");
+    } else if (phase === "theory") {
+      resetRound();
+      void openTopics();
+    } else if (phase === "summary" || phase === "error") {
+      resetRound();
+      if (track === "learn") void openTopics();
+      else setPhase("config");
+    } else {
+      onExit();
+    }
+  };
+
+  const levelTabs: Level[] = ["A2", "B1", "B2", "C1"];
+  const currentTopics = topicLevels?.[topicsLevel] ?? [];
 
   return (
     <div className="tutor-shell grm-screen">
@@ -225,8 +414,8 @@ export function GrammarScreen({ onExit }: Props) {
           <button
             type="button"
             className="icon-button tutor-back"
-            onClick={onExit}
-            aria-label="Назад к выбору режима"
+            onClick={handleBack}
+            aria-label="Назад"
             title="Назад"
           >
             <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>←</span>
@@ -258,6 +447,133 @@ export function GrammarScreen({ onExit }: Props) {
       </header>
 
       <main className="lst-main">
+        {/* ── HOME: выбор трека ── */}
+        {phase === "home" && (
+          <div className="grm-mode-row" style={{ marginTop: 4 }}>
+            <button
+              type="button"
+              className="grm-mode-card grm-mode-card--weak"
+              onClick={() => void openTopics()}
+            >
+              <span className="grm-mode-card__emoji" aria-hidden>📖</span>
+              <span className="grm-mode-card__title">Учить правила</span>
+              <span className="grm-mode-card__hint">
+                Программа тем от A2 до C1: правило с примерами → практика →
+                следующая тема открывается после прохождения.
+              </span>
+            </button>
+
+            <button
+              type="button"
+              className="grm-mode-card"
+              onClick={() => { setTrack("test"); setPhase("config"); }}
+            >
+              <span className="grm-mode-card__emoji" aria-hidden>🎯</span>
+              <span className="grm-mode-card__title">Проверить себя</span>
+              <span className="grm-mode-card__hint">
+                10 упражнений по твоим реальным ошибкам из разговоров или по
+                выбранной теме.
+              </span>
+            </button>
+          </div>
+        )}
+
+        {/* ── TOPICS: дерево тем Learn ── */}
+        {phase === "topics" && (
+          <>
+            <section className="lst-section">
+              <h3 className="lst-section__title">Уровень</h3>
+              <div className="lst-chips">
+                {levelTabs.map((lv) => (
+                  <button
+                    key={lv}
+                    type="button"
+                    className="lst-chip"
+                    data-active={topicsLevel === lv ? "true" : "false"}
+                    onClick={() => setTopicsLevel(lv)}
+                  >
+                    {lv}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {topicsError && (
+              <div className="lst-error" style={{ padding: "16px 8px" }}>
+                <p className="lst-error__hint">{topicsError}</p>
+                <button type="button" className="lst-secondary-btn" onClick={() => void openTopics()}>
+                  Повторить
+                </button>
+              </div>
+            )}
+
+            {!topicsError && topicLevels === null && (
+              <div className="lst-loading" style={{ padding: "30px 16px" }}>
+                <div className="lst-spinner" aria-hidden />
+              </div>
+            )}
+
+            {!topicsError && topicLevels !== null && (
+              <div className="grm-topics">
+                {currentTopics.length === 0 && (
+                  <p className="lst-loading__hint">Темы этого уровня скоро появятся.</p>
+                )}
+                {currentTopics.map((t, i) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    className="grm-topic-row"
+                    data-status={t.status}
+                    disabled={t.status === "locked"}
+                    onClick={() => {
+                      if (t.status !== "locked") void openLesson(t.key);
+                    }}
+                  >
+                    <span className="grm-topic-row__icon" aria-hidden>
+                      {t.status === "done" ? "✅" : t.status === "available" ? "🔓" : "🔒"}
+                    </span>
+                    <span className="grm-topic-row__body">
+                      <span className="grm-topic-row__title">
+                        {i + 1}. {t.title_ru}
+                      </span>
+                      {t.status === "done" && (
+                        <span className="grm-topic-row__score">
+                          лучший результат {t.best_score}%
+                        </span>
+                      )}
+                      {t.status === "locked" && (
+                        <span className="grm-topic-row__score">
+                          пройди предыдущую тему
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── THEORY: карточка правила ── */}
+        {phase === "theory" && lesson && (
+          <div className="grm-theory">
+            <h2 className="grm-theory__title">{lesson.title_ru}</h2>
+            <div className="grm-theory__body">
+              {lesson.theory.split("\n").map((line, i) =>
+                line.trim() === "" ? (
+                  <div key={i} style={{ height: 10 }} />
+                ) : (
+                  <p key={i} className="grm-theory__para">{line}</p>
+                ),
+              )}
+            </div>
+            <button type="button" className="grm-primary-btn" onClick={startLessonPractice}>
+              К практике →
+            </button>
+          </div>
+        )}
+
+        {/* ── CONFIG: test-трек (как раньше) ── */}
         {phase === "config" && (
           <>
             <section className="lst-section">
@@ -327,19 +643,21 @@ export function GrammarScreen({ onExit }: Props) {
           </>
         )}
 
+        {/* ── LOADING ── */}
         {phase === "loading" && (
           <div className="lst-loading">
             <div className="lst-spinner" aria-hidden />
-            <p className="lst-loading__title">Готовлю задания…</p>
-            <p className="lst-loading__hint">
-              Это займёт ~10 секунд.
+            <p className="lst-loading__title">
+              {track === "learn" ? "Готовлю урок…" : "Готовлю задания…"}
             </p>
+            <p className="lst-loading__hint">Это займёт ~10 секунд.</p>
             <button type="button" className="lst-secondary-btn" onClick={cancelGeneration}>
               Отмена
             </button>
           </div>
         )}
 
+        {/* ── EXERCISE (общий) ── */}
         {phase === "exercise" && exercises[currentIndex] && (
           <GrammarExercise
             key={exercises[currentIndex].id + "@" + currentIndex}
@@ -352,8 +670,20 @@ export function GrammarScreen({ onExit }: Props) {
           />
         )}
 
+        {/* ── SUMMARY ── */}
         {phase === "summary" && (
           <div className="grm-summary">
+            {track === "learn" && (
+              <div
+                className="grm-lesson-badge"
+                data-passed={(lessonResult?.passed ?? percent >= 70) ? "true" : "false"}
+              >
+                {(lessonResult?.passed ?? percent >= 70)
+                  ? "🎉 Тема пройдена!"
+                  : "Нужно ≥70% — попробуй ещё раз"}
+              </div>
+            )}
+
             <div className="grm-summary__score">
               <div className="grm-summary__pct">{percent}%</div>
               <div className="grm-summary__count">
@@ -361,47 +691,107 @@ export function GrammarScreen({ onExit }: Props) {
               </div>
             </div>
 
-            <div className="grm-summary__cats">
-              {Object.entries(byCategory).map(([cat, st]) => {
-                const pct = st.total ? Math.round((st.correct / st.total) * 100) : 0;
-                const tone =
-                  pct >= 80 ? "good" : pct >= 50 ? "mid" : "bad";
-                return (
-                  <div key={cat} className="grm-cat-row" data-tone={tone}>
-                    <span className="grm-cat-row__label">
-                      {CATEGORY_LABELS_RU[cat] ?? cat}
-                    </span>
-                    <span className="grm-cat-row__value">
-                      {st.correct}/{st.total} · {pct}%
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+            {track === "test" && (
+              <div className="grm-summary__cats">
+                {Object.entries(byCategory).map(([cat, st]) => {
+                  const pct = st.total ? Math.round((st.correct / st.total) * 100) : 0;
+                  const tone = pct >= 80 ? "good" : pct >= 50 ? "mid" : "bad";
+                  return (
+                    <div key={cat} className="grm-cat-row" data-tone={tone}>
+                      <span className="grm-cat-row__label">
+                        {CATEGORY_LABELS_RU[cat] ?? cat}
+                      </span>
+                      <span className="grm-cat-row__value">
+                        {st.correct}/{st.total} · {pct}%
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="grm-summary__actions">
-              <button type="button" className="lst-secondary-btn" onClick={onExit}>
-                В меню
-              </button>
-              <button type="button" className="grm-primary-btn" onClick={restart}>
-                Ещё раунд
-              </button>
+              {track === "learn" ? (
+                <>
+                  <button
+                    type="button"
+                    className="lst-secondary-btn"
+                    onClick={() => { resetRound(); void openTopics(); }}
+                  >
+                    К темам
+                  </button>
+                  {lessonResult?.passed && lessonResult.next_topic_key ? (
+                    <button
+                      type="button"
+                      className="grm-primary-btn"
+                      onClick={() => {
+                        const next = lessonResult.next_topic_key!;
+                        resetRound();
+                        void openLesson(next);
+                      }}
+                    >
+                      Следующая тема →
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="grm-primary-btn"
+                      onClick={() => {
+                        const cur = lesson?.topic_key;
+                        resetRound();
+                        if (cur) void openLesson(cur);
+                        else void openTopics();
+                      }}
+                    >
+                      Ещё раз
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <button type="button" className="lst-secondary-btn" onClick={onExit}>
+                    В меню
+                  </button>
+                  <button
+                    type="button"
+                    className="grm-primary-btn"
+                    onClick={() => { resetRound(); setPhase("config"); }}
+                  >
+                    Ещё раунд
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
 
+        {/* ── ERROR ── */}
         {phase === "error" && (
           <div className="lst-error">
-            <p className="lst-error__title">Не получилось сгенерировать упражнения</p>
+            <p className="lst-error__title">Не получилось сгенерировать</p>
             <p className="lst-error__hint">{error || "Попробуй ещё раз через минуту."}</p>
             <div className="lst-error__actions">
-              <button type="button" className="lst-secondary-btn" onClick={restart}>
+              <button
+                type="button"
+                className="lst-secondary-btn"
+                onClick={() => {
+                  resetRound();
+                  if (track === "learn") void openTopics();
+                  else setPhase("config");
+                }}
+              >
                 Назад
               </button>
               <button
                 type="button"
                 className="grm-primary-btn"
-                onClick={() => startGeneration(settings.defaultMode)}
+                onClick={() => {
+                  if (track === "learn" && settings.lastTopicKey) {
+                    void openLesson(settings.lastTopicKey);
+                  } else {
+                    void startGeneration(settings.defaultMode);
+                  }
+                }}
               >
                 Повторить
               </button>

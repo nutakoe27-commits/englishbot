@@ -13,7 +13,18 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import DailyUsage, Payment, SettingKV, Session as SessionRow, User, UserMistake, UserVocabulary
+from .models import (
+    DailyUsage,
+    GrammarLessonCache,
+    GrammarTopic,
+    Payment,
+    SettingKV,
+    Session as SessionRow,
+    User,
+    UserGrammarProgress,
+    UserMistake,
+    UserVocabulary,
+)
 
 
 # Europe/Moscow без зависимости от системного tz — фикс UTC+3.
@@ -693,6 +704,97 @@ class Repo:
             .limit(limit)
         )
         return [{"category": role, "count": int(cnt or 0)} for role, cnt in res.all()]
+
+    # ─── Grammar Learn (миграция 0011) ───────────────────────────────────
+
+    async def list_grammar_topics(self) -> Sequence[GrammarTopic]:
+        """Все активные темы, отсортированные по (level, sort_order)."""
+        res = await self.s.execute(
+            select(GrammarTopic)
+            .where(GrammarTopic.is_active.is_(True))
+            .order_by(GrammarTopic.level, GrammarTopic.sort_order)
+        )
+        return res.scalars().all()
+
+    async def get_grammar_topic(self, key: str) -> Optional[GrammarTopic]:
+        res = await self.s.execute(
+            select(GrammarTopic).where(
+                GrammarTopic.key == key, GrammarTopic.is_active.is_(True),
+            )
+        )
+        return res.scalar_one_or_none()
+
+    async def get_user_grammar_progress(self, user_id: int) -> dict[str, dict]:
+        """{topic_key: {completed: bool, best_score: int, attempts: int}}"""
+        res = await self.s.execute(
+            select(UserGrammarProgress).where(UserGrammarProgress.user_id == user_id)
+        )
+        return {
+            row.topic_key: {
+                "completed": row.completed_at is not None,
+                "best_score": int(row.best_score or 0),
+                "attempts": int(row.attempts or 0),
+            }
+            for row in res.scalars().all()
+        }
+
+    async def get_grammar_lesson_cache(self, topic_key: str) -> Optional[GrammarLessonCache]:
+        res = await self.s.execute(
+            select(GrammarLessonCache).where(GrammarLessonCache.topic_key == topic_key)
+        )
+        return res.scalar_one_or_none()
+
+    async def save_grammar_lesson_cache(
+        self, *, topic_key: str, theory: str, exercises: list,
+    ) -> None:
+        """UPSERT кеша урока (гонка двух одновременных генераций — последняя побеждает)."""
+        now = utcnow()
+        stmt = mysql_insert(GrammarLessonCache).values(
+            topic_key=topic_key,
+            theory=theory,
+            exercises=exercises,
+            generated_at=now,
+        )
+        stmt = stmt.on_duplicate_key_update(
+            theory=theory, exercises=exercises, generated_at=now,
+        )
+        await self.s.execute(stmt)
+
+    async def upsert_grammar_progress(
+        self, *, user_id: int, topic_key: str, score: int, passed: bool,
+    ) -> int:
+        """Записать попытку прохождения темы. Возвращает best_score после апдейта.
+
+        completed_at ставится один раз (COALESCE) — повторные прохождения
+        не сбрасывают дату первого прохождения.
+        """
+        now = utcnow()
+        stmt = mysql_insert(UserGrammarProgress).values(
+            user_id=user_id,
+            topic_key=topic_key,
+            completed_at=now if passed else None,
+            best_score=score,
+            attempts=1,
+            updated_at=now,
+        )
+        stmt = stmt.on_duplicate_key_update(
+            best_score=func.greatest(UserGrammarProgress.best_score, score),
+            attempts=UserGrammarProgress.attempts + 1,
+            completed_at=(
+                func.coalesce(UserGrammarProgress.completed_at, now)
+                if passed
+                else UserGrammarProgress.completed_at
+            ),
+            updated_at=now,
+        )
+        await self.s.execute(stmt)
+        res = await self.s.execute(
+            select(UserGrammarProgress.best_score).where(
+                UserGrammarProgress.user_id == user_id,
+                UserGrammarProgress.topic_key == topic_key,
+            )
+        )
+        return int(res.scalar() or score)
 
     async def user_daily_usage_series(
         self, user_id: int, days: int = 30,
