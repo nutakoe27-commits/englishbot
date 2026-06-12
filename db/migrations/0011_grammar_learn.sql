@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS grammar_lesson_cache (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Кеш LLM-уроков — общий для всех юзеров';
 
 CREATE TABLE IF NOT EXISTS user_grammar_progress (
-  user_id      BIGINT NOT NULL,
+  -- ВАЖНО: BIGINT UNSIGNED — иначе FK на users.id не создастся (см. 0004)
+  user_id      BIGINT UNSIGNED NOT NULL,
   topic_key    VARCHAR(64) NOT NULL,
   completed_at DATETIME NULL,
   best_score   INT NOT NULL DEFAULT 0,
