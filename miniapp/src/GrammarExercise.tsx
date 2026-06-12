@@ -1,13 +1,10 @@
-// GrammarExercise.tsx — компонент одного задания.
-// Controlled: задание + локальное состояние (выбранный вариант / ввод)
-// → onAnswer(userAnswer, isCorrect) когда юзер жмёт «Проверить».
-// После проверки — feedback и кнопка «Дальше».
-
-import { useState } from "react";
+// GrammarExercise.tsx — компонент одного задания. Только multiple choice:
+// текстовый ввод убран из продукта (фидбек владельца). Клик по варианту
+// сразу проверяет ответ → feedback и кнопка «Дальше».
 
 export interface Exercise {
   id: string;
-  type: "mcq" | "fill";
+  type: string; // всегда "mcq"
   category: string;
   prompt: string;
   choices: string[];
@@ -23,6 +20,8 @@ interface Props {
   onNext: () => void;
   isLast: boolean;
 }
+
+import { useState } from "react";
 
 // Нормализация для сравнения ответа: trim, lowercase, схлопывание пробелов,
 // убираем хвостовые знаки препинания. Так «went.» == «Went» == «  went ».
@@ -42,23 +41,13 @@ export function GrammarExercise({
   onNext,
   isLast,
 }: Props) {
-  const [userAnswer, setUserAnswer] = useState<string>("");
+  const [picked, setPicked] = useState<string>("");
   const [checked, setChecked] = useState<boolean>(false);
   const [isCorrect, setIsCorrect] = useState<boolean>(false);
 
-  const handleCheck = () => {
+  const handleChoice = (choice: string) => {
     if (checked) return;
-    const trimmed = userAnswer.trim();
-    if (!trimmed) return;
-    const ok = normalize(trimmed) === normalize(exercise.correct);
-    setIsCorrect(ok);
-    setChecked(true);
-    onAnswer(trimmed, ok);
-  };
-
-  const handleMcqClick = (choice: string) => {
-    if (checked) return;
-    setUserAnswer(choice);
+    setPicked(choice);
     const ok = normalize(choice) === normalize(exercise.correct);
     setIsCorrect(ok);
     setChecked(true);
@@ -84,53 +73,31 @@ export function GrammarExercise({
 
       <p className="grm-prompt">{exercise.prompt}</p>
 
-      {exercise.type === "mcq" ? (
-        <div className="grm-choices">
-          {exercise.choices.map((choice) => {
-            const isPicked = userAnswer === choice;
-            const isRight = normalize(choice) === normalize(exercise.correct);
-            let state: "idle" | "picked" | "right" | "wrong" = "idle";
-            if (checked) {
-              if (isRight) state = "right";
-              else if (isPicked) state = "wrong";
-            } else if (isPicked) {
-              state = "picked";
-            }
-            return (
-              <button
-                key={choice}
-                type="button"
-                className="grm-choice"
-                data-state={state}
-                disabled={checked}
-                onClick={() => handleMcqClick(choice)}
-              >
-                {choice}
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="grm-fill">
-          <input
-            type="text"
-            inputMode="text"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            value={userAnswer}
-            onChange={(e) => setUserAnswer(e.target.value)}
-            disabled={checked}
-            placeholder="Введи ответ"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleCheck();
-            }}
-            aria-label="Ответ"
-          />
-        </div>
-      )}
+      <div className="grm-choices">
+        {exercise.choices.map((choice) => {
+          const isPicked = picked === choice;
+          const isRight = normalize(choice) === normalize(exercise.correct);
+          let state: "idle" | "right" | "wrong" = "idle";
+          if (checked) {
+            if (isRight) state = "right";
+            else if (isPicked) state = "wrong";
+          }
+          return (
+            <button
+              key={choice}
+              type="button"
+              className="grm-choice"
+              data-state={state}
+              disabled={checked}
+              onClick={() => handleChoice(choice)}
+            >
+              {choice}
+            </button>
+          );
+        })}
+      </div>
 
-      {/* Feedback после проверки */}
+      {/* Feedback после ответа */}
       {checked && (
         <div
           className={
@@ -142,30 +109,13 @@ export function GrammarExercise({
           <div className="grm-feedback__head">
             {isCorrect ? "✅ Верно" : `❌ Правильный ответ: ${exercise.correct}`}
           </div>
-          {!isCorrect && exercise.type === "fill" && (
-            <div className="grm-feedback__your">
-              Ты ввёл: <em>{userAnswer || "—"}</em>
-            </div>
-          )}
           {exercise.explanation && exercise.explanation !== "—" && (
             <div className="grm-feedback__explanation">{exercise.explanation}</div>
           )}
         </div>
       )}
 
-      {/* Кнопка действия */}
-      {!checked ? (
-        <button
-          type="button"
-          className="grm-primary-btn"
-          onClick={handleCheck}
-          disabled={
-            exercise.type === "fill" ? !userAnswer.trim() : !userAnswer
-          }
-        >
-          Проверить
-        </button>
-      ) : (
+      {checked && (
         <button type="button" className="grm-primary-btn" onClick={onNext}>
           {isLast ? "Итоги" : "Дальше →"}
         </button>

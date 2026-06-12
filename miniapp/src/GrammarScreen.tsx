@@ -92,6 +92,70 @@ interface LessonResult {
   next_topic_key: string | null;
 }
 
+// Статус фоновой генерации упражнений урока: теория открывается мгновенно,
+// упражнения LLM готовит параллельно, пока юзер читает.
+type ExercisesState = "idle" | "pending" | "ready" | "error";
+
+// ── Рендер теории: **bold** + автотаблица примеров «EN — RU» ────────────
+// Строка считается примером, если EN-часть — латиница с финальной
+// пунктуацией (как «I am from Russia. — Я из России.»). Подряд идущие
+// примеры группируются в один блок-таблицу.
+
+function renderBold(text: string): React.ReactNode[] {
+  return text
+    .split(/\*\*(.+?)\*\*/g)
+    .map((part, i) => (i % 2 === 1 ? <strong key={i}>{part}</strong> : part));
+}
+
+function renderTheoryBlocks(text: string): React.ReactNode[] {
+  const lines = text.split("\n");
+  const blocks: React.ReactNode[] = [];
+  let examples: { en: string; ru: string }[] = [];
+
+  const flush = (key: string) => {
+    if (examples.length === 0) return;
+    const rows = examples;
+    examples = [];
+    blocks.push(
+      <div key={key} className="grm-examples">
+        {rows.map((ex, i) => (
+          <div key={i} className="grm-examples__row">
+            <span className="grm-examples__en">{renderBold(ex.en)}</span>
+            <span className="grm-examples__ru">{ex.ru}</span>
+          </div>
+        ))}
+      </div>,
+    );
+  };
+
+  lines.forEach((line, i) => {
+    const t = line.trim();
+    if (!t) {
+      flush(`ex-${i}`);
+      return;
+    }
+    const m = t.match(/^(.{2,}?) — (.+)$/);
+    const en = m?.[1] ?? "";
+    const isExample =
+      m !== null &&
+      /^[A-Za-z"'❌✅(]/.test(en) &&
+      /[.!?…»")]$/.test(en) &&
+      !/[а-яА-ЯёЁ]/.test(en);
+    if (isExample && m) {
+      examples.push({ en: m[1], ru: m[2] });
+      return;
+    }
+    flush(`ex-${i}`);
+    blocks.push(
+      <p key={`p-${i}`} className="grm-theory__para">
+        {renderBold(t)}
+      </p>,
+    );
+  });
+  flush("ex-end");
+  return blocks;
+}
+
 export function GrammarScreen({ onExit }: Props) {
   const [settings, setSettings] = useState<GrammarSettings>(() => loadGrammarSettings());
   const [phase, setPhase] = useState<Phase>("home");
@@ -113,6 +177,7 @@ export function GrammarScreen({ onExit }: Props) {
   const [topicsError, setTopicsError] = useState<string>("");
   const [lesson, setLesson] = useState<LessonData | null>(null);
   const [lessonResult, setLessonResult] = useState<LessonResult | null>(null);
+  const [exState, setExState] = useState<ExercisesState>("idle");
 
   useEffect(() => {
     try { WebApp.ready(); } catch { /* ignore */ }
@@ -163,7 +228,36 @@ export function GrammarScreen({ onExit }: Props) {
     }
   };
 
-  // ── Learn: открыть урок ───────────────────────────────────────────────
+  // ── Learn: фоновая генерация упражнений (пока юзер читает теорию) ──────
+  const fetchLessonExercises = async (topicKey: string) => {
+    setExState("pending");
+    try {
+      const res = await fetch(`${API_BASE}/api/grammar/lesson/exercises`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          init_data: WebApp.initData || "",
+          topic_key: topicKey,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
+      }
+      const data: { exercises: Exercise[]; session_id: string } = await res.json();
+      if (!Array.isArray(data.exercises) || data.exercises.length === 0) {
+        throw new Error("Сервер не вернул упражнений");
+      }
+      setExercises(data.exercises);
+      setSessionId(data.session_id);
+      setExState("ready");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+      setExState("error");
+    }
+  };
+
+  // ── Learn: открыть урок — теория приходит мгновенно (рукописная) ──────
   const openLesson = async (topicKey: string) => {
     setError("");
     setExercises([]);
@@ -171,6 +265,7 @@ export function GrammarScreen({ onExit }: Props) {
     setCurrentIndex(0);
     setSessionId("");
     setLessonResult(null);
+    setExState("idle");
     setPhase("loading");
     setTrack("learn");
 
@@ -191,25 +286,17 @@ export function GrammarScreen({ onExit }: Props) {
         const body = await res.text().catch(() => "");
         throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
       }
-      const data: {
-        topic_key: string;
-        title_ru: string;
-        theory: string;
-        exercises: Exercise[];
-        session_id: string;
-      } = await res.json();
-      if (!Array.isArray(data.exercises) || data.exercises.length === 0) {
-        throw new Error("Сервер не вернул упражнений");
-      }
+      const data: { topic_key: string; title_ru: string; theory: string } =
+        await res.json();
       setLesson({
         topic_key: data.topic_key,
         title_ru: data.title_ru,
         theory: data.theory,
       });
-      setExercises(data.exercises);
-      setSessionId(data.session_id);
       setSettings((s) => ({ ...s, lastTopicKey: data.topic_key }));
       setPhase("theory");
+      // Упражнения готовятся в фоне, пока юзер читает теорию.
+      void fetchLessonExercises(topicKey);
     } catch (e: unknown) {
       if (controller.signal.aborted) {
         setPhase("topics");
@@ -223,9 +310,28 @@ export function GrammarScreen({ onExit }: Props) {
   };
 
   const startLessonPractice = () => {
-    sessionStartRef.current = Date.now();
-    setPhase("exercise");
+    if (exState === "ready") {
+      sessionStartRef.current = Date.now();
+      setPhase("exercise");
+    } else if (exState === "error") {
+      setPhase("error");
+    } else {
+      // Ещё генерятся — показываем короткое ожидание; useEffect ниже
+      // переключит на exercise, как только будут готовы.
+      setPhase("loading");
+    }
   };
+
+  // Автопереход из ожидания, когда фоновая генерация завершилась.
+  useEffect(() => {
+    if (phase !== "loading" || track !== "learn") return;
+    if (exState === "ready") {
+      sessionStartRef.current = Date.now();
+      setPhase("exercise");
+    } else if (exState === "error") {
+      setPhase("error");
+    }
+  }, [phase, track, exState]);
 
   // ── Test: «Проверить себя» — всегда по реальным ошибкам, без настроек ──
   const startWeakPoints = async () => {
@@ -386,6 +492,7 @@ export function GrammarScreen({ onExit }: Props) {
     setSessionId("");
     setLesson(null);
     setLessonResult(null);
+    setExState("idle");
   };
 
   // Назад в шапке — фазозависимый.
@@ -584,16 +691,10 @@ export function GrammarScreen({ onExit }: Props) {
           <div className="grm-theory">
             <h2 className="grm-theory__title">{lesson.title_ru}</h2>
             <div className="grm-theory__body">
-              {lesson.theory.split("\n").map((line, i) =>
-                line.trim() === "" ? (
-                  <div key={i} style={{ height: 10 }} />
-                ) : (
-                  <p key={i} className="grm-theory__para">{line}</p>
-                ),
-              )}
+              {renderTheoryBlocks(lesson.theory)}
             </div>
             <button type="button" className="grm-primary-btn" onClick={startLessonPractice}>
-              К практике →
+              {exState === "ready" ? "К практике →" : "К практике (задания готовятся…)"}
             </button>
           </div>
         )}
