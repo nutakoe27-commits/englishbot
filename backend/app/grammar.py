@@ -511,3 +511,347 @@ async def finish_session(body: _FinishIn) -> _FinishOut:
         streak_current=streak_current,
         streak_best=streak_best,
     )
+
+
+# ═══ Grammar Learn: трек «Учить правила» (миграция 0011) ═════════════════════
+
+# Порог прохождения темы (percent правильных ответов в практике урока).
+PASS_THRESHOLD = 70
+LESSON_EXERCISES = 8
+
+
+class _TopicOut(BaseModel):
+    key: str
+    title_ru: str
+    category: str
+    status: str          # done | available | locked
+    best_score: int = 0
+
+
+class _TopicsOut(BaseModel):
+    levels: dict[str, list[_TopicOut]]
+
+
+class _LessonIn(BaseModel):
+    init_data: str
+    topic_key: str
+
+
+class _LessonOut(BaseModel):
+    topic_key: str
+    title_ru: str
+    theory: str
+    exercises: list[Exercise]
+    session_id: str
+
+
+class _LessonFinishIn(BaseModel):
+    init_data: str
+    topic_key: str
+    session_id: str
+    correct: int = 0
+    total: int = 0
+    duration_sec: int = 0
+
+
+class _LessonFinishOut(BaseModel):
+    passed: bool
+    score: int
+    best_score: int
+    next_topic_key: Optional[str] = None
+    streak_current: int = 0
+    streak_best: int = 0
+
+
+def _compute_topic_statuses(
+    topics: list, progress: dict[str, dict],
+) -> dict[str, str]:
+    """{topic_key: 'done'|'available'|'locked'}.
+
+    Внутри уровня линейная разблокировка: первая тема всегда доступна,
+    каждая следующая — после completed предыдущей. Уровни независимы.
+    """
+    statuses: dict[str, str] = {}
+    by_level: dict[str, list] = {}
+    for t in topics:
+        by_level.setdefault(t.level, []).append(t)
+    for level_topics in by_level.values():
+        level_topics.sort(key=lambda t: t.sort_order)
+        prev_done = True  # первая тема уровня всегда открыта
+        for t in level_topics:
+            p = progress.get(t.key)
+            if p and p["completed"]:
+                statuses[t.key] = "done"
+                prev_done = True
+            elif prev_done:
+                statuses[t.key] = "available"
+                prev_done = False
+            else:
+                statuses[t.key] = "locked"
+    return statuses
+
+
+def _parse_lesson_json(raw: str) -> Optional[dict]:
+    """Парсит {"theory": "...", "exercises": [...]} с той же терпимостью,
+    что _parse_exercises_json. Возвращает dict или None."""
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict) and "theory" in data:
+            return data
+    except Exception:
+        pass
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            if isinstance(data, dict) and "theory" in data:
+                return data
+        except Exception:
+            pass
+    return None
+
+
+def _build_lesson_prompt(*, level: str, title_ru: str, category: str) -> tuple[str, str]:
+    cat_hint = CATEGORY_HINTS.get(category, category)
+    system = (
+        f"You are an expert English grammar teacher writing a lesson for CEFR "
+        f"{level} Russian-speaking learners. "
+        f'The lesson topic is: "{title_ru}" (focus area: {cat_hint}). '
+        "Produce STRICT JSON: a single object with two keys.\n"
+        '1. "theory": a string IN RUSSIAN. Structure: 2-4 short paragraphs '
+        "explaining the rule plainly (when to use, how to form, common traps "
+        "for Russian speakers), then 4-5 example sentences. Each example on "
+        "its own line in the format: EN sentence — RU перевод. Separate "
+        "paragraphs with \\n\\n. Plain text, no markdown headers.\n"
+        f'2. "exercises": an array of EXACTLY {LESSON_EXERCISES} exercise '
+        "objects practising THIS topic. Each: {id, type ('mcq'|'fill'), "
+        "category, prompt (use ___ for the blank), choices (4 plausible "
+        "options, only for mcq), correct, explanation (in Russian, 1-2 "
+        "sentences)}. Mix mcq and fill roughly 50/50.\n"
+        "Output the JSON object only. NO markdown fences, NO commentary."
+    )
+    user = (
+        "/no_think\n"
+        f"Write the lesson now. JSON object with \"theory\" and \"exercises\" only."
+    )
+    return system, user
+
+
+@router.get("/topics", response_model=_TopicsOut)
+async def list_topics(init_data: str = "") -> _TopicsOut:
+    tg_id = _tg_id_from_init_data(init_data)
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db_not_configured")
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.upsert_user(tg_id=tg_id)
+        topics = list(await repo.list_grammar_topics())
+        progress = await repo.get_user_grammar_progress(user.id)
+        await session.commit()
+
+    statuses = _compute_topic_statuses(topics, progress)
+    levels: dict[str, list[_TopicOut]] = {}
+    for t in topics:
+        p = progress.get(t.key) or {}
+        levels.setdefault(t.level, []).append(_TopicOut(
+            key=t.key,
+            title_ru=t.title_ru,
+            category=t.category,
+            status=statuses.get(t.key, "locked"),
+            best_score=int(p.get("best_score") or 0),
+        ))
+    return _TopicsOut(levels=levels)
+
+
+@router.post("/lesson", response_model=_LessonOut)
+async def get_lesson(body: _LessonIn, request: Request) -> _LessonOut:
+    tg_id = _tg_id_from_init_data(body.init_data)
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db_not_configured")
+
+    from .db import Repo
+
+    # ── Тема + доступность ───────────────────────────────────────────────
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.upsert_user(tg_id=tg_id)
+        user_id = user.id
+        topic = await repo.get_grammar_topic(body.topic_key)
+        if topic is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "topic_not_found")
+        topics = list(await repo.list_grammar_topics())
+        progress = await repo.get_user_grammar_progress(user_id)
+        statuses = _compute_topic_statuses(topics, progress)
+        if statuses.get(body.topic_key) == "locked":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "topic_locked")
+        cached = await repo.get_grammar_lesson_cache(body.topic_key)
+        topic_level = topic.level
+        topic_title = topic.title_ru
+        topic_category = topic.category
+        await session.commit()
+
+    presence.mark(
+        user_id,
+        mode="grammar",
+        level=topic_level,
+        role=body.topic_key,
+        ttl=PRESENCE_TTL,
+    )
+
+    # ── Контент: кеш или генерация ──────────────────────────────────────
+    if cached is not None:
+        theory = cached.theory
+        raw_exercises = cached.exercises if isinstance(cached.exercises, list) else []
+        exercises = _coerce_exercises(raw_exercises, default_category=topic_category)
+    else:
+        sys_prompt, usr_prompt = _build_lesson_prompt(
+            level=topic_level, title_ru=topic_title, category=topic_category,
+        )
+        raw = await _call_llm(sys_prompt, usr_prompt, max_tokens=3000)
+        if await request.is_disconnected():
+            raise HTTPException(499, "client_disconnected")
+        lesson = _parse_lesson_json(raw)
+        if not lesson:
+            logger.warning("[grammar lesson] LLM не вернул JSON: %s", raw[:300])
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "llm_bad_json")
+        theory = str(lesson.get("theory") or "").strip()
+        raw_items = lesson.get("exercises") or []
+        exercises = _coerce_exercises(
+            raw_items if isinstance(raw_items, list) else [],
+            default_category=topic_category,
+        )
+        if not theory or len(exercises) < 4:
+            logger.warning(
+                "[grammar lesson] слабый урок: theory=%d chars, exercises=%d",
+                len(theory), len(exercises),
+            )
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "lesson_too_weak")
+        # Кешируем для всех юзеров (model_dump для JSON-колонки).
+        async with db_session() as session:
+            repo = Repo(session)
+            await repo.save_grammar_lesson_cache(
+                topic_key=body.topic_key,
+                theory=theory,
+                exercises=[e.model_dump() for e in exercises],
+            )
+            await session.commit()
+
+    # ── Открываем Session ────────────────────────────────────────────────
+    async with db_session() as session:
+        repo = Repo(session)
+        row = await repo.open_session(
+            user_id=user_id,
+            mode="grammar",
+            level=topic_level,
+            role=body.topic_key,
+        )
+        session_id_str = str(row.id)
+        await session.commit()
+
+    _SESSION_STORE[session_id_str] = {
+        "user_id": user_id,
+        "level": topic_level,
+        "mode": "lesson",
+        "category": topic_category,
+        "topic_key": body.topic_key,
+    }
+
+    return _LessonOut(
+        topic_key=body.topic_key,
+        title_ru=topic_title,
+        theory=theory,
+        exercises=exercises,
+        session_id=session_id_str,
+    )
+
+
+@router.post("/lesson/finish", response_model=_LessonFinishOut)
+async def finish_lesson(body: _LessonFinishIn) -> _LessonFinishOut:
+    tg_id = _tg_id_from_init_data(body.init_data)
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db_not_configured")
+
+    entry = _SESSION_STORE.pop(body.session_id, None)
+    user_id = entry.get("user_id") if entry else None
+
+    from .db import Repo
+    from .voice import STREAK_MIN_DURATION_SEC
+
+    total = max(1, int(body.total or 0))
+    correct = max(0, min(int(body.correct or 0), total))
+    score = round(correct / total * 100)
+    passed = score >= PASS_THRESHOLD
+    duration_sec = max(0, min(int(body.duration_sec or 0), 30 * 60))
+
+    streak_current = 0
+    streak_best = 0
+    best_score = score
+    next_topic_key: Optional[str] = None
+
+    async with db_session() as session:
+        repo = Repo(session)
+        if user_id is None:
+            user = await repo.get_user_by_tg_id(tg_id)
+            user_id = user.id if user else None
+        if user_id is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "user_not_found")
+
+        topic = await repo.get_grammar_topic(body.topic_key)
+        if topic is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "topic_not_found")
+
+        # Прогресс по теме
+        best_score = await repo.upsert_grammar_progress(
+            user_id=user_id, topic_key=body.topic_key, score=score, passed=passed,
+        )
+
+        # Следующая тема уровня (для кнопки «Дальше» в summary)
+        topics = list(await repo.list_grammar_topics())
+        same_level = sorted(
+            (t for t in topics if t.level == topic.level),
+            key=lambda t: t.sort_order,
+        )
+        for i, t in enumerate(same_level):
+            if t.key == body.topic_key and i + 1 < len(same_level):
+                next_topic_key = same_level[i + 1].key
+                break
+
+        # Session close + DailyUsage + streak — как в тест-треке.
+        try:
+            sess_id_int = int(body.session_id)
+        except ValueError:
+            sess_id_int = 0
+        if sess_id_int > 0:
+            try:
+                await repo.close_session(
+                    session_id=sess_id_int, used_seconds=duration_sec,
+                )
+            except Exception as exc:
+                logger.warning("[grammar lesson] close_session failed: %s", exc)
+        if duration_sec > 0:
+            await repo.add_used_seconds(user_id=user_id, seconds=duration_sec)
+        if duration_sec >= STREAK_MIN_DURATION_SEC:
+            try:
+                streak_current, streak_best = await repo.bump_streak(
+                    user_id, role=body.topic_key,
+                )
+            except Exception as exc:
+                logger.warning("[grammar lesson] bump_streak failed: %s", exc)
+        await session.commit()
+
+    presence.clear(user_id)
+
+    return _LessonFinishOut(
+        passed=passed,
+        score=score,
+        best_score=best_score,
+        next_topic_key=next_topic_key,
+        streak_current=streak_current,
+        streak_best=streak_best,
+    )

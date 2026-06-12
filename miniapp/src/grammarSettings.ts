@@ -16,6 +16,8 @@ export interface GrammarSettings {
   defaultMode: GrammarMode;
   level: Level;
   category: MistakeCategory;
+  /** Последняя открытая тема Learn-трека — для кнопки «Продолжить». */
+  lastTopicKey?: string;
 }
 
 export const DEFAULT_GRAMMAR: GrammarSettings = {
@@ -44,6 +46,10 @@ export function loadGrammarSettings(): GrammarSettings {
       defaultMode: parsed.defaultMode === "weak_points" ? "weak_points" : "topic",
       level: isLevel(parsed.level) ? parsed.level : DEFAULT_GRAMMAR.level,
       category: isCategory(parsed.category) ? parsed.category : DEFAULT_GRAMMAR.category,
+      lastTopicKey:
+        typeof parsed.lastTopicKey === "string" && parsed.lastTopicKey
+          ? parsed.lastTopicKey.slice(0, 64)
+          : undefined,
     };
   } catch {
     return { ...DEFAULT_GRAMMAR };

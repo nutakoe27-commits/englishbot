@@ -310,3 +310,62 @@ class UserAchievement(Base):
     )
     achievement_key: Mapped[str] = mapped_column(String(64), primary_key=True)
     earned_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+# ─── Grammar Learn (миграция 0011) ─────────────────────────────────────
+
+class GrammarTopic(Base):
+    """Статический каталог грамматических тем. Пополняется миграциями."""
+
+    __tablename__ = "grammar_topics"
+
+    key: Mapped[str] = mapped_column("key", String(64), primary_key=True)
+    level: Mapped[str] = mapped_column(
+        SAEnum("A2", "B1", "B2", "C1", name="grammar_topic_level"), nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    title_ru: Mapped[str] = mapped_column(String(200), nullable=False)
+    category: Mapped[str] = mapped_column(
+        SAEnum(
+            "article", "tense", "preposition", "word_choice", "phrasal", "other",
+            name="grammar_topic_category",
+        ),
+        nullable=False,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class GrammarLessonCache(Base):
+    """Кеш LLM-сгенерированных уроков — общий для всех юзеров.
+
+    Регенерация: DELETE строки → следующий запрос темы сгенерит заново.
+    """
+
+    __tablename__ = "grammar_lesson_cache"
+
+    topic_key: Mapped[str] = mapped_column(
+        String(64), ForeignKey("grammar_topics.key", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    theory: Mapped[str] = mapped_column(Text, nullable=False)
+    exercises: Mapped[list] = mapped_column(JSON, nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class UserGrammarProgress(Base):
+    """Прогресс юзера по темам Grammar Learn. Порог прохождения 70%."""
+
+    __tablename__ = "user_grammar_progress"
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    topic_key: Mapped[str] = mapped_column(
+        String(64), ForeignKey("grammar_topics.key", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    best_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
