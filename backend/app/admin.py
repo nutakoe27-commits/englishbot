@@ -152,6 +152,9 @@ class UserDetail(UserBrief):
     words_count: int = 0
     achievements_earned: int = 0
     achievements_total: int = 0
+    # Grammar Learn: пройдено тем / всего активных тем в каталоге.
+    grammar_topics_done: int = 0
+    grammar_topics_total: int = 0
 
 
 class GrantRequest(BaseModel):
@@ -292,6 +295,12 @@ async def _user_to_detail(repo: Repo, u) -> UserDetail:
     minutes_by_mode = {m: sec // 60 for m, sec in seconds_by_mode.items()}
     words_count = await repo.count_user_words(u.id)
     try:
+        grammar_done, grammar_total = await repo.grammar_learn_counters(u.id)
+    except Exception as exc:
+        # До миграции 0011 таблиц нет — не валим профиль целиком.
+        logger.warning("[admin] grammar counters failed: %r", exc)
+        grammar_done, grammar_total = 0, 0
+    try:
         from .achievements import ACHIEVEMENTS, get_earned_keys
         earned = await get_earned_keys(repo, u.id)
         achievements_earned = len(earned)
@@ -319,6 +328,8 @@ async def _user_to_detail(repo: Repo, u) -> UserDetail:
         words_count=words_count,
         achievements_earned=achievements_earned,
         achievements_total=achievements_total,
+        grammar_topics_done=grammar_done,
+        grammar_topics_total=grammar_total,
     )
 
 

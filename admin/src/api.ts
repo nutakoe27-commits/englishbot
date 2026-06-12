@@ -164,6 +164,8 @@ export interface UserDetail extends UserBrief {
   words_count: number;
   achievements_earned: number;
   achievements_total: number;
+  grammar_topics_done?: number;
+  grammar_topics_total?: number;
 }
 
 export interface MaintenanceSettings {
