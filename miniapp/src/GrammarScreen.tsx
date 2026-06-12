@@ -1,20 +1,21 @@
 // GrammarScreen.tsx — режим «Грамматика». Два трека:
 //
-//   learn — «Учить правила»: каталог тем по уровням (GET /topics) →
-//           урок: теория → 8 упражнений → итог с порогом 70% и
-//           разблокировкой следующей темы (Duolingo-style).
-//   test  — «Проверить себя»: существующий генератор 10 заданий
-//           (weak_points по user_mistakes / topic по категории).
+//   learn — «Учить правила»: каталог тем A1–C1 (GET /topics) → урок:
+//           рукописная теория → 8 LLM-упражнений (каждому юзеру свежие) →
+//           итог с порогом 70% и разблокировкой следующей темы.
+//   test  — «Проверить себя»: БЕЗ настроек. Сразу генерим 10 заданий по
+//           реальным ошибкам юзера (user_mistakes). Если ошибок нет —
+//           заглушка «Сначала поговори с AI Tutor».
 //
 // Фазы:
-//   home     — выбор трека (стартовая)
-//   topics   — дерево тем Learn-трека (табы уровней, ✅/🔓/🔒)
-//   theory   — карточка правила + примеры, кнопка «К практике»
-//   config   — настройки test-трека (уровень + категория + 2 кнопки)
-//   loading  — спиннер (генерация LLM)
-//   exercise — цикл заданий с мгновенным feedback (общий для треков)
-//   summary  — итог (для learn — с passed-бейджем и «Следующая тема»)
-//   error    — ошибка + retry
+//   home        — выбор трека (стартовая)
+//   topics      — дерево тем Learn-трека (табы уровней, ✅/🔓/🔒)
+//   theory      — карточка правила, кнопка «К практике»
+//   no_mistakes — заглушка test-трека: нет накопленных ошибок
+//   loading     — спиннер (генерация LLM)
+//   exercise    — цикл заданий с мгновенным feedback (общий для треков)
+//   summary     — итог (для learn — passed-бейдж и «Следующая тема»)
+//   error       — ошибка + retry
 
 import { useEffect, useRef, useState } from "react";
 import WebApp from "@twa-dev/sdk";
@@ -23,14 +24,11 @@ import { GrammarExercise, type Exercise } from "./GrammarExercise";
 import { ProgressScreen } from "./ProgressScreen";
 import { WordsScreen } from "./WordsScreen";
 import {
-  CATEGORY_OPTIONS,
   loadGrammarSettings,
   saveGrammarSettings,
-  type GrammarMode,
   type GrammarSettings,
-  type MistakeCategory,
 } from "./grammarSettings";
-import { LEVEL_OPTIONS, type Level } from "./tutorSettings";
+import { loadSettings as loadTutorSettings } from "./tutorSettings";
 
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
@@ -55,13 +53,16 @@ type Phase =
   | "home"
   | "topics"
   | "theory"
-  | "config"
+  | "no_mistakes"
   | "loading"
   | "exercise"
   | "summary"
   | "error";
 
 type Track = "learn" | "test";
+
+// Уровни Learn-каталога (включая A1, которого нет в tutorSettings.Level).
+type TopicLevel = "A1" | "A2" | "B1" | "B2" | "C1";
 
 interface AnswerLog {
   exercise_id: string;
@@ -108,7 +109,7 @@ export function GrammarScreen({ onExit }: Props) {
 
   // Learn-трек
   const [topicLevels, setTopicLevels] = useState<Record<string, TopicInfo[]> | null>(null);
-  const [topicsLevel, setTopicsLevel] = useState<Level>(settings.level);
+  const [topicsLevel, setTopicsLevel] = useState<TopicLevel>("A1");
   const [topicsError, setTopicsError] = useState<string>("");
   const [lesson, setLesson] = useState<LessonData | null>(null);
   const [lessonResult, setLessonResult] = useState<LessonResult | null>(null);
@@ -138,7 +139,7 @@ export function GrammarScreen({ onExit }: Props) {
           session_id: sessionId,
         }),
       }).catch(() => {
-        /* heartbeat best-effort — не падаем при сетевой ошибке */
+        /* heartbeat best-effort */
       });
     };
     const id = window.setInterval(tick, HEARTBEAT_MS);
@@ -226,8 +227,8 @@ export function GrammarScreen({ onExit }: Props) {
     setPhase("exercise");
   };
 
-  // ── Test: генерация (существующий путь) ───────────────────────────────
-  const startGeneration = async (mode: GrammarMode) => {
+  // ── Test: «Проверить себя» — всегда по реальным ошибкам, без настроек ──
+  const startWeakPoints = async () => {
     setError("");
     setExercises([]);
     setAnswers([]);
@@ -237,7 +238,6 @@ export function GrammarScreen({ onExit }: Props) {
     setLessonResult(null);
     setPhase("loading");
     setTrack("test");
-    setSettings((s) => ({ ...s, defaultMode: mode }));
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -248,12 +248,18 @@ export function GrammarScreen({ onExit }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           init_data: WebApp.initData || "",
-          mode,
-          level: settings.level,
-          category: mode === "topic" ? settings.category : undefined,
+          mode: "weak_points",
+          // Уровень берём из настроек speaking-тьютора — отдельных
+          // настроек у теста больше нет.
+          level: loadTutorSettings().level,
         }),
         signal: controller.signal,
       });
+      if (res.status === 409) {
+        // Нет накопленных ошибок — показываем заглушку.
+        setPhase("no_mistakes");
+        return;
+      }
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
@@ -268,7 +274,7 @@ export function GrammarScreen({ onExit }: Props) {
       setPhase("exercise");
     } catch (e: unknown) {
       if (controller.signal.aborted) {
-        setPhase("config");
+        setPhase("home");
         return;
       }
       setError(e instanceof Error ? e.message : String(e));
@@ -386,7 +392,7 @@ export function GrammarScreen({ onExit }: Props) {
   const handleBack = () => {
     if (phase === "home") {
       onExit();
-    } else if (phase === "topics" || phase === "config") {
+    } else if (phase === "topics" || phase === "no_mistakes") {
       resetRound();
       setPhase("home");
     } else if (phase === "theory") {
@@ -395,13 +401,13 @@ export function GrammarScreen({ onExit }: Props) {
     } else if (phase === "summary" || phase === "error") {
       resetRound();
       if (track === "learn") void openTopics();
-      else setPhase("config");
+      else setPhase("home");
     } else {
       onExit();
     }
   };
 
-  const levelTabs: Level[] = ["A2", "B1", "B2", "C1"];
+  const levelTabs: TopicLevel[] = ["A1", "A2", "B1", "B2", "C1"];
   const currentTopics = topicLevels?.[topicsLevel] ?? [];
 
   return (
@@ -458,7 +464,7 @@ export function GrammarScreen({ onExit }: Props) {
               <span className="grm-mode-card__emoji" aria-hidden>📖</span>
               <span className="grm-mode-card__title">Учить правила</span>
               <span className="grm-mode-card__hint">
-                Программа тем от A2 до C1: правило с примерами → практика →
+                Программа тем от A1 до C1: правило с примерами → практика →
                 следующая тема открывается после прохождения.
               </span>
             </button>
@@ -466,14 +472,33 @@ export function GrammarScreen({ onExit }: Props) {
             <button
               type="button"
               className="grm-mode-card"
-              onClick={() => { setTrack("test"); setPhase("config"); }}
+              onClick={() => void startWeakPoints()}
             >
               <span className="grm-mode-card__emoji" aria-hidden>🎯</span>
               <span className="grm-mode-card__title">Проверить себя</span>
               <span className="grm-mode-card__hint">
-                10 упражнений по твоим реальным ошибкам из разговоров или по
-                выбранной теме.
+                10 упражнений по ошибкам из твоих реальных разговоров с
+                AI Tutor — без настроек, сразу в бой.
               </span>
+            </button>
+          </div>
+        )}
+
+        {/* ── NO MISTAKES: заглушка test-трека ── */}
+        {phase === "no_mistakes" && (
+          <div className="grm-stub">
+            <span className="grm-stub__emoji" aria-hidden>🎙️</span>
+            <p className="grm-stub__title">Пока нечего разбирать</p>
+            <p className="grm-stub__hint">
+              Сначала поговори с AI Tutor — я запомню твои ошибки из живой
+              речи и соберу из них персональные упражнения.
+            </p>
+            <button
+              type="button"
+              className="grm-primary-btn"
+              onClick={() => { resetRound(); setPhase("home"); }}
+            >
+              Понятно
             </button>
           </div>
         )}
@@ -573,82 +598,12 @@ export function GrammarScreen({ onExit }: Props) {
           </div>
         )}
 
-        {/* ── CONFIG: test-трек (как раньше) ── */}
-        {phase === "config" && (
-          <>
-            <section className="lst-section">
-              <h3 className="lst-section__title">Уровень</h3>
-              <div className="lst-chips">
-                {LEVEL_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className="lst-chip lst-chip--level"
-                    data-active={settings.level === opt.value ? "true" : "false"}
-                    onClick={() => setSettings({ ...settings, level: opt.value })}
-                  >
-                    <span className="lst-chip__main">{opt.label}</span>
-                    <span className="lst-chip__sub">{opt.hint}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section className="lst-section">
-              <h3 className="lst-section__title">Тема (для «Новая тема»)</h3>
-              <div className="lst-categories">
-                {CATEGORY_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className="lst-category"
-                    data-active={settings.category === opt.value ? "true" : "false"}
-                    onClick={() =>
-                      setSettings({ ...settings, category: opt.value as MistakeCategory })
-                    }
-                  >
-                    <span className="lst-category__emoji" aria-hidden>{opt.emoji}</span>
-                    <span className="lst-category__label">{opt.label}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <div className="grm-mode-row">
-              <button
-                type="button"
-                className="grm-mode-card grm-mode-card--weak"
-                onClick={() => startGeneration("weak_points")}
-              >
-                <span className="grm-mode-card__emoji" aria-hidden>🎯</span>
-                <span className="grm-mode-card__title">Разобрать мои ошибки</span>
-                <span className="grm-mode-card__hint">
-                  AI возьмёт твои реальные ошибки из разговоров и сделает упражнения
-                  точно по слабым местам.
-                </span>
-              </button>
-
-              <button
-                type="button"
-                className="grm-mode-card grm-mode-card--topic"
-                onClick={() => startGeneration("topic")}
-              >
-                <span className="grm-mode-card__emoji" aria-hidden>📚</span>
-                <span className="grm-mode-card__title">Новая тема</span>
-                <span className="grm-mode-card__hint">
-                  10 упражнений по выбранной категории — для отработки знаний с нуля.
-                </span>
-              </button>
-            </div>
-          </>
-        )}
-
         {/* ── LOADING ── */}
         {phase === "loading" && (
           <div className="lst-loading">
             <div className="lst-spinner" aria-hidden />
             <p className="lst-loading__title">
-              {track === "learn" ? "Готовлю урок…" : "Готовлю задания…"}
+              {track === "learn" ? "Готовлю урок…" : "Собираю твои ошибки…"}
             </p>
             <p className="lst-loading__hint">Это займёт ~10 секунд.</p>
             <button type="button" className="lst-secondary-btn" onClick={cancelGeneration}>
@@ -755,7 +710,7 @@ export function GrammarScreen({ onExit }: Props) {
                   <button
                     type="button"
                     className="grm-primary-btn"
-                    onClick={() => { resetRound(); setPhase("config"); }}
+                    onClick={() => { resetRound(); void startWeakPoints(); }}
                   >
                     Ещё раунд
                   </button>
@@ -777,7 +732,7 @@ export function GrammarScreen({ onExit }: Props) {
                 onClick={() => {
                   resetRound();
                   if (track === "learn") void openTopics();
-                  else setPhase("config");
+                  else setPhase("home");
                 }}
               >
                 Назад
@@ -789,7 +744,7 @@ export function GrammarScreen({ onExit }: Props) {
                   if (track === "learn" && settings.lastTopicKey) {
                     void openLesson(settings.lastTopicKey);
                   } else {
-                    void startGeneration(settings.defaultMode);
+                    void startWeakPoints();
                   }
                 }}
               >

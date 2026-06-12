@@ -2713,3 +2713,23 @@ button {
   background: rgba(217, 119, 6, 0.12);
   color: #ffd9a0;
 }
+
+/* ─── Grammar: заглушка «нет ошибок» ─────────────────────────────── */
+.grm-stub {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 56px 24px 30px;
+  text-align: center;
+}
+.grm-stub__emoji { font-size: 44px; line-height: 1; }
+.grm-stub__title { margin: 0; font-size: 18px; font-weight: 700; }
+.grm-stub__hint {
+  margin: 0;
+  max-width: 300px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.grm-stub .grm-primary-btn { margin-top: 8px; min-width: 160px; }
