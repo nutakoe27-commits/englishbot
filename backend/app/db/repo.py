@@ -724,6 +724,19 @@ class Repo:
         )
         return res.scalar_one_or_none()
 
+    async def grammar_learn_counters(self, user_id: int) -> tuple[int, int]:
+        """(тем пройдено, всего активных тем) — для профиля юзера в админке."""
+        done_res = await self.s.execute(
+            select(func.count(UserGrammarProgress.topic_key)).where(
+                UserGrammarProgress.user_id == user_id,
+                UserGrammarProgress.completed_at.is_not(None),
+            )
+        )
+        total_res = await self.s.execute(
+            select(func.count(GrammarTopic.key)).where(GrammarTopic.is_active.is_(True))
+        )
+        return int(done_res.scalar() or 0), int(total_res.scalar() or 0)
+
     async def get_user_grammar_progress(self, user_id: int) -> dict[str, dict]:
         """{topic_key: {completed: bool, best_score: int, attempts: int}}"""
         res = await self.s.execute(

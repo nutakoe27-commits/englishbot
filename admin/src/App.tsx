@@ -1085,13 +1085,18 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
             tone={(u.words_count ?? 0) > 0 ? "success" : "muted"}
           />
           <StatusPill
+            label="📝 Темы грамматики"
+            value={`${u.grammar_topics_done ?? 0} / ${u.grammar_topics_total ?? 0}`}
+            tone={(u.grammar_topics_done ?? 0) > 0 ? "success" : "muted"}
+          />
+          <StatusPill
             label="Медали"
             value={`${u.achievements_earned ?? 0} / ${u.achievements_total ?? 0}`}
             tone={(u.achievements_earned ?? 0) > 0 ? "success" : "muted"}
           />
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-          {["voice", "chat", "listening"].map((mode) => {
+          {["voice", "chat", "listening", "grammar"].map((mode) => {
             const mins = (u.minutes_by_mode ?? {})[mode] ?? 0;
             const meta = modeMeta(mode);
             return (
