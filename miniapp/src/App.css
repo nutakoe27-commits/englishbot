@@ -2733,3 +2733,41 @@ button {
   color: var(--text-dim);
 }
 .grm-stub .grm-primary-btn { margin-top: 8px; min-width: 160px; }
+
+/* ─── Grammar: автотаблица примеров в теории ──────────────────────── */
+.grm-examples {
+  display: flex;
+  flex-direction: column;
+  margin: 10px 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.grm-examples__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 9px 12px;
+}
+.grm-examples__row:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.025);
+}
+.grm-examples__row + .grm-examples__row {
+  border-top: 1px solid var(--border);
+}
+.grm-examples__en {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+  font-weight: 500;
+}
+.grm-examples__ru {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.grm-theory__para strong,
+.grm-examples__en strong {
+  color: var(--accent-soft);
+  font-weight: 700;
+}

@@ -209,14 +209,14 @@ def _parse_exercises_json(raw: str) -> list[dict]:
 
 def _coerce_exercises(raw_items: list, default_category: str) -> list[Exercise]:
     """Жёсткая нормализация: фильтруем некорректные элементы, чиним поля,
-    обрезаем до EXERCISES_PER_SESSION."""
+    обрезаем до EXERCISES_PER_SESSION.
+
+    Только MCQ: текстовый ввод убран из продукта — задания без минимум
+    2 вариантов ответа отбрасываются."""
     out: list[Exercise] = []
     for i, item in enumerate(raw_items):
         if not isinstance(item, dict):
             continue
-        ex_type = str(item.get("type") or "mcq").strip().lower()
-        if ex_type not in ("mcq", "fill"):
-            ex_type = "mcq"
         category = str(item.get("category") or default_category).strip().lower()
         if category not in ALLOWED_CATEGORIES:
             category = default_category
@@ -231,19 +231,15 @@ def _coerce_exercises(raw_items: list, default_category: str) -> list[Exercise]:
             if isinstance(choices_raw, list)
             else []
         )
-        if ex_type == "mcq":
-            # MCQ обязан иметь правильный ответ в списке вариантов
-            if correct not in choices:
-                choices = [correct] + [c for c in choices if c != correct]
-            if len(choices) < 2:
-                # деградируем в fill-in, если LLM не дал вариантов
-                ex_type = "fill"
-                choices = []
-        else:
-            choices = []
+        # Правильный ответ обязан быть среди вариантов.
+        if correct not in choices:
+            choices = [correct] + [c for c in choices if c != correct]
+        if len(choices) < 2:
+            # LLM не дал вариантов — задание непригодно, пропускаем.
+            continue
         out.append(Exercise(
             id=str(item.get("id") or i + 1),
-            type=ex_type,
+            type="mcq",
             category=category,
             prompt=prompt[:500],
             choices=choices[:6],
@@ -290,13 +286,12 @@ def _build_prompt(
         f"You are an expert English grammar drill author for CEFR {level} learners. "
         f"You will generate EXACTLY {EXERCISES_PER_SESSION} short exercises. "
         f"Focus area: {cat_hint}. "
-        "Mix multiple-choice (type='mcq', 4 plausible options including the "
-        "correct one) and fill-in-the-blank (type='fill', no choices) "
-        "approximately 50/50. "
+        "ALL exercises are multiple-choice (type='mcq'): exactly 4 plausible "
+        "options including the correct one. "
         "Each exercise must include an 'explanation' field IN RUSSIAN, "
         "1–2 short sentences, explaining the rule plainly. "
         "Mark the slot to fill in the prompt with three underscores: ___ "
-        "Distractors for MCQ must be plausible but clearly wrong by the grammar rule. "
+        "Distractors must be plausible but clearly wrong by the grammar rule. "
         "Output STRICT JSON: a single top-level array of objects. NO markdown, "
         "NO code fences, NO commentary — just the JSON array."
         + mistakes_clause
@@ -610,10 +605,11 @@ def _build_lesson_exercises_prompt(
         "---\n"
         f"Generate EXACTLY {LESSON_EXERCISES} exercises that practise "
         "PRECISELY the rules and traps described in this theory. "
-        "Each: {id, type ('mcq'|'fill'), category, prompt (use ___ for the "
-        "blank), choices (4 plausible options, only for mcq), correct, "
-        "explanation (in Russian, 1-2 sentences)}. Mix mcq and fill "
-        "roughly 50/50. Vary vocabulary and situations — do not copy the "
+        "ALL exercises are multiple-choice (type='mcq'). "
+        "Each: {id, type ('mcq'), category, prompt (use ___ for the "
+        "blank), choices (exactly 4 plausible options including the correct "
+        "one), correct, explanation (in Russian, 1-2 sentences)}. "
+        "Vary vocabulary and situations — do not copy the "
         "theory examples verbatim. "
         "Output STRICT JSON: a single top-level array. NO markdown fences, "
         "NO commentary."
@@ -653,33 +649,40 @@ async def list_topics(init_data: str = "") -> _TopicsOut:
     return _TopicsOut(levels=levels)
 
 
-@router.post("/lesson", response_model=_LessonOut)
-async def get_lesson(body: _LessonIn, request: Request) -> _LessonOut:
-    tg_id = _tg_id_from_init_data(body.init_data)
+async def _resolve_topic_for_user(body_init_data: str, topic_key: str) -> tuple:
+    """Общий preflight для /lesson и /lesson/exercises: юзер, тема,
+    проверка locked. Возвращает (user_id, level, title_ru, category)."""
+    tg_id = _tg_id_from_init_data(body_init_data)
     if not settings.DATABASE_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db_not_configured")
 
     from .db import Repo
-
-    # ── Тема + доступность ───────────────────────────────────────────────
     async with db_session() as session:
         repo = Repo(session)
         user = await repo.upsert_user(tg_id=tg_id)
         user_id = user.id
-        topic = await repo.get_grammar_topic(body.topic_key)
+        topic = await repo.get_grammar_topic(topic_key)
         if topic is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "topic_not_found")
         topics = list(await repo.list_grammar_topics())
         progress = await repo.get_user_grammar_progress(user_id)
         statuses = _compute_topic_statuses(topics, progress)
-        if statuses.get(body.topic_key) == "locked":
+        if statuses.get(topic_key) == "locked":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "topic_locked")
-        topic_level = topic.level
-        topic_title = topic.title_ru
-        topic_category = topic.category
+        result = (user_id, topic.level, topic.title_ru, topic.category)
         await session.commit()
+    return result
 
-    # ── Теория: рукописная, из grammar_lessons.py ────────────────────────
+
+@router.post("/lesson", response_model=_LessonOut)
+async def get_lesson(body: _LessonIn) -> _LessonOut:
+    """Быстрый endpoint: ТОЛЬКО рукописная теория, без LLM. Юзер начинает
+    читать урок мгновенно; упражнения фронт запрашивает параллельно через
+    /lesson/exercises и они готовятся, пока человек читает."""
+    user_id, topic_level, topic_title, _category = await _resolve_topic_for_user(
+        body.init_data, body.topic_key,
+    )
+
     from .grammar_lessons import THEORY
     theory = THEORY.get(body.topic_key, "").strip()
     if not theory:
@@ -695,7 +698,35 @@ async def get_lesson(body: _LessonIn, request: Request) -> _LessonOut:
         ttl=PRESENCE_TTL,
     )
 
-    # ── Упражнения: LLM каждому юзеру свежие (не кешируются) ────────────
+    return _LessonOut(
+        topic_key=body.topic_key,
+        title_ru=topic_title,
+        theory=theory,
+        exercises=[],
+        session_id="",
+    )
+
+
+class _LessonExercisesOut(BaseModel):
+    exercises: list[Exercise]
+    session_id: str
+
+
+@router.post("/lesson/exercises", response_model=_LessonExercisesOut)
+async def get_lesson_exercises(body: _LessonIn, request: Request) -> _LessonExercisesOut:
+    """Медленный endpoint: LLM-генерация упражнений (каждому юзеру свежие)
+    + открытие Session. Фронт зовёт его в фоне сразу после /lesson."""
+    user_id, topic_level, topic_title, topic_category = await _resolve_topic_for_user(
+        body.init_data, body.topic_key,
+    )
+
+    from .grammar_lessons import THEORY
+    theory = THEORY.get(body.topic_key, "").strip()
+    if not theory:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "lesson_content_missing")
+
+    presence.touch(user_id, PRESENCE_TTL)
+
     sys_prompt, usr_prompt = _build_lesson_exercises_prompt(
         level=topic_level,
         title_ru=topic_title,
@@ -714,7 +745,7 @@ async def get_lesson(body: _LessonIn, request: Request) -> _LessonOut:
         )
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "too_few_exercises")
 
-    # ── Открываем Session ────────────────────────────────────────────────
+    from .db import Repo
     async with db_session() as session:
         repo = Repo(session)
         row = await repo.open_session(
@@ -734,13 +765,7 @@ async def get_lesson(body: _LessonIn, request: Request) -> _LessonOut:
         "topic_key": body.topic_key,
     }
 
-    return _LessonOut(
-        topic_key=body.topic_key,
-        title_ru=topic_title,
-        theory=theory,
-        exercises=exercises,
-        session_id=session_id_str,
-    )
+    return _LessonExercisesOut(exercises=exercises, session_id=session_id_str)
 
 
 @router.post("/lesson/finish", response_model=_LessonFinishOut)
