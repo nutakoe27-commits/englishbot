@@ -11,7 +11,6 @@ user_achievements и (опционально) push в TG.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
@@ -20,10 +19,10 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from .db.models import (
-    Battle,
     Session as SessionRow,
     User,
     UserAchievement,
+    UserGrammarProgress,
     UserVocabulary,
 )
 from .db.repo import Repo, utcnow
@@ -37,27 +36,54 @@ class Achievement:
     title_ru: str
     description_ru: str
     icon: str
-    # одна из: "sessions" | "streak" | "minutes" | "words" | "battles"
+    # одна из: "sessions" | "streak" | "minutes" | "words"
+    #        | "listening_sessions" | "grammar_lessons" | "modes_count"
     metric: str
     target: int
 
 
-# Каталог. Порядок = порядок в UI (от простого к сложному).
+# Каталог. Порядок = порядок в UI (от простого к сложному, по темам).
 ACHIEVEMENTS: list[Achievement] = [
+    # ── Старт + регулярность ────────────────────────────────────
     Achievement("first_session", "Первая сессия",
-                "Записал первый разговор", "🎤", "sessions", 1),
+                "Стартовал практику — любой режим", "🎤", "sessions", 1),
     Achievement("streak_3",  "Три дня подряд", "Стрик 3 дня",   "🔥", "streak", 3),
     Achievement("streak_7",  "Неделя огня",    "Стрик 7 дней",  "🔥", "streak", 7),
     Achievement("streak_30", "Месяц практики", "Стрик 30 дней", "🔥", "streak", 30),
+
+    # ── Время в эфире (любого режима) ───────────────────────────
     Achievement("minutes_30",  "Полчаса вместе",
-                "30 минут разговоров",  "⏱", "minutes", 30),
+                "30 минут практики",  "⏱", "minutes", 30),
     Achievement("minutes_120", "2 часа в эфире",
-                "2 часа разговоров",    "⏱", "minutes", 120),
+                "2 часа практики",    "⏱", "minutes", 120),
     Achievement("minutes_600", "Десятка часов",
-                "10 часов разговоров",  "⏱", "minutes", 600),
+                "10 часов практики",  "⏱", "minutes", 600),
+
+    # ── Личный словарь ──────────────────────────────────────────
     Achievement("words_50",  "Полсотни слов", "50 слов в словаре",  "📚", "words", 50),
     Achievement("words_200", "200 слов",      "200 слов в словаре", "📚", "words", 200),
-    Achievement("battle_first", "Боец", "Первый battle", "⚔️", "battles", 1),
+
+    # ── Listening (🎧) ──────────────────────────────────────────
+    Achievement("listening_first", "Первый подкаст",
+                "Послушал первый сгенерированный подкаст", "🎧",
+                "listening_sessions", 1),
+    Achievement("listening_10", "Подкаст-марафон",
+                "Послушал 10 подкастов", "🎧", "listening_sessions", 10),
+
+    # ── Grammar Learn (📝) ──────────────────────────────────────
+    Achievement("grammar_first", "Первое правило",
+                "Прошёл первую тему грамматики", "📝", "grammar_lessons", 1),
+    Achievement("grammar_10", "Знаток основ",
+                "Прошёл 10 тем грамматики", "📝", "grammar_lessons", 10),
+    Achievement("grammar_25", "Половина пути",
+                "Прошёл 25 тем грамматики", "🎓", "grammar_lessons", 25),
+    Achievement("grammar_all", "Магистр грамматики",
+                "Прошёл все темы грамматики", "🏆", "grammar_lessons", 50),
+
+    # ── Универсал ───────────────────────────────────────────────
+    Achievement("polyglot", "Универсал",
+                "Попробовал все три режима: разговор, слушание, грамматика",
+                "🌟", "modes_count", 3),
 ]
 
 # Быстрый lookup
@@ -69,11 +95,7 @@ def get_catalog() -> list[Achievement]:
 
 
 async def collect_user_metrics(repo: Repo, user_id: int) -> dict[str, int]:
-    """Возвращает {metric_name: current_value} по всем metric'ам из каталога.
-
-    Стараемся уложиться в небольшое количество SQL — у нас лимит сейчас 5
-    разных метрик, каждая один select.
-    """
+    """Возвращает {metric_name: current_value} по всем metric'ам из каталога."""
     s = repo.s
 
     # sessions: COUNT(*) FROM sessions WHERE user_id = X.
@@ -82,14 +104,14 @@ async def collect_user_metrics(repo: Repo, user_id: int) -> dict[str, int]:
     )
     sessions = int(sessions_res.scalar() or 0)
 
-    # minutes: SUM(used_seconds) FROM sessions / 60.
+    # minutes: SUM(used_seconds) / 60 по всем сессиям (любой mode).
     minutes_res = await s.execute(
         select(func.coalesce(func.sum(SessionRow.used_seconds), 0))
         .where(SessionRow.user_id == user_id)
     )
     minutes = int(minutes_res.scalar() or 0) // 60
 
-    # streak: уже в User.streak_days
+    # streak — уже в User.streak_days.
     user = await repo.get_user_by_id(user_id)
     streak = int(user.streak_days) if user else 0
 
@@ -100,25 +122,47 @@ async def collect_user_metrics(repo: Repo, user_id: int) -> dict[str, int]:
     )
     words = int(words_res.scalar() or 0)
 
-    # battles: COUNT judged-batt где юзер участвовал (по tg_id).
-    # Это slow если battle большой, но юзеров там <100 у нас сейчас.
-    battles = 0
-    if user is not None:
-        battles_res = await s.execute(
-            select(func.count(Battle.id)).where(
-                Battle.status == "judged",
-                ((Battle.initiator_tg_id == user.tg_id)
-                 | (Battle.opponent_tg_id == user.tg_id)),
-            )
+    # listening_sessions: count sessions where mode='listening'.
+    listening_res = await s.execute(
+        select(func.count(SessionRow.id)).where(
+            SessionRow.user_id == user_id,
+            SessionRow.mode == "listening",
         )
-        battles = int(battles_res.scalar() or 0)
+    )
+    listening_sessions = int(listening_res.scalar() or 0)
+
+    # grammar_lessons: пройдено тем (completed_at IS NOT NULL).
+    grammar_res = await s.execute(
+        select(func.count(UserGrammarProgress.topic_key)).where(
+            UserGrammarProgress.user_id == user_id,
+            UserGrammarProgress.completed_at.is_not(None),
+        )
+    )
+    grammar_lessons = int(grammar_res.scalar() or 0)
+
+    # modes_count: сколько разных режимов попробовал (distinct mode).
+    # voice + chat считаем как один «разговор», чтобы юзер не получал
+    # «универсал» за один speaking-сеанс через два UI-варианта.
+    modes_res = await s.execute(
+        select(SessionRow.mode).where(SessionRow.user_id == user_id).distinct()
+    )
+    distinct_modes = {row[0] for row in modes_res.all()}
+    canon_modes: set[str] = set()
+    for m in distinct_modes:
+        if m in ("voice", "chat"):
+            canon_modes.add("speaking")
+        else:
+            canon_modes.add(m)
+    modes_count = len(canon_modes)
 
     return {
         "sessions": sessions,
         "minutes": minutes,
         "streak": streak,
         "words": words,
-        "battles": battles,
+        "listening_sessions": listening_sessions,
+        "grammar_lessons": grammar_lessons,
+        "modes_count": modes_count,
     }
 
 
