@@ -24,7 +24,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .admin import router as admin_router
-from .battle_api import router as battle_router
 from .grammar import router as grammar_router
 from .listening import router as listening_router
 from .config import settings
@@ -124,7 +123,6 @@ def validate_telegram_init_data(init_data_raw: str, bot_token: str) -> Optional[
 # ─── Healthcheck ──────────────────────────────────────────────────────────────
 
 app.include_router(admin_router)
-app.include_router(battle_router)
 app.include_router(listening_router)
 app.include_router(grammar_router)
 
@@ -473,6 +471,16 @@ async def me_progress(init_data: str = "") -> dict:
         total_words = await repo.count_user_words(user.id)
         daily = await repo.user_daily_usage_series(user.id, days=30)
         by_mode = await repo.user_total_seconds_by_mode(user.id)
+        try:
+            grammar_done, grammar_total = await repo.grammar_learn_counters(user.id)
+        except Exception:
+            grammar_done, grammar_total = 0, 0
+        try:
+            from .achievements import ACHIEVEMENTS, get_earned_keys
+            ach_earned = len(await get_earned_keys(repo, user.id))
+            ach_total = len(ACHIEVEMENTS)
+        except Exception:
+            ach_earned, ach_total = 0, 0
     # voice + chat = «разговор» (оба speaking-режима в мини-апе); listening — отдельно.
     speaking_seconds = int(by_mode.get("voice", 0)) + int(by_mode.get("chat", 0))
     listening_seconds = int(by_mode.get("listening", 0))
@@ -490,6 +498,10 @@ async def me_progress(init_data: str = "") -> dict:
         "speaking_minutes": speaking_seconds // 60,
         "listening_minutes": listening_seconds // 60,
         "grammar_minutes": grammar_seconds // 60,
+        "grammar_topics_done": grammar_done,
+        "grammar_topics_total": grammar_total,
+        "achievements_earned": ach_earned,
+        "achievements_total": ach_total,
     }
 
 

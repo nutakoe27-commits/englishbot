@@ -5,13 +5,10 @@ import {
   clearToken,
   getToken,
   setToken,
-  type BattleRow,
-  type BattlesStats,
   type BroadcastJobStatus,
   type ChartPoint,
   type Metrics,
   type OnlineResponse,
-  type QuestsStats,
   type RetentionCohort,
   type UserBrief,
   type UserDetail,
@@ -227,10 +224,6 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     view = <BroadcastPage />;
   } else if (route === "/settings") {
     view = <SettingsPage />;
-  } else if (route === "/battles") {
-    view = <BattlesPage />;
-  } else if (route === "/quests") {
-    view = <QuestsPage />;
   } else {
     view = <Dashboard />;
   }
@@ -287,8 +280,6 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           {navBtn("/dashboard", "Метрики")}
           {navBtn("/users", "Пользователи")}
           {navBtn("/broadcast", "Массовые")}
-          {navBtn("/battles", "Battle")}
-          {navBtn("/quests", "Quests")}
           {navBtn("/settings", "Настройки")}
         </nav>
         {!isMobile && (
@@ -531,35 +522,6 @@ function Dashboard() {
     { label: "Выручка всего", value: fmtRub(metrics.total_revenue_rub ?? 0) },
   ];
 
-  // Battle-блок.
-  const b = metrics.battles ?? {
-    total: 0, open: 0, in_play: 0, judged: 0, judged_today: 0, expired: 0,
-  };
-  const battleItems: { label: string; value: string }[] = [
-    { label: "Всего батлов", value: num(b.total) },
-    { label: "Открытые", value: num(b.open) },
-    { label: "В игре", value: num(b.in_play) },
-    { label: "Судейство всего", value: num(b.judged) },
-    { label: "Судейство сегодня", value: num(b.judged_today) },
-    { label: "Просрочено", value: num(b.expired) },
-  ];
-
-  // Quest-блок.
-  const q = metrics.quests ?? {
-    assigned_total: 0, completed_total: 0, completed_today: 0,
-    active_now: 0, completion_rate: 0,
-  };
-  const ratePct = (q.completion_rate ?? 0) <= 1
-    ? Math.round((q.completion_rate ?? 0) * 100)
-    : Math.round(q.completion_rate ?? 0);
-  const questItems: { label: string; value: string }[] = [
-    { label: "Выдано всего", value: num(q.assigned_total) },
-    { label: "Выполнено всего", value: num(q.completed_total) },
-    { label: "Выполнено сегодня", value: num(q.completed_today) },
-    { label: "Активных сейчас", value: num(q.active_now) },
-    { label: "Completion rate", value: `${ratePct}%` },
-  ];
-
   return (
     <div>
       <OnlinePanel onOpenUser={(uid) => dashNavigate(`/user/${uid}`)} />
@@ -575,60 +537,6 @@ function Dashboard() {
       </div>
 
       <ModesTodayCard metrics={metrics} />
-
-      <div style={{ ...S.card, marginTop: 20 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 12,
-          }}
-        >
-          <h3 style={{ ...S.h3, margin: 0 }}>Батлы</h3>
-          <button
-            style={S.btnSecondary}
-            onClick={() => dashNavigate("/battles")}
-          >
-            Подробнее
-          </button>
-        </div>
-        <div style={metricsGridStyle(isMobile)}>
-          {battleItems.map((it) => (
-            <div key={it.label} style={S.metricCard}>
-              <p style={S.metricValue}>{it.value}</p>
-              <p style={S.metricLabel}>{it.label}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ ...S.card, marginTop: 20 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 12,
-          }}
-        >
-          <h3 style={{ ...S.h3, margin: 0 }}>Квесты</h3>
-          <button
-            style={S.btnSecondary}
-            onClick={() => dashNavigate("/quests")}
-          >
-            Подробнее
-          </button>
-        </div>
-        <div style={metricsGridStyle(isMobile)}>
-          {questItems.map((it) => (
-            <div key={it.label} style={S.metricCard}>
-              <p style={S.metricValue}>{it.value}</p>
-              <p style={S.metricLabel}>{it.label}</p>
-            </div>
-          ))}
-        </div>
-      </div>
 
       <ChartBlock
         title="DAU за 30 дней"
@@ -1108,74 +1016,6 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
               />
             );
           })}
-        </div>
-      </div>
-
-      {/* Battle-статистика */}
-      <div style={{ ...S.card, marginTop: 16 }}>
-        <h3 style={S.h3}>Battle-статистика</h3>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <StatusPill
-            label="Сыграно"
-            value={(u.battles?.total ?? 0).toString()}
-            tone="muted"
-          />
-          <StatusPill
-            label="Победы"
-            value={(u.battles?.won ?? 0).toString()}
-            tone={(u.battles?.won ?? 0) > 0 ? "success" : "muted"}
-          />
-          <StatusPill
-            label="Ничьи"
-            value={(u.battles?.draw ?? 0).toString()}
-            tone="muted"
-          />
-          <StatusPill
-            label="Поражения"
-            value={(u.battles?.lost ?? 0).toString()}
-            tone={(u.battles?.lost ?? 0) > 0 ? "danger" : "muted"}
-          />
-          <StatusPill
-            label="В процессе"
-            value={(u.battles?.in_progress ?? 0).toString()}
-            tone={(u.battles?.in_progress ?? 0) > 0 ? "success" : "muted"}
-          />
-          <StatusPill
-            label="Последний батл"
-            value={u.battles?.last_at ? fmtDate(u.battles.last_at) : "—"}
-            tone="muted"
-          />
-        </div>
-      </div>
-
-      {/* Квесты */}
-      <div style={{ ...S.card, marginTop: 16 }}>
-        <h3 style={S.h3}>Квесты</h3>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <StatusPill
-            label="Выполнено всего"
-            value={(u.quests?.completed_total ?? 0).toString()}
-            tone={(u.quests?.completed_total ?? 0) > 0 ? "success" : "muted"}
-          />
-          <StatusPill
-            label="За 7 дней"
-            value={(u.quests?.completed_7d ?? 0).toString()}
-            tone={(u.quests?.completed_7d ?? 0) > 0 ? "success" : "muted"}
-          />
-          <StatusPill
-            label="Активный квест"
-            value={u.quests?.active_title_ru ?? "нет"}
-            tone={u.quests?.active_title_ru ? "success" : "muted"}
-          />
-          <StatusPill
-            label="Выдан"
-            value={
-              u.quests?.active_assigned_at
-                ? fmtDate(u.quests.active_assigned_at)
-                : "—"
-            }
-            tone="muted"
-          />
         </div>
       </div>
 
@@ -2172,248 +2012,6 @@ function BroadcastCard() {
                 {starting ? "Запускаем…" : "Да, отправить всем"}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-// ─── BattlesPage ─────────────────────────────────────────────────────────────
-
-function BattlesPage() {
-  const isMobile = useIsMobile();
-  const [stats, setStats] = useState<BattlesStats | null>(null);
-  const [battles, setBattles] = useState<BattleRow[] | null>(null);
-  const [filter, setFilter] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [s, rows] = await Promise.all([
-          api.battlesStats(),
-          api.battlesList(100, filter || undefined),
-        ]);
-        if (cancelled) return;
-        setStats(s);
-        setBattles(rows);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Ошибка");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [filter]);
-
-  return (
-    <div>
-      <h2 style={{ marginTop: 0 }}>⚔️ Battle Mode</h2>
-
-      {stats && (
-        <div style={metricsGridStyle(isMobile)}>
-          <div style={S.metricCard}>
-            <div style={S.metricValue}>{stats.total}</div>
-            <div style={S.metricLabel}>Всего</div>
-          </div>
-          <div style={S.metricCard}>
-            <div style={{ ...S.metricValue, color: colors.primary }}>{stats.open}</div>
-            <div style={S.metricLabel}>Открыты</div>
-          </div>
-          <div style={S.metricCard}>
-            <div style={{ ...S.metricValue, color: colors.warning }}>
-              {stats.accepted + stats.recording}
-            </div>
-            <div style={S.metricLabel}>В игре</div>
-          </div>
-          <div style={S.metricCard}>
-            <div style={{ ...S.metricValue, color: colors.success }}>{stats.judged}</div>
-            <div style={S.metricLabel}>Отсуждены</div>
-          </div>
-          <div style={S.metricCard}>
-            <div style={{ ...S.metricValue, color: colors.textMuted }}>{stats.expired}</div>
-            <div style={S.metricLabel}>Протухли</div>
-          </div>
-        </div>
-      )}
-
-      <div style={S.card}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
-          <label style={S.label}>Фильтр по статусу:</label>
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            style={{ ...S.input, width: 200 }}
-          >
-            <option value="">— все —</option>
-            <option value="open">open</option>
-            <option value="accepted">accepted</option>
-            <option value="recording">recording</option>
-            <option value="judged">judged</option>
-            <option value="expired">expired</option>
-            <option value="canceled">canceled</option>
-          </select>
-        </div>
-
-        {error && <div style={S.error}>{error}</div>}
-
-        {battles && (
-          <div style={{ overflowX: "auto" }}>
-            <table style={tableStyle(isMobile)}>
-              <thead>
-                <tr>
-                  <th style={S.th}>#</th>
-                  <th style={S.th}>Статус</th>
-                  <th style={S.th}>Тема</th>
-                  <th style={S.th}>Инициатор</th>
-                  <th style={S.th}>Соперник</th>
-                  <th style={S.th}>Счёт</th>
-                  <th style={S.th}>Победитель</th>
-                  <th style={S.th}>Создан</th>
-                </tr>
-              </thead>
-              <tbody>
-                {battles.map((b) => (
-                  <tr key={b.id}>
-                    <td style={S.td}>{b.id}</td>
-                    <td style={S.td}>
-                      <span style={S.badge}>{b.status}</span>
-                    </td>
-                    <td style={S.td}>{b.topic_key}</td>
-                    <td style={S.td}>
-                      {b.initiator_name || "—"}
-                      {b.a_recorded && <span style={{ color: colors.success }}> ✓</span>}
-                    </td>
-                    <td style={S.td}>
-                      {b.opponent_name || "—"}
-                      {b.b_recorded && <span style={{ color: colors.success }}> ✓</span>}
-                    </td>
-                    <td style={S.td}>
-                      {b.a_score_total !== null && b.b_score_total !== null
-                        ? `${b.a_score_total} : ${b.b_score_total}`
-                        : "—"}
-                    </td>
-                    <td style={S.td}>{b.winner || "—"}</td>
-                    <td style={S.td}>
-                      {b.created_at ? fmtDate(b.created_at) : "—"}
-                    </td>
-                  </tr>
-                ))}
-                {battles.length === 0 && (
-                  <tr>
-                    <td style={S.td} colSpan={8}>
-                      <div style={S.muted}>Ничего не найдено.</div>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-
-// ─── QuestsPage ──────────────────────────────────────────────────────────────
-
-function QuestsPage() {
-  const isMobile = useIsMobile();
-  const [stats, setStats] = useState<QuestsStats | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const s = await api.questsStats();
-        if (!cancelled) setStats(s);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Ошибка");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  return (
-    <div>
-      <h2 style={{ marginTop: 0 }}>🎯 Daily Quests</h2>
-
-      {stats && (
-        <div style={metricsGridStyle(isMobile)}>
-          <div style={S.metricCard}>
-            <div style={S.metricValue}>{stats.total_assigned}</div>
-            <div style={S.metricLabel}>Выдано всего</div>
-          </div>
-          <div style={S.metricCard}>
-            <div style={{ ...S.metricValue, color: colors.success }}>
-              {stats.total_completed}
-            </div>
-            <div style={S.metricLabel}>Выполнено</div>
-          </div>
-          <div style={S.metricCard}>
-            <div style={{ ...S.metricValue, color: colors.textMuted }}>
-              {stats.total_expired}
-            </div>
-            <div style={S.metricLabel}>Протухло</div>
-          </div>
-          <div style={S.metricCard}>
-            <div style={{ ...S.metricValue, color: colors.primary }}>
-              {(stats.completion_rate * 100).toFixed(1)}%
-            </div>
-            <div style={S.metricLabel}>Completion rate</div>
-          </div>
-        </div>
-      )}
-
-      {error && <div style={S.error}>{error}</div>}
-
-      {stats && (
-        <div style={S.card}>
-          <h3 style={{ marginTop: 0 }}>По каждому квесту</h3>
-          <div style={{ overflowX: "auto" }}>
-            <table style={tableStyle(isMobile)}>
-              <thead>
-                <tr>
-                  <th style={S.th}>Квест</th>
-                  <th style={S.th}>Тип</th>
-                  <th style={S.th}>Сложность</th>
-                  <th style={S.th}>Уровень</th>
-                  <th style={S.th}>Выдано</th>
-                  <th style={S.th}>Выполнено</th>
-                  <th style={S.th}>Протухло</th>
-                  <th style={S.th}>%</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.per_quest.map((q) => (
-                  <tr key={q.key}>
-                    <td style={S.td}>
-                      <div>{q.title_ru}</div>
-                      <div style={S.muted}>
-                        <code>{q.key}</code>
-                      </div>
-                    </td>
-                    <td style={S.td}>{q.type}</td>
-                    <td style={S.td}>{q.difficulty}</td>
-                    <td style={S.td}>{q.target_level}</td>
-                    <td style={S.td}>{q.assigned}</td>
-                    <td style={S.td}>{q.completed}</td>
-                    <td style={S.td}>{q.expired}</td>
-                    <td style={S.td}>{(q.completion_rate * 100).toFixed(1)}%</td>
-                  </tr>
-                ))}
-                {stats.per_quest.length === 0 && (
-                  <tr>
-                    <td style={S.td} colSpan={8}>
-                      <div style={S.muted}>Пока нет данных — квесты никому не выдавались.</div>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
           </div>
         </div>
       )}
