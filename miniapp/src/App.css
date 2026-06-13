@@ -1521,7 +1521,7 @@ button {
 }
 .words-list {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
   min-height: 100px;
   max-height: 50vh;
@@ -1537,18 +1537,20 @@ button {
   padding: 20px 0;
 }
 .words-chip {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: space-between;
+  gap: 8px;
   background: rgba(124, 92, 255, 0.14);
   border: 1px solid rgba(124, 92, 255, 0.32);
-  border-radius: 999px;
-  padding: 4px 4px 4px 12px;
+  border-radius: 10px;
+  padding: 8px 8px 8px 12px;
   font-size: 14px;
   color: #d4caff;
 }
 .words-chip__word {
   font-weight: 500;
+  flex-shrink: 0;
 }
 .words-chip__remove {
   background: transparent;
@@ -2794,11 +2796,15 @@ button {
   cursor: default;
 }
 
-/* ─── Words: расширения под translation + чип-перевод ───────────────── */
-.words-input-row--two {
-  display: grid;
-  grid-template-columns: 1fr 1fr auto;
+/* ─── Words: расширения под translation + строки списка ────────────── */
+.words-form {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
+}
+.words-input--full {
+  width: 100%;
+  box-sizing: border-box;
 }
 .words-chip__text {
   display: inline-flex;
@@ -2806,11 +2812,18 @@ button {
   gap: 6px;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .words-chip__translation {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.55);
   font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* ─── SRS (📚 Слова): home / review / summary ──────────────────────── */

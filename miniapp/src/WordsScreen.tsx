@@ -157,35 +157,37 @@ export function WordsScreen({ apiBase, onClose }: Props) {
           их в разговоре, а в режиме «📚 Слова» они станут карточками для повторения.
         </p>
 
-        <form className="words-input-row words-input-row--two" onSubmit={onSubmit}>
+        <form className="words-form" onSubmit={onSubmit}>
+          <div className="words-input-row">
+            <input
+              type="text"
+              className="words-input"
+              placeholder="Новое слово…"
+              value={draftWord}
+              onChange={(e) => setDraftWord(e.target.value)}
+              disabled={busy || atLimit}
+              maxLength={64}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+            <button
+              type="submit"
+              className="words-add-btn"
+              disabled={busy || atLimit || !draftWord.trim()}
+            >
+              Добавить
+            </button>
+          </div>
           <input
             type="text"
-            className="words-input"
-            placeholder="Новое слово…"
-            value={draftWord}
-            onChange={(e) => setDraftWord(e.target.value)}
-            disabled={busy || atLimit}
-            maxLength={64}
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-          />
-          <input
-            type="text"
-            className="words-input"
+            className="words-input words-input--full"
             placeholder="перевод (опционально)"
             value={draftTranslation}
             onChange={(e) => setDraftTranslation(e.target.value)}
             disabled={busy || atLimit}
             maxLength={255}
           />
-          <button
-            type="submit"
-            className="words-add-btn"
-            disabled={busy || atLimit || !draftWord.trim()}
-          >
-            Добавить
-          </button>
         </form>
 
         {error && <div className="words-error">{error}</div>}
