@@ -1992,13 +1992,13 @@ button {
      Прокручиваемая колонка сверху вниз; на больших экранах карточки
      визуально отцентрированы за счёт авто-марджинов. */
   justify-content: flex-start;
-  gap: 24px;
+  gap: 16px;
   flex: 1;
   min-height: 0;              /* критично: без этого flex-чайлд не ужимается */
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: 12px 2px 44px;     /* нижний отступ для последней карточки */
+  padding: 8px 2px 16px;
 }
 /* Safe-центрирование: на больших экранах auto-марджины прижимают контент
    к центру; когда высоты не хватает — схлопываются в 0 и работает скролл.
@@ -2010,8 +2010,8 @@ button {
   margin-bottom: auto;
 }
 .mode-selector__title {
-  margin: 0 0 4px;
-  font-size: 28px;
+  margin: 0 0 2px;
+  font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.4px;
   line-height: 1.2;
@@ -2019,20 +2019,20 @@ button {
 .mode-selector__subtitle {
   margin: 0;
   color: var(--text-dim);
-  font-size: 15px;
-  line-height: 1.45;
+  font-size: 14px;
+  line-height: 1.4;
 }
 .mode-cards {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
 }
 .mode-card {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 24px 22px;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
@@ -2049,18 +2049,25 @@ button {
   box-shadow: 0 0 0 4px var(--accent-glow);
 }
 .mode-card__emoji {
-  font-size: 34px;
+  font-size: 28px;
   line-height: 1;
-  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+.mode-card__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 .mode-card__title {
-  font-size: 19px;
+  font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.2px;
+  line-height: 1.2;
 }
 .mode-card__hint {
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 12.5px;
+  line-height: 1.35;
   color: var(--text-dim);
 }
 

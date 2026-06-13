@@ -48,9 +48,11 @@ export function ModeSelector({ onPick }: Props) {
             onClick={() => onPick("speaking")}
           >
             <span className="mode-card__emoji" aria-hidden>🎙️</span>
-            <span className="mode-card__title">Разговор</span>
-            <span className="mode-card__hint">
-              Push-to-talk диалог с AI-тьютором.
+            <span className="mode-card__text">
+              <span className="mode-card__title">Разговор</span>
+              <span className="mode-card__hint">
+                Push-to-talk диалог с AI-тьютором.
+              </span>
             </span>
           </button>
 
@@ -60,9 +62,11 @@ export function ModeSelector({ onPick }: Props) {
             onClick={() => onPick("listening")}
           >
             <span className="mode-card__emoji" aria-hidden>🎧</span>
-            <span className="mode-card__title">Слушание</span>
-            <span className="mode-card__hint">
-              Сгенерированный подкаст на твою тему и слова.
+            <span className="mode-card__text">
+              <span className="mode-card__title">Слушание</span>
+              <span className="mode-card__hint">
+                Подкаст на твою тему и слова.
+              </span>
             </span>
           </button>
 
@@ -72,9 +76,11 @@ export function ModeSelector({ onPick }: Props) {
             onClick={() => onPick("grammar")}
           >
             <span className="mode-card__emoji" aria-hidden>📝</span>
-            <span className="mode-card__title">Грамматика</span>
-            <span className="mode-card__hint">
-              10 упражнений по твоим ошибкам или выбранной теме.
+            <span className="mode-card__text">
+              <span className="mode-card__title">Грамматика</span>
+              <span className="mode-card__hint">
+                Уроки A1–C1 и разбор твоих ошибок.
+              </span>
             </span>
           </button>
 
@@ -84,9 +90,11 @@ export function ModeSelector({ onPick }: Props) {
             onClick={() => onPick("srs")}
           >
             <span className="mode-card__emoji" aria-hidden>📚</span>
-            <span className="mode-card__title">Слова</span>
-            <span className="mode-card__hint">
-              Повторяй свой словарь — интервальные карточки.
+            <span className="mode-card__text">
+              <span className="mode-card__title">Слова</span>
+              <span className="mode-card__hint">
+                Карточки на повтор — интервальное запоминание.
+              </span>
             </span>
           </button>
         </div>
