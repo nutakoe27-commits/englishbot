@@ -19,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     Time,
@@ -254,11 +255,16 @@ class UserVocabulary(Base):
         разговора, тьютор сам ввёл это слово в реплику.
       - 'user': юзер добавил вручную через Mini App (фича «Мои слова»).
         Такие слова имеют ПРИОРИТЕТ в системном промпте — тьютор должен
-        вкручивать их в разговор активно.
+        вкручивать их в разговор активно. Также участвуют в SRS-режиме.
       - 'import': зарезервировано на массовый импорт из Anki/Quizlet/др.
 
-    `note` — опциональный перевод/заметка; в MVP не используется, есть
-    в схеме для будущего bulk-импорта.
+    `translation` — перевод (RU); заполняется при добавлении из попапа
+    перевода или вручную в Mini App. Показывается на обратной стороне
+    SRS-карточки. `note` оставлен для обратной совместимости (старые rows).
+
+    SRS-поля (Leitner-бокс) работают только для source='user' и хранят
+    состояние карточки в системе интервального повторения. См.
+    backend/app/srs.py для интервалов и логики.
     """
 
     __tablename__ = "user_vocabulary"
@@ -268,12 +274,20 @@ class UserVocabulary(Base):
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     word: Mapped[str] = mapped_column(String(64), nullable=False)
+    translation: Mapped[Optional[str]] = mapped_column(String(255))
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     times_used: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     context: Mapped[Optional[str]] = mapped_column(String(255))
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="tutor")
     note: Mapped[Optional[str]] = mapped_column(String(255))
+
+    # SRS (Leitner box). 0 = новая/проваленная, 5 = выученная.
+    srs_box: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    srs_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    srs_correct_streak: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    srs_total_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    srs_last_reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
 class UserMistake(Base):

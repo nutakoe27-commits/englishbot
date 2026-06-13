@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from .admin import router as admin_router
 from .grammar import router as grammar_router
 from .listening import router as listening_router
+from .srs import router as srs_router
 from .config import settings
 from .db import db_session, init_db
 from .limits import LimitsContext, build_limits_context
@@ -125,6 +126,7 @@ def validate_telegram_init_data(init_data_raw: str, bot_token: str) -> Optional[
 app.include_router(admin_router)
 app.include_router(listening_router)
 app.include_router(grammar_router)
+app.include_router(srs_router)
 
 
 @app.get("/health", tags=["System"])
@@ -245,21 +247,23 @@ async def learner_recent_context(init_data: str = "") -> dict:
 # ─── Мои слова (пользовательский словарь) ─────────────────────────────────────
 # Юзер может через Mini App добавлять слова, которые сейчас учит. Тьютор в
 # system_prompt получает их с пометкой «ACTIVELY WANTS to practice» и должен
-# вкручивать в разговор. Лимит — Repo.USER_WORDS_LIMIT (100).
+# вкручивать в разговор. Эти же слова — карточки для SRS-режима «Слова».
+# Лимит — Repo.USER_WORDS_LIMIT.
 
 class _AddWordIn(BaseModel):
     init_data: str
     word: str
-    note: Optional[str] = None  # зарезервировано для импорта; UI пока не шлёт
+    translation: Optional[str] = None  # перевод RU для SRS-карточки
+    note: Optional[str] = None          # зарезервировано для импорта
 
 
 @app.get("/api/user-words", tags=["UserWords"])
 async def get_user_words(init_data: str = "") -> dict:
     """Список user-слов для Mini App."""
+    from .db import Repo
     tg_id = _tg_id_from_init_data(init_data)
     if not settings.DATABASE_URL:
-        return {"words": [], "total": 0, "limit": 100}
-    from .db import Repo
+        return {"words": [], "total": 0, "limit": Repo.USER_WORDS_LIMIT}
     async with db_session() as session:
         repo = Repo(session)
         user = await repo.get_user_by_tg_id(tg_id)
@@ -270,8 +274,11 @@ async def get_user_words(init_data: str = "") -> dict:
         "words": [
             {
                 "word": i["word"],
-                "note": i["note"],
+                "translation": i.get("translation"),
+                "note": i.get("note"),
                 "last_seen_at": i["last_seen_at"].isoformat() if i["last_seen_at"] else None,
+                "srs_box": i.get("srs_box", 0),
+                "srs_due_at": i["srs_due_at"].isoformat() if i.get("srs_due_at") else None,
             }
             for i in items
         ],
@@ -302,7 +309,9 @@ async def post_user_word(body: _AddWordIn) -> dict:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "user_not_found"
             )
-        result = await repo.add_user_word(user.id, body.word, note=body.note)
+        result = await repo.add_user_word(
+            user.id, body.word, translation=body.translation, note=body.note,
+        )
         if result == "ok":
             await session.commit()
             return {"ok": True}

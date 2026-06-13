@@ -306,6 +306,7 @@ const MODE_META: Record<string, { label: string; emoji: string }> = {
   chat: { label: "Чат", emoji: "💬" },
   listening: { label: "Слушание", emoji: "🎧" },
   grammar: { label: "Грамматика", emoji: "📝" },
+  srs: { label: "Слова", emoji: "📚" },
 };
 
 function modeMeta(mode: string): { label: string; emoji: string } {
@@ -366,7 +367,8 @@ function OnlinePanel({ onOpenUser }: { onOpenUser: (id: number) => void }) {
           {modeMeta("voice").emoji} {bm.voice ?? 0} ·{" "}
           {modeMeta("chat").emoji} {bm.chat ?? 0} ·{" "}
           {modeMeta("listening").emoji} {bm.listening ?? 0} ·{" "}
-          {modeMeta("grammar").emoji} {bm.grammar ?? 0}
+          {modeMeta("grammar").emoji} {bm.grammar ?? 0} ·{" "}
+          {modeMeta("srs").emoji} {bm.srs ?? 0}
         </span>
       </div>
 
@@ -423,7 +425,7 @@ function OnlinePanel({ onOpenUser }: { onOpenUser: (id: number) => void }) {
 function ModesTodayCard({ metrics }: { metrics: Metrics }) {
   const isMobile = useIsMobile();
   const modes = metrics.modes_today ?? {};
-  const order = ["voice", "chat", "listening", "grammar"];
+  const order = ["voice", "chat", "listening", "grammar", "srs"];
   const topCats = metrics.listening_top_categories ?? [];
 
   return (
@@ -1004,7 +1006,7 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
           />
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-          {["voice", "chat", "listening", "grammar"].map((mode) => {
+          {["voice", "chat", "listening", "grammar", "srs"].map((mode) => {
             const mins = (u.minutes_by_mode ?? {})[mode] ?? 0;
             const meta = modeMeta(mode);
             return (

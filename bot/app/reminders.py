@@ -383,7 +383,7 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
         reminder_enabled, reminder_hour
         used_seconds_today, used_seconds_total, bonus_seconds_today
         streak_days, best_streak_days, last_practice_date
-        speaking_minutes, listening_minutes, grammar_minutes
+        speaking_minutes, listening_minutes, grammar_minutes, srs_minutes
         grammar_topics_done, grammar_topics_total
         total_words
         achievements_earned, achievements_total
@@ -442,6 +442,7 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
             speaking_seconds = by_mode.get("voice", 0) + by_mode.get("chat", 0)
             listening_seconds = by_mode.get("listening", 0)
             grammar_seconds = by_mode.get("grammar", 0)
+            srs_seconds = by_mode.get("srs", 0)
 
             # Grammar Learn — пройдено тем / всего активных.
             try:
@@ -507,6 +508,7 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
                 "speaking_minutes": speaking_seconds // 60,
                 "listening_minutes": listening_seconds // 60,
                 "grammar_minutes": grammar_seconds // 60,
+                "srs_minutes": srs_seconds // 60,
                 "grammar_topics_done": grammar_done,
                 "grammar_topics_total": grammar_total,
                 "total_words": words_count,

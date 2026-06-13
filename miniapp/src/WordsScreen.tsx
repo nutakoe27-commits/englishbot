@@ -4,11 +4,11 @@
  * Юзер добавляет слова, которые сейчас учит. Бэк хранит их в
  * user_vocabulary с source='user'. Они подмешиваются в system_prompt
  * с пометкой «ACTIVELY WANTS to practice» — тьютор будет вкручивать
- * их в разговор. Лимит 100 слов.
+ * их в разговор. Эти же слова — карточки для SRS-режима «Слова».
  *
  * REST:
  *   GET    /api/user-words?init_data=…           → {words, total, limit}
- *   POST   /api/user-words     body {init_data, word}
+ *   POST   /api/user-words     body {init_data, word, translation?}
  *   DELETE /api/user-words/{word}?init_data=…
  */
 
@@ -17,8 +17,11 @@ import WebApp from "@twa-dev/sdk";
 
 interface WordItem {
   word: string;
+  translation: string | null;
   note: string | null;
   last_seen_at: string | null;
+  srs_box?: number;
+  srs_due_at?: string | null;
 }
 
 interface Props {
@@ -28,8 +31,9 @@ interface Props {
 
 export function WordsScreen({ apiBase, onClose }: Props) {
   const [words, setWords] = useState<WordItem[]>([]);
-  const [limit, setLimit] = useState<number>(100);
-  const [draft, setDraft] = useState<string>("");
+  const [limit, setLimit] = useState<number>(3000);
+  const [draftWord, setDraftWord] = useState<string>("");
+  const [draftTranslation, setDraftTranslation] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
   const [busy, setBusy] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,20 +63,25 @@ export function WordsScreen({ apiBase, onClose }: Props) {
   }, [reload]);
 
   const addWord = useCallback(async () => {
-    const word = draft.trim().toLowerCase();
+    const word = draftWord.trim().toLowerCase();
     if (!word) return;
     if (busy) return;
     if (words.length >= limit) {
       setError(`Достиг лимита ${limit} слов. Удали что-то перед добавлением.`);
       return;
     }
+    const translation = draftTranslation.trim();
     setBusy(true);
     setError(null);
     try {
       const r = await fetch(`${apiBase}/api/user-words`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ init_data: initData, word }),
+        body: JSON.stringify({
+          init_data: initData,
+          word,
+          translation: translation || undefined,
+        }),
       });
       if (!r.ok) {
         const text = await r.text();
@@ -87,22 +96,21 @@ export function WordsScreen({ apiBase, onClose }: Props) {
         }
         return;
       }
-      setDraft("");
-      // Оптимистично добавляем в локальный список — потом перетащим из БД.
+      setDraftWord("");
+      setDraftTranslation("");
       void reload();
     } catch {
       setError("Ошибка сети. Попробуй ещё раз.");
     } finally {
       setBusy(false);
     }
-  }, [draft, busy, words.length, limit, apiBase, initData, reload]);
+  }, [draftWord, draftTranslation, busy, words.length, limit, apiBase, initData, reload]);
 
   const removeWord = useCallback(
     async (word: string) => {
       if (busy) return;
       setBusy(true);
       setError(null);
-      // Оптимистично убираем.
       setWords((prev) => prev.filter((w) => w.word !== word));
       try {
         const r = await fetch(
@@ -110,7 +118,6 @@ export function WordsScreen({ apiBase, onClose }: Props) {
           { method: "DELETE" },
         );
         if (!r.ok) {
-          // Если не удалось — перетянуть с сервера.
           await reload();
           setError("Не удалось удалить. Список обновлён.");
         }
@@ -147,26 +154,35 @@ export function WordsScreen({ apiBase, onClose }: Props) {
 
         <p className="words-hint">
           Добавь слова, которые сейчас учишь — тьютор будет подкидывать
-          их в разговоре.
+          их в разговоре, а в режиме «📚 Слова» они станут карточками для повторения.
         </p>
 
-        <form className="words-input-row" onSubmit={onSubmit}>
+        <form className="words-input-row words-input-row--two" onSubmit={onSubmit}>
           <input
             type="text"
             className="words-input"
             placeholder="Новое слово…"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            value={draftWord}
+            onChange={(e) => setDraftWord(e.target.value)}
             disabled={busy || atLimit}
             maxLength={64}
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
           />
+          <input
+            type="text"
+            className="words-input"
+            placeholder="перевод (опционально)"
+            value={draftTranslation}
+            onChange={(e) => setDraftTranslation(e.target.value)}
+            disabled={busy || atLimit}
+            maxLength={255}
+          />
           <button
             type="submit"
             className="words-add-btn"
-            disabled={busy || atLimit || !draft.trim()}
+            disabled={busy || atLimit || !draftWord.trim()}
           >
             Добавить
           </button>
@@ -184,7 +200,12 @@ export function WordsScreen({ apiBase, onClose }: Props) {
           {!loading &&
             words.map((w) => (
               <div key={w.word} className="words-chip">
-                <span className="words-chip__word">{w.word}</span>
+                <div className="words-chip__text">
+                  <span className="words-chip__word">{w.word}</span>
+                  {w.translation && (
+                    <span className="words-chip__translation">— {w.translation}</span>
+                  )}
+                </div>
                 <button
                   className="words-chip__remove"
                   onClick={() => removeWord(w.word)}
