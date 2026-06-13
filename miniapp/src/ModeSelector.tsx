@@ -4,7 +4,7 @@
 import WebApp from "@twa-dev/sdk";
 import { useEffect, useState } from "react";
 
-export type Mode = "speaking" | "listening" | "grammar";
+export type Mode = "speaking" | "listening" | "grammar" | "srs";
 
 interface Props {
   onPick: (mode: Mode) => void;
@@ -75,6 +75,18 @@ export function ModeSelector({ onPick }: Props) {
             <span className="mode-card__title">Грамматика</span>
             <span className="mode-card__hint">
               10 упражнений по твоим ошибкам или выбранной теме.
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className="mode-card"
+            onClick={() => onPick("srs")}
+          >
+            <span className="mode-card__emoji" aria-hidden>📚</span>
+            <span className="mode-card__title">Слова</span>
+            <span className="mode-card__hint">
+              Повторяй свой словарь — интервальные карточки.
             </span>
           </button>
         </div>

@@ -224,8 +224,10 @@ class Repo:
 
     # ─── learner context (vocabulary + mistakes) ───────────────────────
     # Лимит на количество пользовательских слов в словаре одного юзера.
-    # Выше — раздувает system_prompt и теряется фокус LLM.
-    USER_WORDS_LIMIT: int = 100
+    # В system_prompt подмешиваем только топ-10 свежих (см.
+    # get_user_words_for_prompt), так что большой лимит не раздувает промпт —
+    # хранилище нужно под SRS-карточки.
+    USER_WORDS_LIMIT: int = 3000
 
     async def get_recent_vocabulary(
         self, user_id: int, *, limit: int = 15, days: int = 7,
@@ -331,13 +333,17 @@ class Repo:
     async def list_user_words(self, user_id: int) -> list[dict]:
         """Полный список пользовательских слов для Mini App.
 
-        Возвращает list[{word, note, last_seen_at}], сорт by last_seen_at DESC.
+        Возвращает list[{word, translation, note, last_seen_at, srs_box,
+        srs_due_at}], сорт by last_seen_at DESC.
         """
         res = await self.s.execute(
             select(
                 UserVocabulary.word,
+                UserVocabulary.translation,
                 UserVocabulary.note,
                 UserVocabulary.last_seen_at,
+                UserVocabulary.srs_box,
+                UserVocabulary.srs_due_at,
             )
             .where(
                 UserVocabulary.user_id == user_id,
@@ -346,7 +352,14 @@ class Repo:
             .order_by(UserVocabulary.last_seen_at.desc())
         )
         return [
-            {"word": row[0], "note": row[1], "last_seen_at": row[2]}
+            {
+                "word": row[0],
+                "translation": row[1],
+                "note": row[2],
+                "last_seen_at": row[3],
+                "srs_box": int(row[4] or 0),
+                "srs_due_at": row[5],
+            }
             for row in res.all()
         ]
 
@@ -361,9 +374,17 @@ class Repo:
         return int(res.scalar() or 0)
 
     async def add_user_word(
-        self, user_id: int, word: str, *, note: Optional[str] = None,
+        self,
+        user_id: int,
+        word: str,
+        *,
+        translation: Optional[str] = None,
+        note: Optional[str] = None,
     ) -> str:
         """Добавить пользовательское слово.
+
+        Параметр `translation` — перевод (RU) для SRS-карточки. Если не
+        передан, остаётся как был (или NULL для нового слова).
 
         Возвращает:
           - "ok": вставлено / row была tutor-словом и теперь оживлено как user
@@ -377,6 +398,9 @@ class Repo:
             return "empty"
         if len(normalized) > 64:
             return "too_long"
+        translation = (translation or "").strip() or None
+        if translation and len(translation) > 255:
+            translation = translation[:255]
 
         # Уже user-слово? — duplicate.
         existing = await self.s.execute(
@@ -398,18 +422,26 @@ class Repo:
         stmt = mysql_insert(UserVocabulary).values(
             user_id=user_id,
             word=normalized,
+            translation=translation,
             first_seen_at=now,
             last_seen_at=now,
             times_used=0,
             context=None,
             source="user",
             note=note,
+            # Новая карточка сразу available для review.
+            srs_box=0,
+            srs_due_at=now,
         )
         # Если строка существует как tutor-слово — конвертируем в user.
+        # На промоушн tutor→user также включаем SRS (due=now), чтобы новая
+        # карточка появилась в ближайшем review.
         stmt = stmt.on_duplicate_key_update(
             source="user",
             last_seen_at=now,
+            translation=func.coalesce(stmt.inserted.translation, UserVocabulary.translation),
             note=stmt.inserted.note,
+            srs_due_at=func.coalesce(UserVocabulary.srs_due_at, now),
         )
         await self.s.execute(stmt)
         return "ok"
@@ -432,6 +464,132 @@ class Repo:
             )
         )
         return (res.rowcount or 0) > 0
+
+    # ─── SRS (Leitner box) ──────────────────────────────────────────────
+    # Интервалы повторения по боксам (в днях). box 0 = "только что
+    # провалил, повторить сейчас же". box 5 = "выучено, не показывать
+    # месяц". Список итерируется по индексу: SRS_INTERVALS_DAYS[box].
+    SRS_INTERVALS_DAYS: tuple[int, ...] = (0, 1, 3, 7, 14, 30)
+    SRS_MAX_BOX: int = 5
+
+    async def count_srs_due(self, user_id: int, *, now: Optional[datetime] = None) -> int:
+        """Сколько user-слов готово к повторению."""
+        n = now or utcnow()
+        res = await self.s.execute(
+            select(func.count(UserVocabulary.id)).where(
+                UserVocabulary.user_id == user_id,
+                UserVocabulary.source == "user",
+                UserVocabulary.srs_due_at.is_not(None),
+                UserVocabulary.srs_due_at <= n,
+            )
+        )
+        return int(res.scalar() or 0)
+
+    async def list_srs_due(
+        self, user_id: int, *, limit: int = 20, now: Optional[datetime] = None,
+    ) -> list[dict]:
+        """Топ-N карточек, готовых к повторению.
+
+        Сортировка: сначала самые «просроченные» (старые due_at), чтобы
+        нагнать долг. Tutor-слова не попадают — только source='user'.
+        """
+        n = now or utcnow()
+        res = await self.s.execute(
+            select(
+                UserVocabulary.word,
+                UserVocabulary.translation,
+                UserVocabulary.srs_box,
+                UserVocabulary.srs_due_at,
+            )
+            .where(
+                UserVocabulary.user_id == user_id,
+                UserVocabulary.source == "user",
+                UserVocabulary.srs_due_at.is_not(None),
+                UserVocabulary.srs_due_at <= n,
+            )
+            .order_by(UserVocabulary.srs_due_at.asc())
+            .limit(limit)
+        )
+        return [
+            {
+                "word": row[0],
+                "translation": row[1],
+                "srs_box": int(row[2] or 0),
+                "srs_due_at": row[3],
+            }
+            for row in res.all()
+        ]
+
+    async def record_srs_review(
+        self, user_id: int, word: str, *, correct: bool,
+    ) -> Optional[dict]:
+        """Применить Leitner-логику к карточке после ответа юзера.
+
+        correct=True  → box = min(box+1, MAX), srs_correct_streak += 1
+        correct=False → box = 0, srs_correct_streak = 0
+        srs_due_at = now + INTERVAL_FOR_BOX[new_box]
+        srs_total_attempts += 1
+
+        Возвращает {new_box, next_due_at} либо None, если карточки нет.
+        """
+        normalized = (word or "").strip().lower()
+        if not normalized:
+            return None
+
+        res = await self.s.execute(
+            select(
+                UserVocabulary.id,
+                UserVocabulary.srs_box,
+                UserVocabulary.srs_correct_streak,
+                UserVocabulary.srs_total_attempts,
+            ).where(
+                UserVocabulary.user_id == user_id,
+                UserVocabulary.word == normalized,
+                UserVocabulary.source == "user",
+            )
+        )
+        row = res.first()
+        if row is None:
+            return None
+        row_id, cur_box, cur_streak, cur_attempts = (
+            int(row[0]), int(row[1] or 0), int(row[2] or 0), int(row[3] or 0)
+        )
+
+        if correct:
+            new_box = min(cur_box + 1, self.SRS_MAX_BOX)
+            new_streak = cur_streak + 1
+        else:
+            new_box = 0
+            new_streak = 0
+
+        now = utcnow()
+        interval_days = self.SRS_INTERVALS_DAYS[new_box]
+        next_due = now + timedelta(days=interval_days)
+
+        await self.s.execute(
+            update(UserVocabulary)
+            .where(UserVocabulary.id == row_id)
+            .values(
+                srs_box=new_box,
+                srs_correct_streak=new_streak,
+                srs_total_attempts=cur_attempts + 1,
+                srs_due_at=next_due,
+                srs_last_reviewed_at=now,
+                last_seen_at=now,
+            )
+        )
+        return {"new_box": new_box, "next_due_at": next_due}
+
+    async def get_srs_reviews_total(self, user_id: int) -> int:
+        """Суммарное количество SRS-повторений за всю историю — для медалей."""
+        res = await self.s.execute(
+            select(func.coalesce(func.sum(UserVocabulary.srs_total_attempts), 0))
+            .where(
+                UserVocabulary.user_id == user_id,
+                UserVocabulary.source == "user",
+            )
+        )
+        return int(res.scalar() or 0)
 
     # ─── sessions ───────────────────────────────────────────────────────
     async def open_session(

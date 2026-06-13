@@ -15,6 +15,14 @@ type State =
   | { kind: "loaded"; translations: string[] }
   | { kind: "error"; message: string };
 
+type AddState =
+  | { kind: "idle" }
+  | { kind: "saving" }
+  | { kind: "ok" }
+  | { kind: "duplicate" }
+  | { kind: "limit" }
+  | { kind: "error" };
+
 export function TranslatePopover({
   apiBase,
   initData,
@@ -25,7 +33,42 @@ export function TranslatePopover({
   onClose,
 }: TranslatePopoverProps) {
   const [state, setState] = useState<State>({ kind: "loading" });
+  const [addState, setAddState] = useState<AddState>({ kind: "idle" });
   const popoverRef = useRef<HTMLDivElement | null>(null);
+
+  // Сохранить слово в личный словарь юзера (как «+ В словарь» в SRS-флоу).
+  // Перевод берём из первого варианта popover'а.
+  const handleAddToVocab = async () => {
+    if (state.kind !== "loaded") return;
+    if (addState.kind === "saving" || addState.kind === "ok") return;
+    setAddState({ kind: "saving" });
+    try {
+      const res = await fetch(`${apiBase}/api/user-words`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          init_data: initData,
+          word,
+          translation: state.translations[0] ?? null,
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { duplicate?: boolean };
+        setAddState({ kind: data.duplicate ? "duplicate" : "ok" });
+        // Закрываем попап через 1.2с, чтобы юзер увидел подтверждение.
+        window.setTimeout(onClose, 1200);
+      } else {
+        const text = await res.text();
+        if (text.includes("limit_reached")) {
+          setAddState({ kind: "limit" });
+        } else {
+          setAddState({ kind: "error" });
+        }
+      }
+    } catch {
+      setAddState({ kind: "error" });
+    }
+  };
 
   // Fetch перевода. AbortController на cleanup, чтобы при быстром переключении
   // на другое слово старый запрос не дописал стейт уже размонтированного компонента.
@@ -112,6 +155,19 @@ export function TranslatePopover({
               {state.translations.slice(1).join(", ")}
             </div>
           )}
+          <button
+            type="button"
+            className="translate-popover__add"
+            onClick={handleAddToVocab}
+            disabled={addState.kind === "saving" || addState.kind === "ok"}
+          >
+            {addState.kind === "idle" && "+ В словарь"}
+            {addState.kind === "saving" && "Сохраняю…"}
+            {addState.kind === "ok" && "Добавлено ✓"}
+            {addState.kind === "duplicate" && "Уже в словаре"}
+            {addState.kind === "limit" && "Лимит словаря"}
+            {addState.kind === "error" && "Ошибка — повторить"}
+          </button>
         </>
       )}
     </div>

@@ -345,10 +345,12 @@ class OnlineResponse(BaseModel):
     dependencies=[Depends(require_admin_token)],
 )
 async def admin_online() -> OnlineResponse:
-    """In-memory снапшот активных сессий (voice/chat WS + listening-генерация).
+    """In-memory снапшот активных сессий (voice/chat WS + listening/grammar/srs).
     Обновляется онлайн-панелью каждые ~5с. Работает на single-worker backend."""
     entries = presence.snapshot()
-    by_mode: dict[str, int] = {"voice": 0, "chat": 0, "listening": 0, "grammar": 0}
+    by_mode: dict[str, int] = {
+        "voice": 0, "chat": 0, "listening": 0, "grammar": 0, "srs": 0,
+    }
     for e in entries:
         by_mode[e["mode"]] = by_mode.get(e["mode"], 0) + 1
 

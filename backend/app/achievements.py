@@ -80,6 +80,12 @@ ACHIEVEMENTS: list[Achievement] = [
     Achievement("grammar_all", "Магистр грамматики",
                 "Прошёл все темы грамматики", "🏆", "grammar_lessons", 50),
 
+    # ── SRS (📚 интервальное повторение) ─────────────────────────
+    Achievement("srs_first", "Первая карточка",
+                "Повторил первое слово в SRS", "🔁", "srs_reviews", 1),
+    Achievement("srs_100", "Сотня повторов",
+                "100 ответов в SRS", "🧠", "srs_reviews", 100),
+
     # ── Универсал ───────────────────────────────────────────────
     Achievement("polyglot", "Универсал",
                 "Попробовал все три режима: разговор, слушание, грамматика",
@@ -140,6 +146,16 @@ async def collect_user_metrics(repo: Repo, user_id: int) -> dict[str, int]:
     )
     grammar_lessons = int(grammar_res.scalar() or 0)
 
+    # srs_reviews: суммарно ответов в SRS по всем user-словам.
+    srs_res = await s.execute(
+        select(func.coalesce(func.sum(UserVocabulary.srs_total_attempts), 0))
+        .where(
+            UserVocabulary.user_id == user_id,
+            UserVocabulary.source == "user",
+        )
+    )
+    srs_reviews = int(srs_res.scalar() or 0)
+
     # modes_count: сколько разных режимов попробовал (distinct mode).
     # voice + chat считаем как один «разговор», чтобы юзер не получал
     # «универсал» за один speaking-сеанс через два UI-варианта.
@@ -162,6 +178,7 @@ async def collect_user_metrics(repo: Repo, user_id: int) -> dict[str, int]:
         "words": words,
         "listening_sessions": listening_sessions,
         "grammar_lessons": grammar_lessons,
+        "srs_reviews": srs_reviews,
         "modes_count": modes_count,
     }
 

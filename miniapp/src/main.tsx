@@ -6,6 +6,7 @@ import { BattleScreen } from "./BattleScreen";
 import { ModeSelector, type Mode } from "./ModeSelector";
 import { ListeningScreen } from "./ListeningScreen";
 import { GrammarScreen } from "./GrammarScreen";
+import { SrsScreen } from "./SrsScreen";
 
 // Error boundary — без него любая runtime-ошибка в React 18 размонтирует
 // всё дерево и оставляет пустой #root (чёрный экран в Telegram). Здесь мы
@@ -83,6 +84,7 @@ function Root() {
   if (screen === "speaking") return <App onExit={backToSelector} />;
   if (screen === "listening") return <ListeningScreen onExit={backToSelector} />;
   if (screen === "grammar") return <GrammarScreen onExit={backToSelector} />;
+  if (screen === "srs") return <SrsScreen onExit={backToSelector} />;
   return <ModeSelector onPick={setScreen} />;
 }
 

@@ -2771,3 +2771,219 @@ button {
   color: var(--accent-soft);
   font-weight: 700;
 }
+
+/* ─── TranslatePopover: «+ В словарь» ───────────────────────────────── */
+.translate-popover__add {
+  margin-top: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(124, 92, 255, 0.35);
+  background: rgba(124, 92, 255, 0.18);
+  color: #d4caff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+.translate-popover__add:hover {
+  background: rgba(124, 92, 255, 0.28);
+}
+.translate-popover__add:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+/* ─── Words: расширения под translation + чип-перевод ───────────────── */
+.words-input-row--two {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+}
+.words-chip__text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.words-chip__translation {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 400;
+}
+
+/* ─── SRS (📚 Слова): home / review / summary ──────────────────────── */
+.srs-screen {
+  position: fixed;
+  inset: 0;
+  background: var(--bg, #0b0d12);
+  color: var(--text, #fff);
+  padding: 20px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.srs-home-top,
+.srs-review-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.srs-home__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+.srs-back {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
+  padding: 8px 4px;
+  cursor: pointer;
+}
+.srs-progress {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+
+.srs-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  padding: 22px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.srs-home .srs-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.srs-stat__num {
+  font-size: 32px;
+  font-weight: 700;
+  color: #d4caff;
+}
+.srs-stat__limit {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.4);
+  font-weight: 500;
+}
+.srs-stat__label {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+}
+.srs-stat--muted .srs-stat__num {
+  color: rgba(255, 255, 255, 0.85);
+}
+.srs-empty {
+  margin: 0;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.45;
+  font-style: italic;
+}
+.srs-error {
+  margin: 0;
+  font-size: 14px;
+  color: #ffb0b0;
+}
+
+.srs-btn {
+  appearance: none;
+  border: none;
+  border-radius: 12px;
+  padding: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #fff;
+  transition: opacity 0.15s ease, transform 0.05s ease;
+}
+.srs-btn:active {
+  transform: translateY(1px);
+}
+.srs-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.srs-btn--primary {
+  background: linear-gradient(135deg, #7c5cff, #a489ff);
+}
+.srs-btn--secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.srs-btn--reveal {
+  background: rgba(124, 92, 255, 0.18);
+  border: 1px solid rgba(124, 92, 255, 0.35);
+  color: #d4caff;
+}
+.srs-btn--know {
+  background: linear-gradient(135deg, #2ecc71, #5ed99a);
+  color: #0c1a12;
+  flex: 1;
+}
+.srs-btn--dont {
+  background: linear-gradient(135deg, #e74c5e, #ff7a8a);
+  color: #1a0c0e;
+  flex: 1;
+}
+
+.srs-flip {
+  min-height: 260px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.srs-flip__word {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.srs-flip__translation {
+  font-size: 22px;
+  color: #d4caff;
+}
+.srs-actions {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.srs-summary {
+  text-align: center;
+  align-items: center;
+}
+.srs-summary__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+.srs-summary__score {
+  font-size: 44px;
+  font-weight: 800;
+  color: #d4caff;
+  font-variant-numeric: tabular-nums;
+}
+.srs-summary__note {
+  margin: 0;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+}
+.srs-summary__actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
