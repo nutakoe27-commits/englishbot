@@ -1,6 +1,6 @@
 """Hook после голосовой сессии: LLM-анализ транскрипта → vocabulary + mistakes.
 
-Зовётся из voice.py finally параллельно с _check_quest_after_session. Цель:
+Зовётся из voice.py finally параллельно с achievements-hook. Цель:
 - Вытащить из ассистентских реплик 5–7 полезных слов/фраз B1+ (новый словарь
   юзера будет показан в next session prompt и в post-session summary).
 - Вытащить до 5 ошибок учащегося, на которые тьютор обратил внимание

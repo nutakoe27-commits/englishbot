@@ -24,7 +24,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     WebAppInfo,
 )
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import BigInteger, Boolean, Date, DateTime, Integer, Numeric, String, Text, Time, func
@@ -76,38 +76,6 @@ class _DailyUsage(_Base):
     used_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bonus_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-
-
-class _Battle(_Base):
-    """Минимальное зеркало backend Battle (только нужные колонки)."""
-    __tablename__ = "battles"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    initiator_tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    opponent_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)
-    winner: Mapped[Optional[str]] = mapped_column(String(8))
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-
-
-class _UserQuest(_Base):
-    __tablename__ = "user_quests"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    quest_key: Mapped[str] = mapped_column(String(64), nullable=False)
-    assigned_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
-    expired_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
-
-
-class _QuestCatalog(_Base):
-    __tablename__ = "quests_catalog"
-
-    key: Mapped[str] = mapped_column("key", String(64), primary_key=True)
-    title_ru: Mapped[str] = mapped_column(String(200), nullable=False)
-    reward_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class _SettingKV(_Base):
@@ -375,28 +343,6 @@ async def get_user_reminder(tg_id: int) -> Optional[tuple[bool, int]]:
         return bool(u.reminder_enabled), int(h)
 
 
-async def set_user_learning_goal(tg_id: int, goal: Optional[str]) -> bool:
-    """Сохранить onboarding-цель (`travel|work|daily|exam|fun`) или None.
-
-    Возвращает True если апдейт прошёл, False если юзер ещё не создан в БД
-    (нужно сначала открыть Mini App один раз для upsert) или БД недоступна.
-    """
-    if not is_db_ready():
-        return False
-    assert _SessionMaker is not None
-    g = (goal or "").strip().lower() or None
-    if g and g not in ("travel", "work", "daily", "exam", "fun"):
-        return False
-    async with _SessionMaker() as s:
-        res = await s.execute(
-            update(_User)
-            .where(_User.tg_id == tg_id)
-            .values(learning_goal=g, updated_at=datetime.utcnow())
-        )
-        await s.commit()
-    return (res.rowcount or 0) > 0
-
-
 async def set_user_reminder(
     tg_id: int,
     *,
@@ -431,26 +377,16 @@ def _msk_today() -> date:
 async def get_user_profile(tg_id: int) -> Optional[dict]:
     """Возвращает словарь с данными профиля или None, если юзер не найден / БД нет.
 
-    Поля:
-        user_db_id: int
-        username: Optional[str]
-        first_name: Optional[str]
-        subscription_until: Optional[datetime]   # UTC
-        has_subscription: bool
-        days_left: int                           # 0 если нет подписки
-        reminder_enabled: bool
-        reminder_hour: int
-        used_seconds_today: int
-        used_seconds_total: int
-        bonus_seconds_today: int
-        battles_total: int
-        battles_won: int
-        battles_lost: int
-        battles_draw: int
-        battles_in_progress: int
-        quests_completed_total: int
-        quests_completed_7d: int
-        quest_active_title: Optional[str]
+    Поля (новая модель — без battle/quest):
+        user_db_id, username, first_name
+        subscription_until (UTC), has_subscription, days_left
+        reminder_enabled, reminder_hour
+        used_seconds_today, used_seconds_total, bonus_seconds_today
+        streak_days, best_streak_days, last_practice_date
+        speaking_minutes, listening_minutes, grammar_minutes
+        grammar_topics_done, grammar_topics_total
+        total_words
+        achievements_earned, achievements_total
     """
     if not is_db_ready():
         return None
@@ -494,65 +430,64 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
             )
             used_total = int(r_total.scalar() or 0)
 
-            # Battle-статистика: сыграно / победы / поражения / ничьи / в процессе.
-            # winner хранится как 'a'/'b'/'tie'; инициатор = сторона A, оппонент = сторона B.
-            tg = int(u.tg_id)
-            r_battles = await s.execute(
-                select(_Battle).where(
-                    (_Battle.initiator_tg_id == tg) | (_Battle.opponent_tg_id == tg)
-                )
+            # Минуты по режимам — из sessions.
+            r_modes = await s.execute(
+                text(
+                    "SELECT mode, COALESCE(SUM(used_seconds), 0) "
+                    "FROM sessions WHERE user_id = :uid GROUP BY mode"
+                ),
+                {"uid": int(u.id)},
             )
-            battles_total = 0
-            battles_won = 0
-            battles_lost = 0
-            battles_draw = 0
-            battles_in_progress = 0
-            for b in r_battles.scalars().all():
-                status = (b.status or "").lower()
-                if status == "judged":
-                    battles_total += 1
-                    winner = (b.winner or "").lower()
-                    is_side_a = (b.initiator_tg_id == tg)
-                    if winner == "tie":
-                        battles_draw += 1
-                    elif (winner == "a" and is_side_a) or (winner == "b" and not is_side_a):
-                        battles_won += 1
-                    elif winner in ("a", "b"):
-                        battles_lost += 1
-                elif status in ("open", "accepted", "recording"):
-                    battles_in_progress += 1
-                # expired / canceled — не учитываем
+            by_mode = {row[0]: int(row[1] or 0) for row in r_modes.all()}
+            speaking_seconds = by_mode.get("voice", 0) + by_mode.get("chat", 0)
+            listening_seconds = by_mode.get("listening", 0)
+            grammar_seconds = by_mode.get("grammar", 0)
 
-            # Квесты: выполнено всего и за последние 7 дней.
-            week_ago = datetime.utcnow() - timedelta(days=7)
-            r_q_total = await s.execute(
-                select(func.count(_UserQuest.id)).where(
-                    _UserQuest.user_id == u.id,
-                    _UserQuest.completed_at.isnot(None),
+            # Grammar Learn — пройдено тем / всего активных.
+            try:
+                r_topics_done = await s.execute(
+                    text(
+                        "SELECT COUNT(*) FROM user_grammar_progress "
+                        "WHERE user_id = :uid AND completed_at IS NOT NULL"
+                    ),
+                    {"uid": int(u.id)},
                 )
-            )
-            quests_completed_total = int(r_q_total.scalar() or 0)
-
-            r_q_week = await s.execute(
-                select(func.count(_UserQuest.id)).where(
-                    _UserQuest.user_id == u.id,
-                    _UserQuest.completed_at.isnot(None),
-                    _UserQuest.completed_at >= week_ago,
+                grammar_done = int(r_topics_done.scalar() or 0)
+                r_topics_total = await s.execute(
+                    text("SELECT COUNT(*) FROM grammar_topics WHERE is_active = TRUE")
                 )
-            )
-            quests_completed_7d = int(r_q_week.scalar() or 0)
+                grammar_total = int(r_topics_total.scalar() or 0)
+            except Exception:
+                grammar_done, grammar_total = 0, 0
 
-            # Активный квест (назначен, не выполнен, не просрочен).
-            r_q_active = await s.execute(
-                select(_QuestCatalog.title_ru).select_from(_UserQuest).join(
-                    _QuestCatalog, _QuestCatalog.key == _UserQuest.quest_key
-                ).where(
-                    _UserQuest.user_id == u.id,
-                    _UserQuest.completed_at.is_(None),
-                    _UserQuest.expired_at.is_(None),
-                ).order_by(_UserQuest.assigned_at.desc()).limit(1)
-            )
-            quest_active_title = r_q_active.scalar_one_or_none()
+            # Словарь — сколько user-слов.
+            try:
+                r_words = await s.execute(
+                    text(
+                        "SELECT COUNT(*) FROM user_vocabulary "
+                        "WHERE user_id = :uid AND source = 'user'"
+                    ),
+                    {"uid": int(u.id)},
+                )
+                words_count = int(r_words.scalar() or 0)
+            except Exception:
+                words_count = 0
+
+            # Медали.
+            try:
+                r_ach = await s.execute(
+                    text(
+                        "SELECT COUNT(*) FROM user_achievements WHERE user_id = :uid"
+                    ),
+                    {"uid": int(u.id)},
+                )
+                ach_earned = int(r_ach.scalar() or 0)
+            except Exception:
+                ach_earned = 0
+            # Total медалей знает только backend (achievements.ACHIEVEMENTS) —
+            # бот эту константу не тянет; поставим разумное число, а если
+            # earned > total — фронт-логика спрячет блок.
+            ach_total = max(ach_earned, 12)
 
             return {
                 "user_db_id": int(u.id),
@@ -566,18 +501,17 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
                 "used_seconds_today": used_today,
                 "used_seconds_total": used_total,
                 "bonus_seconds_today": bonus_today,
-                "battles_total": battles_total,
-                "battles_won": battles_won,
-                "battles_lost": battles_lost,
-                "battles_draw": battles_draw,
-                "battles_in_progress": battles_in_progress,
-                "quests_completed_total": quests_completed_total,
-                "quests_completed_7d": quests_completed_7d,
-                "quest_active_title": quest_active_title,
                 "streak_days": int(u.streak_days or 0),
                 "best_streak_days": int(u.best_streak_days or 0),
                 "last_practice_date": u.last_practice_date,
-                "learning_goal": u.learning_goal,
+                "speaking_minutes": speaking_seconds // 60,
+                "listening_minutes": listening_seconds // 60,
+                "grammar_minutes": grammar_seconds // 60,
+                "grammar_topics_done": grammar_done,
+                "grammar_topics_total": grammar_total,
+                "total_words": words_count,
+                "achievements_earned": ach_earned,
+                "achievements_total": ach_total,
             }
     except Exception as exc:
         logger.warning("[profile] get_user_profile упал: %s", exc)
@@ -681,91 +615,6 @@ async def credit_subscription_payment(
 QUEST_DEFAULT_PUSH_HOUR_MSK = 9  # для юзеров, у которых reminder выключен
 
 
-def _quest_push_text(title_ru: str, description_ru: str, reward_seconds: int) -> str:
-    reward_min = max(1, reward_seconds // 60)
-    return (
-        f"🎯 <b>Квест дня: {title_ru}</b>\n\n"
-        f"{description_ru}\n\n"
-        f"<b>Награда:</b> +{reward_min} мин к дневному лимиту.\n"
-        f"Проверяется автоматически по разговору в Mini App."
-    )
-
-
-async def _send_quest_pushes_for_hour(bot: Bot, hour_msk: int, miniapp_url: str) -> None:
-    """Рассылка квеста на этот час. Импортируем backend_client локально,
-    чтобы не требовать его для тестов reminders.py."""
-    if not is_db_ready():
-        return
-    assert _SessionMaker is not None
-
-    from . import backend_client as _bc
-
-    async with _SessionMaker() as s:
-        from sqlalchemy import func, or_, and_
-        # Кто получает квест в этот час?
-        condition = or_(
-            and_(
-                _User.reminder_enabled.is_(True),
-                func.hour(_User.reminder_time) == hour_msk,
-            ),
-            and_(
-                _User.reminder_enabled.is_(False),
-                hour_msk == QUEST_DEFAULT_PUSH_HOUR_MSK,
-            ),
-        )
-        res = await s.execute(
-            select(_User).where(
-                _User.is_blocked.is_(False),
-                condition,
-            )
-        )
-        users = list(res.scalars().all())
-
-    if not users:
-        return
-    logger.info("[quest-push] hour=%d: %d получателей", hour_msk, len(users))
-
-    sent, failed, blocked, skipped = 0, 0, 0, 0
-    kb_miniapp = _reminder_keyboard(miniapp_url)
-
-    for u in users:
-        try:
-            quest = await _bc.quest_assign(tg_id=u.tg_id, user_level=None)
-        except Exception as exc:
-            logger.warning("[quest-push] quest_assign для %s: %s", u.tg_id, exc)
-            skipped += 1
-            continue
-        if quest is None:
-            skipped += 1
-            continue
-        text = _quest_push_text(quest.title_ru, quest.description_ru, quest.reward_seconds)
-        try:
-            await bot.send_message(
-                chat_id=u.tg_id,
-                text=text,
-                parse_mode="HTML",
-                reply_markup=kb_miniapp,
-            )
-            sent += 1
-        except TelegramForbiddenError:
-            blocked += 1
-            try:
-                await set_user_reminder(u.tg_id, enabled=False)
-            except Exception:
-                pass
-        except TelegramRetryAfter as exc:
-            await asyncio.sleep(exc.retry_after + 1)
-        except Exception as exc:
-            failed += 1
-            logger.warning("[quest-push] не отправлено tg_id=%s: %s", u.tg_id, exc)
-        await asyncio.sleep(0.05)
-
-    logger.info(
-        "[quest-push] hour=%d итог: sent=%d failed=%d blocked=%d skipped=%d",
-        hour_msk, sent, failed, blocked, skipped,
-    )
-
-
 async def _send_reminders_for_hour(bot: Bot, hour_msk: int, miniapp_url: str) -> None:
     """Один проход: найти всех юзеров для этого часа и разослать."""
     if not is_db_ready():
@@ -841,13 +690,8 @@ async def reminders_loop(bot: Bot, miniapp_url: str) -> None:
             logger.info("[reminders] следующая отправка через %.0f сек", sleep_s)
             await asyncio.sleep(sleep_s)
             now_msk = datetime.now(MSK)
-            # 1. Обычные reminders (кто включил напоминания на этот час).
+            # Обычные reminders (кто включил напоминания на этот час).
             await _send_reminders_for_hour(bot, now_msk.hour, miniapp_url)
-            # 2. Квест дня (всем в тот же час + фолбэк 9:00 для выключенных).
-            try:
-                await _send_quest_pushes_for_hour(bot, now_msk.hour, miniapp_url)
-            except Exception as exc:
-                logger.error("[quest-push] цикл: %s", exc, exc_info=True)
         except asyncio.CancelledError:
             logger.info("[reminders] цикл остановлен")
             raise

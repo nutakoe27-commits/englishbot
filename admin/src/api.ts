@@ -61,23 +61,6 @@ async function request<T>(
 }
 
 // ─── Types (зеркало backend/app/admin.py) ────────────────────────────────────
-export interface BattleMetrics {
-  total: number;
-  open: number;
-  in_play: number;
-  judged: number;
-  judged_today: number;
-  expired: number;
-}
-
-export interface QuestMetrics {
-  assigned_total: number;
-  completed_total: number;
-  completed_today: number;
-  active_now: number;
-  completion_rate: number;
-}
-
 export interface ModeStat {
   sessions: number;
   minutes: number;
@@ -95,8 +78,6 @@ export interface Metrics {
   new_users_today: number;
   bot_activated_total?: number;
   bot_activated_today?: number;
-  battles: BattleMetrics;
-  quests: QuestMetrics;
   modes_today?: Record<string, ModeStat>;
   listening_top_categories?: { category: string; count: number }[];
 }
@@ -130,23 +111,6 @@ export interface UserBrief {
   created_at: string;
 }
 
-export interface UserBattleStats {
-  total: number;
-  won: number;
-  lost: number;
-  draw: number;
-  in_progress: number;
-  last_at: string | null;
-}
-
-export interface UserQuestStats {
-  completed_total: number;
-  completed_7d: number;
-  active_key: string | null;
-  active_title_ru: string | null;
-  active_assigned_at: string | null;
-}
-
 export interface UserDetail extends UserBrief {
   language_code: string | null;
   reminder_enabled: boolean;
@@ -155,8 +119,6 @@ export interface UserDetail extends UserBrief {
   free_seconds_per_day: number;
   bonus_seconds_today: number;
   used_seconds_total: number;
-  battles: UserBattleStats;
-  quests: UserQuestStats;
   streak_current: number;
   streak_best: number;
   last_practice_date: string | null;
@@ -277,90 +239,4 @@ export const api = {
       `/api/admin/users/${userId}/sessions?limit=${limit}`,
     ),
 
-  // ─── Battle Mode & Daily Quests ────────────────────────
-  battlesList: (limit = 50, status?: string) => {
-    const qs = new URLSearchParams({ limit: String(limit) });
-    if (status) qs.set("status", status);
-    return request<BattleRow[]>(`/api/admin/battles?${qs.toString()}`);
-  },
-  battlesStats: () =>
-    request<BattlesStats>("/api/admin/battles/stats"),
-  questsStats: () =>
-    request<QuestsStats>("/api/admin/quests/stats"),
 };
-
-// ─── Типы Battle & Quest ───────────────────────────────
-
-export interface BattleRow {
-  id: number;
-  status: string;
-  topic_key: string;
-  initiator_tg_id: number | null;
-  opponent_tg_id: number | null;
-  initiator_name: string | null;
-  opponent_name: string | null;
-  a_recorded: boolean;
-  b_recorded: boolean;
-  a_score_total: number | null;
-  b_score_total: number | null;
-  winner: string | null;
-  judge_comment: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-  expires_at: string | null;
-}
-
-export interface BattlesStats {
-  open: number;
-  accepted: number;
-  recording: number;
-  judged: number;
-  expired: number;
-  canceled: number;
-  total: number;
-}
-
-export interface QuestStatRow {
-  key: string;
-  title_ru: string;
-  type: string;
-  difficulty: string;
-  target_level: string;
-  assigned: number;
-  completed: number;
-  expired: number;
-  completion_rate: number;
-}
-
-export interface QuestsStats {
-  total_assigned: number;
-  total_completed: number;
-  total_expired: number;
-  completion_rate: number;
-  per_quest: QuestStatRow[];
-}
-
-// ─── Admin v2 ───────────────────────────────────────────
-
-export interface ChartPoint {
-  date: string;
-  value: number;
-}
-
-export interface RetentionCohort {
-  cohort_date: string;
-  size: number;
-  d1: number | null;
-  d7: number | null;
-  d30: number | null;
-}
-
-export interface UserSession {
-  id: number;
-  started_at: string | null;
-  ended_at: string | null;
-  used_seconds: number;
-  mode: string;
-  level: string | null;
-  role: string | null;
-}
