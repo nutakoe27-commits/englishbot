@@ -57,6 +57,17 @@ export function LockScreen({ kind, message, botUsername, onDismiss }: Props) {
     if (tg?.close) tg.close();
   };
 
+  const handleOpenChannel = () => {
+    // Канал, где можно попросить бесплатный доступ в комментариях.
+    const url = "https://t.me/kmo_ai";
+    const tg = (window as any).Telegram?.WebApp;
+    if (tg?.openTelegramLink) {
+      tg.openTelegramLink(url);
+    } else {
+      window.open(url, "_blank");
+    }
+  };
+
   return (
     <div className={`lock-screen ${visible ? "lock-screen--visible" : ""}`}>
       <div className="lock-screen__card">
@@ -84,6 +95,20 @@ export function LockScreen({ kind, message, botUsername, onDismiss }: Props) {
         <button className="lock-screen__cta" onClick={handleOpenBot}>
           {CTA_LABEL[kind]}
         </button>
+        {kind === "limit_reached" && (
+          <p className="lock-screen__charity">
+            Нет возможности оплатить? Это не повод бросать английский — напиши
+            «прошу доступ» в комментариях под любым постом в{" "}
+            <button
+              type="button"
+              className="lock-screen__charity-link"
+              onClick={handleOpenChannel}
+            >
+              @kmo_ai
+            </button>
+            , и я выдам подписку бесплатно. 💛
+          </p>
+        )}
         {onDismiss && (
           <button className="lock-screen__dismiss" onClick={onDismiss}>
             Закрыть
