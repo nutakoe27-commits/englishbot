@@ -1182,7 +1182,7 @@ export default function App({ onExit }: AppProps = {}) {
           <span className="tutor-brand__name">English Tutor</span>
         </div>
         <div className="tutor-header__right">
-          {limits && !limits.has_subscription && limits.remaining_seconds >= 0 && (
+          {limits && !limits.has_subscription && limits.remaining_seconds >= 0 ? (
             <span
               className="timer-pill"
               data-warning={limits.remaining_seconds <= 60 ? "true" : "false"}
@@ -1191,8 +1191,9 @@ export default function App({ onExit }: AppProps = {}) {
             >
               ⏱ {formatMmSs(limits.remaining_seconds)}
             </span>
+          ) : (
+            <p className="tutor-hello">Hi, {userName}</p>
           )}
-          <p className="tutor-hello">Hi, {userName}</p>
           <button
             type="button"
             className="icon-button"

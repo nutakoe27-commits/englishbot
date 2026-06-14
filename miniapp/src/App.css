@@ -1159,6 +1159,8 @@ button {
   font-size: 12px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;        /* пилюля таймера не сжимается и не переносится */
+  white-space: nowrap;
 }
 .timer-pill[data-warning="true"] {
   background: rgba(255, 84, 112, 0.12);
