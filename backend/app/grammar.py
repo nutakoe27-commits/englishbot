@@ -337,10 +337,15 @@ async def generate_exercises(body: _GenerateIn, request: Request) -> _GenerateOu
     default_category = body.category or "other"
     if settings.DATABASE_URL:
         from .db import Repo
+        from .limits import is_section_limit_reached
         async with db_session() as session:
             repo = Repo(session)
             user = await repo.upsert_user(tg_id=tg_id)
             user_id = user.id
+            # Посекционный дневной лимит (free: 1 урок/тест в день). ДО LLM.
+            if await is_section_limit_reached(repo, user, section="grammar"):
+                await session.commit()
+                raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "limit_reached")
             if body.mode == "weak_points":
                 recent_mistakes = await repo.get_recent_mistakes(
                     user_id, limit=5, days=30,
@@ -657,10 +662,17 @@ async def _resolve_topic_for_user(body_init_data: str, topic_key: str) -> tuple:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db_not_configured")
 
     from .db import Repo
+    from .limits import is_section_limit_reached
     async with db_session() as session:
         repo = Repo(session)
         user = await repo.upsert_user(tg_id=tg_id)
         user_id = user.id
+        # Посекционный дневной лимит (free: 1 урок/тест в день). Сессия урока
+        # открывается только в /lesson/exercises, поэтому в рамках текущего
+        # урока счётчик ещё 0 — повторно не блокирует. Блокирует ВТОРОЙ урок/тест.
+        if await is_section_limit_reached(repo, user, section="grammar"):
+            await session.commit()
+            raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "limit_reached")
         topic = await repo.get_grammar_topic(topic_key)
         if topic is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "topic_not_found")

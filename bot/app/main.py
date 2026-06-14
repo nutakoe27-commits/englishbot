@@ -62,9 +62,10 @@ FREE_PERIOD_TEXT = (
     "Когда промо-период закончится — мы напишем заранее."
 )
 
-# Цены синхронизированы с settings_kv (DB) и LockScreen в mini app.
-PRICE_MONTHLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_MONTHLY_RUB", "699"))
-PRICE_YEARLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_YEARLY_RUB", "4990"))
+# Цены синхронизированы с LockScreen/Paywall в mini app.
+PRICE_TRIAL3_RUB = int(os.getenv("SUBSCRIPTION_PRICE_TRIAL3_RUB", "99"))
+PRICE_MONTHLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_MONTHLY_RUB", "499"))
+PRICE_YEARLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_YEARLY_RUB", "2999"))
 
 # Дневной лимит для free-тарифа (секунды). Источник истины — settings_kv
 # в backend (ключ free_seconds_per_day), здесь держим фолбэк-значение для
@@ -611,11 +612,13 @@ async def cb_profile_subscribe(query: CallbackQuery) -> None:
 # ─── /subscribe ──────────────────────────────────────────────────────────────
 SUBSCRIBE_TEXT = (
     "⭐ <b>Подписка English Tutor</b>\n\n"
-    "На бесплатном тарифе — <b>10 минут в день</b> практики. "
-    "Лимит сбрасывается в полночь по МСК.\n\n"
+    "На бесплатном тарифе в день доступно: <b>10 минут разговора</b>, "
+    "<b>1 подкаст</b> и <b>1 урок грамматики</b>. Словарь и повторение слов — "
+    "всегда бесплатно. Лимиты сбрасываются в полночь по МСК.\n\n"
     "С подпиской — <b>без лимитов</b> и круглые сутки:\n"
+    f"• <b>{PRICE_TRIAL3_RUB} ₽ / 3 дня</b>\n"
     f"• <b>{PRICE_MONTHLY_RUB} ₽ / месяц</b>\n"
-    f"• <b>{PRICE_YEARLY_RUB} ₽ / год</b> (выгоднее на ~40%)\n\n"
+    f"• <b>{PRICE_YEARLY_RUB} ₽ / год</b> (выгоднее ~50%)\n\n"
     "Оплата картой, SberPay или ЮМани — через ЮКассу прямо в Telegram. "
     "<i>Чек будет отправлен на указанный email.</i>"
 )
@@ -626,13 +629,19 @@ def _subscribe_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f"💳 Оплатить месяц — {PRICE_MONTHLY_RUB} ₽",
+                    text=f"💳 3 дня — {PRICE_TRIAL3_RUB} ₽",
+                    callback_data="subscribe:trial3",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"💳 Месяц — {PRICE_MONTHLY_RUB} ₽",
                     callback_data="subscribe:monthly",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f"💳 Оплатить год — {PRICE_YEARLY_RUB} ₽",
+                    text=f"💳 Год — {PRICE_YEARLY_RUB} ₽",
                     callback_data="subscribe:yearly",
                 )
             ],
@@ -856,16 +865,23 @@ async def cb_reminder(callback: CallbackQuery) -> None:
 
 # ---- Планы подписки (единственное место, где эти данные хранятся в боте) -----
 _PLAN_CATALOG: dict[str, dict] = {
+    "trial3": {
+        "title": "English Tutor — 3 дня",
+        "description": "Безлимитный доступ ко всем режимам на 3 дня.",
+        "amount_rub": PRICE_TRIAL3_RUB,
+        "days": 3,
+        "label": "3 дня",
+    },
     "monthly": {
         "title": "English Tutor — подписка на месяц",
-        "description": "Безлимитные разговоры с AI-репетитором на 30 дней.",
+        "description": "Безлимитный доступ ко всем режимам на 30 дней.",
         "amount_rub": PRICE_MONTHLY_RUB,
         "days": 30,
         "label": "месяц",
     },
     "yearly": {
         "title": "English Tutor — подписка на год",
-        "description": "Безлимитные разговоры с AI-репетитором на 365 дней (экономия ~40%).",
+        "description": "Безлимитный доступ ко всем режимам на 365 дней (выгоднее ~50%).",
         "amount_rub": PRICE_YEARLY_RUB,
         "days": 365,
         "label": "год",

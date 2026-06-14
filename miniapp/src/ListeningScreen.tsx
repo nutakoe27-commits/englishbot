@@ -15,6 +15,7 @@ import { PodcastPlayer } from "./PodcastPlayer";
 import { Transcript } from "./Transcript";
 import { ProgressScreen } from "./ProgressScreen";
 import { WordsScreen } from "./WordsScreen";
+import { LockScreen } from "./LockScreen";
 import {
   CATEGORY_OPTIONS,
   loadListeningSettings,
@@ -26,6 +27,9 @@ import {
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
   "https://api-english.krichigindocs.ru";
+
+const BOT_USERNAME =
+  (import.meta.env.VITE_BOT_USERNAME as string | undefined) || "kmo_ai_english_bot";
 
 interface Props {
   onExit: () => void;
@@ -48,6 +52,7 @@ export function ListeningScreen({ onExit }: Props) {
   const [userName, setUserName] = useState<string>("there");
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
   const [wordsOpen, setWordsOpen] = useState<boolean>(false);
+  const [paywall, setPaywall] = useState<boolean>(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -86,6 +91,12 @@ export function ListeningScreen({ onExit }: Props) {
         }),
         signal: controller.signal,
       });
+      if (res.status === 402) {
+        // Дневной лимит подкастов исчерпан — показываем пейволл.
+        setPaywall(true);
+        setPhase("config");
+        return;
+      }
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
@@ -238,6 +249,15 @@ export function ListeningScreen({ onExit }: Props) {
           apiBase={API_BASE}
           initData={WebApp.initData || ""}
           onClose={() => setProgressOpen(false)}
+        />
+      )}
+
+      {paywall && (
+        <LockScreen
+          kind="limit_reached"
+          botUsername={BOT_USERNAME}
+          message="Бесплатный подкаст на сегодня уже использован. С подпиской — без лимитов."
+          onDismiss={() => setPaywall(false)}
         />
       )}
     </div>

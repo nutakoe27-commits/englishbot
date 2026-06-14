@@ -166,6 +166,57 @@ class Repo:
         await self.s.execute(stmt)
         return await self.get_used_seconds_today(user_id)
 
+    # ─── speaking-only счётчик (миграция 0016) ──────────────────────────
+    # Лимит говорения считается отдельно от used_seconds, чтобы слушание/
+    # грамматика (которые тоже пишут used_seconds для аналитики) не тратили
+    # бюджет говорения.
+    async def get_speaking_seconds_today(self, user_id: int) -> int:
+        res = await self.s.execute(
+            select(DailyUsage.speaking_seconds).where(
+                DailyUsage.user_id == user_id,
+                DailyUsage.usage_date == msk_today(),
+            )
+        )
+        return int(res.scalar_one_or_none() or 0)
+
+    async def add_speaking_seconds(self, *, user_id: int, seconds: int) -> int:
+        """Прибавить N секунд к дневному счётчику говорения. Возвращает итог."""
+        if seconds <= 0:
+            return await self.get_speaking_seconds_today(user_id)
+        today = msk_today()
+        now = utcnow()
+        stmt = mysql_insert(DailyUsage).values(
+            user_id=user_id,
+            usage_date=today,
+            speaking_seconds=seconds,
+            updated_at=now,
+        )
+        stmt = stmt.on_duplicate_key_update(
+            speaking_seconds=DailyUsage.speaking_seconds + seconds,
+            updated_at=now,
+        )
+        await self.s.execute(stmt)
+        return await self.get_speaking_seconds_today(user_id)
+
+    async def count_sessions_today(self, user_id: int, mode: str) -> int:
+        """Сколько сессий данного режима юзер начал сегодня (по МСК).
+
+        Используется для посекционных дневных лимитов (listening/grammar).
+        Граница дня — полночь МСК, переведённая в наивный UTC (как хранятся
+        started_at через utcnow()).
+        """
+        # Полночь МСК сегодня → naive UTC.
+        msk_midnight = datetime.combine(msk_today(), time(0, 0), tzinfo=MSK)
+        utc_boundary = msk_midnight.astimezone(timezone.utc).replace(tzinfo=None)
+        res = await self.s.execute(
+            select(func.count(SessionRow.id)).where(
+                SessionRow.user_id == user_id,
+                SessionRow.mode == mode,
+                SessionRow.started_at >= utc_boundary,
+            )
+        )
+        return int(res.scalar() or 0)
+
     # ─── streak ─────────────────────────────────────────────────────────
     async def bump_streak(
         self, user_id: int, *, role: Optional[str] = None,

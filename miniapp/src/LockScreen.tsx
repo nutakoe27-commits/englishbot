@@ -68,11 +68,15 @@ export function LockScreen({ kind, message, botUsername, onDismiss }: Props) {
         {kind === "limit_reached" && (
           <div className="lock-screen__pricing">
             <div className="lock-screen__price">
-              <span className="lock-screen__price-amount">699 ₽</span>
+              <span className="lock-screen__price-amount">99 ₽</span>
+              <span className="lock-screen__price-period">/ 3 дня</span>
+            </div>
+            <div className="lock-screen__price">
+              <span className="lock-screen__price-amount">499 ₽</span>
               <span className="lock-screen__price-period">/ месяц</span>
             </div>
             <div className="lock-screen__price">
-              <span className="lock-screen__price-amount">4 990 ₽</span>
+              <span className="lock-screen__price-amount">2 999 ₽</span>
               <span className="lock-screen__price-period">/ год</span>
             </div>
           </div>

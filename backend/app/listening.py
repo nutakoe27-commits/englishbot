@@ -278,10 +278,16 @@ async def generate_podcast(body: _GenerateIn, request: Request) -> _GenerateOut:
     vocab_words: list[str] = []
     if settings.DATABASE_URL:
         from .db import Repo
+        from .limits import is_section_limit_reached
         async with db_session() as session:
             repo = Repo(session)
             user = await repo.upsert_user(tg_id=tg_id)
             user_id = user.id
+            # Посекционный дневной лимит (free: 1 подкаст/день). Проверяем ДО
+            # дорогой LLM/TTS-генерации. Подписчики/FREE_PERIOD — безлимит.
+            if await is_section_limit_reached(repo, user, section="listening"):
+                await session.commit()
+                raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "limit_reached")
             if body.use_vocab:
                 vocab_words = await repo.get_user_words_for_prompt(user.id, limit=10)
             await session.commit()

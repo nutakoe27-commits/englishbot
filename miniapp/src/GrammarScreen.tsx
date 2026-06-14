@@ -23,6 +23,7 @@ import "./App.css";
 import { GrammarExercise, type Exercise } from "./GrammarExercise";
 import { ProgressScreen } from "./ProgressScreen";
 import { WordsScreen } from "./WordsScreen";
+import { LockScreen } from "./LockScreen";
 import {
   loadGrammarSettings,
   saveGrammarSettings,
@@ -33,6 +34,9 @@ import { loadSettings as loadTutorSettings } from "./tutorSettings";
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
   "https://api-english.krichigindocs.ru";
+
+const BOT_USERNAME =
+  (import.meta.env.VITE_BOT_USERNAME as string | undefined) || "kmo_ai_english_bot";
 
 const HEARTBEAT_MS = 20_000;
 
@@ -169,6 +173,7 @@ export function GrammarScreen({ onExit }: Props) {
   const [userName, setUserName] = useState<string>("there");
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
   const [wordsOpen, setWordsOpen] = useState<boolean>(false);
+  const [paywall, setPaywall] = useState<boolean>(false);
   const abortRef = useRef<AbortController | null>(null);
 
   // Learn-трек
@@ -282,6 +287,11 @@ export function GrammarScreen({ onExit }: Props) {
         }),
         signal: controller.signal,
       });
+      if (res.status === 402) {
+        setPaywall(true);
+        setPhase("topics");
+        return;
+      }
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
@@ -364,6 +374,11 @@ export function GrammarScreen({ onExit }: Props) {
       if (res.status === 409) {
         // Нет накопленных ошибок — показываем заглушку.
         setPhase("no_mistakes");
+        return;
+      }
+      if (res.status === 402) {
+        setPaywall(true);
+        setPhase("home");
         return;
       }
       if (!res.ok) {
@@ -864,6 +879,15 @@ export function GrammarScreen({ onExit }: Props) {
           apiBase={API_BASE}
           initData={WebApp.initData || ""}
           onClose={() => setProgressOpen(false)}
+        />
+      )}
+
+      {paywall && (
+        <LockScreen
+          kind="limit_reached"
+          botUsername={BOT_USERNAME}
+          message="Бесплатный урок грамматики на сегодня уже использован. С подпиской — без лимитов."
+          onDismiss={() => setPaywall(false)}
         />
       )}
     </div>
