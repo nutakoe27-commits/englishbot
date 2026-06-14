@@ -165,7 +165,6 @@ interface AppProps {
 }
 
 export default function App({ onExit }: AppProps = {}) {
-  const [userName, setUserName] = useState<string>("there");
   const [appState, setAppState] = useState<AppState>("initializing");
   const [dialogLog, setDialogLog] = useState<DialogEntry[]>([]);
   const [statusText, setStatusText] = useState<string>("Getting ready…");
@@ -314,11 +313,6 @@ export default function App({ onExit }: AppProps = {}) {
       WebApp.disableVerticalSwipes?.();
     } catch {
       // старые версии Telegram — не критично
-    }
-
-    const user = WebApp.initDataUnsafe?.user;
-    if (user?.first_name) {
-      setUserName(user.first_name);
     }
   }, []);
 
@@ -1182,7 +1176,7 @@ export default function App({ onExit }: AppProps = {}) {
           <span className="tutor-brand__name">English Tutor</span>
         </div>
         <div className="tutor-header__right">
-          {limits && !limits.has_subscription && limits.remaining_seconds >= 0 ? (
+          {limits && !limits.has_subscription && limits.remaining_seconds >= 0 && (
             <span
               className="timer-pill"
               data-warning={limits.remaining_seconds <= 60 ? "true" : "false"}
@@ -1191,9 +1185,10 @@ export default function App({ onExit }: AppProps = {}) {
             >
               ⏱ {formatMmSs(limits.remaining_seconds)}
             </span>
-          ) : (
-            <p className="tutor-hello">Hi, {userName}</p>
           )}
+          {/* Приветствие «Hi, name» в рабочей шапке не показываем — три
+              иконки действий важнее и иначе на узких экранах не помещаются
+              (приветствие есть на стартовом экране выбора режима). */}
           <button
             type="button"
             className="icon-button"
