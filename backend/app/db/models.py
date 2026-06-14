@@ -106,6 +106,9 @@ class DailyUsage(Base):
     used_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Добавлено в миграции 0002: бонус от выполненного квеста (сбрасывается вместе с днём).
     bonus_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Миграция 0016: время ТОЛЬКО говорения (voice/chat) за день — для лимита.
+    # used_seconds остаётся общим счётчиком (аналитика, все режимы).
+    speaking_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 

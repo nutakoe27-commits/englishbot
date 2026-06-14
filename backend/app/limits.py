@@ -108,11 +108,15 @@ class LimitsContext:
         оборачиваем в Repo(session).
         """
         if self.has_subscription:
-            # Подписчикам всё равно записываем для аналитики, но без проверок
+            # Подписчикам всё равно записываем для аналитики, но без проверок.
+            # Говорение пишем и в used_seconds (аналитика), и в speaking_seconds.
             try:
                 async with self._repo_factory() as session:
                     repo = Repo(session)
                     await repo.add_used_seconds(
+                        user_id=self.user_db_id, seconds=seconds
+                    )
+                    await repo.add_speaking_seconds(
                         user_id=self.user_db_id, seconds=seconds
                     )
             except Exception as exc:
@@ -121,7 +125,12 @@ class LimitsContext:
         try:
             async with self._repo_factory() as session:
                 repo = Repo(session)
-                self.used_seconds_today = await repo.add_used_seconds(
+                # used_seconds — общий счётчик (аналитика).
+                await repo.add_used_seconds(
+                    user_id=self.user_db_id, seconds=seconds
+                )
+                # speaking_seconds — то, на чём строится гейт говорения.
+                self.used_seconds_today = await repo.add_speaking_seconds(
                     user_id=self.user_db_id, seconds=seconds
                 )
         except Exception as exc:
@@ -154,7 +163,9 @@ async def build_limits_context(
     free_seconds = await repo.get_kv_int(
         "free_seconds_per_day", DEFAULT_FREE_SECONDS_PER_DAY
     )
-    used = await repo.get_used_seconds_today(user.id)
+    # Гейт говорения строится на speaking_seconds (миграция 0016), а не на
+    # общем used_seconds — иначе слушание/грамматика тратили бы бюджет говорения.
+    used = await repo.get_speaking_seconds_today(user.id)
     bonus = await repo.get_bonus_seconds_today(user.id)
     return LimitsContext(
         user_db_id=user.id,
@@ -166,3 +177,33 @@ async def build_limits_context(
         is_blocked=user.is_blocked,
         repo_factory=repo_factory,
     )
+
+
+# ─── Посекционные лимиты (listening / grammar) ───────────────────────────
+# Считаются по числу сессий за сегодня (sessions.mode). Слова (srs) — без лимита.
+
+# section → (mode в sessions, ключ квоты в settings_kv, дефолт)
+_SECTION_QUOTA = {
+    "listening": ("listening", "free_listening_per_day", 1),
+    "grammar": ("grammar", "free_grammar_per_day", 1),
+}
+
+
+async def is_section_limit_reached(repo: Repo, user, *, section: str) -> bool:
+    """True, если free-юзер исчерпал дневную квоту секции.
+
+    Подписчики и FREE_PERIOD — всегда False (безлимит). `user` — ORM User.
+    """
+    if settings.FREE_PERIOD:
+        return False
+    if await repo.has_active_subscription(user):
+        return False
+    cfg = _SECTION_QUOTA.get(section)
+    if cfg is None:
+        return False
+    mode, kv_key, default = cfg
+    quota = await repo.get_kv_int(kv_key, default)
+    if quota <= 0:
+        return False
+    used = await repo.count_sessions_today(user.id, mode)
+    return used >= quota
