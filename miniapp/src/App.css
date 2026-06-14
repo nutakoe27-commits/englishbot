@@ -111,12 +111,14 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 4px 2px;
 }
 .tutor-brand {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;   /* бренд/«Грамматика» не схлопывается — ужимается имя справа */
 }
 .tutor-brand__dot {
   width: 10px;
@@ -129,11 +131,18 @@ button {
   font-weight: 600;
   font-size: 16px;
   letter-spacing: -0.2px;
+  white-space: nowrap;
 }
 .tutor-hello {
   margin: 0;
   font-size: 14px;
   color: var(--text-dim);
+  /* Длинное имя юзера (без пробелов) больше не распирает шапку и не наезжает
+     на бренд — обрезаем многоточием. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ─── Лог диалога — фиксированная область со внутренним скроллом ── */
@@ -521,6 +530,7 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;   /* позволяет .tutor-hello внутри ужиматься и обрезаться */
 }
 
 .icon-button {
@@ -529,6 +539,7 @@ button {
   justify-content: center;
   width: 36px;
   height: 36px;
+  flex-shrink: 0;   /* иконки фиксированы — ужимается только имя юзера */
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
@@ -2700,6 +2711,7 @@ button {
   font-size: 14.5px;
   line-height: 1.65;
   color: var(--text);
+  overflow-wrap: break-word;
   user-select: text;
   -webkit-user-select: text;
 }
@@ -2754,7 +2766,10 @@ button {
 }
 .grm-examples__row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0,1fr) вместо 1fr — иначе колонки не ужимаются ниже своего
+     контента и длинные примеры распирают таблицу шире экрана (grid blowout),
+     из-за чего .grm-screen{overflow:hidden} срезает весь правый край теории. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
   padding: 9px 12px;
 }
@@ -2769,11 +2784,15 @@ button {
   line-height: 1.5;
   color: var(--text);
   font-weight: 500;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 .grm-examples__ru {
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-dim);
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 .grm-theory__para strong,
 .grm-examples__en strong {
