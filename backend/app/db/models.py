@@ -121,7 +121,8 @@ class Payment(Base):
     )
     amount_rub: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     plan: Mapped[str] = mapped_column(
-        SAEnum("trial3", "monthly", "yearly", "gift", "admin_grant", name="payment_plan"),
+        SAEnum("trial3", "monthly", "yearly", "gift", "admin_grant", "manual_pay",
+               name="payment_plan"),
         nullable=False,
     )
     status: Mapped[str] = mapped_column(
