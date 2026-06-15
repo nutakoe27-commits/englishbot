@@ -65,6 +65,14 @@ class ModeStat(BaseModel):
     minutes: int = 0
 
 
+class ActiveAvg(BaseModel):
+    """Средние показатели «активного» юзера (заходил в бота более 2 раз)."""
+    active_users: int = 0
+    avg_minutes_total: float = 0.0
+    # Среднее время на активного юзера по режимам (минуты).
+    by_mode_minutes: dict[str, float] = Field(default_factory=dict)
+
+
 class MetricsResponse(BaseModel):
     total_users: int
     active_subscriptions: int
@@ -84,6 +92,8 @@ class MetricsResponse(BaseModel):
     modes_today: dict[str, ModeStat] = Field(default_factory=dict)
     # Топ категорий listening-подкастов за 7 дней.
     listening_top_categories: list[dict] = Field(default_factory=list)
+    # Средний «активный» юзер (заходил более 2 раз) — время по режимам.
+    active_avg: ActiveAvg = Field(default_factory=ActiveAvg)
 
 
 class UserBrief(BaseModel):
@@ -303,6 +313,30 @@ async def _build_metrics() -> MetricsResponse:
             day_start_utc - timedelta(days=6), limit=5,
         )
 
+        # Средний «активный» юзер (заходил более 2 раз) — время по режимам.
+        # voice+chat сводим в «speaking», как и в mini-app / профиле.
+        avg_raw = await repo.active_user_avg_seconds_by_mode(min_sessions_exclusive=2)
+        n_active = int(avg_raw.get("active_users") or 0)
+        by_mode_sec = avg_raw.get("by_mode_seconds") or {}
+        if n_active > 0:
+            speaking_sec = int(by_mode_sec.get("voice", 0)) + int(by_mode_sec.get("chat", 0))
+            grouped = {
+                "speaking": speaking_sec,
+                "listening": int(by_mode_sec.get("listening", 0)),
+                "grammar": int(by_mode_sec.get("grammar", 0)),
+                "srs": int(by_mode_sec.get("srs", 0)),
+            }
+            by_mode_minutes = {
+                mode: round(sec / n_active / 60, 1) for mode, sec in grouped.items()
+            }
+            active_avg = ActiveAvg(
+                active_users=n_active,
+                avg_minutes_total=round(int(avg_raw.get("total_seconds") or 0) / n_active / 60, 1),
+                by_mode_minutes=by_mode_minutes,
+            )
+        else:
+            active_avg = ActiveAvg()
+
         return MetricsResponse(
             total_users=total,
             active_subscriptions=subs,
@@ -317,6 +351,7 @@ async def _build_metrics() -> MetricsResponse:
             bot_activated_today=bot_activated_today,
             modes_today=modes_today,
             listening_top_categories=top_categories,
+            active_avg=active_avg,
         )
 
 

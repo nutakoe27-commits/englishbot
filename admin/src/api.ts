@@ -66,6 +66,12 @@ export interface ModeStat {
   minutes: number;
 }
 
+export interface ActiveAvg {
+  active_users: number;
+  avg_minutes_total: number;
+  by_mode_minutes: Record<string, number>;
+}
+
 export interface Metrics {
   total_users: number;
   active_subscriptions: number;
@@ -80,6 +86,7 @@ export interface Metrics {
   bot_activated_today?: number;
   modes_today?: Record<string, ModeStat>;
   listening_top_categories?: { category: string; count: number }[];
+  active_avg?: ActiveAvg;
 }
 
 export interface OnlineSession {

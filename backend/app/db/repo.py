@@ -896,6 +896,44 @@ class Repo:
         )
         return {mode: (int(cnt or 0), int(secs or 0)) for mode, cnt, secs in res.all()}
 
+    async def active_user_avg_seconds_by_mode(
+        self, *, min_sessions_exclusive: int = 2,
+    ) -> dict:
+        """Среднее время «активного» юзера по режимам.
+
+        Активный = у кого суммарно > min_sessions_exclusive сессий (по умолчанию
+        «заходил более 2 раз»). Среднее считается по ВСЕМ активным юзерам
+        (режим, который юзер не трогал, идёт как 0) — так сумма по режимам даёт
+        полную среднюю картину «куда уходит время активного юзера».
+
+        Возвращает:
+          {active_users, total_seconds, by_mode_seconds: {mode: seconds_sum}}
+        где seconds_sum — суммарные секунды активных юзеров по режиму (делить
+        на active_users для среднего).
+        """
+        active_subq = (
+            select(SessionRow.user_id)
+            .group_by(SessionRow.user_id)
+            .having(func.count(SessionRow.id) > min_sessions_exclusive)
+            .subquery()
+        )
+        n_res = await self.s.execute(select(func.count()).select_from(active_subq))
+        n = int(n_res.scalar() or 0)
+        if n == 0:
+            return {"active_users": 0, "total_seconds": 0, "by_mode_seconds": {}}
+
+        res = await self.s.execute(
+            select(
+                SessionRow.mode,
+                func.coalesce(func.sum(SessionRow.used_seconds), 0),
+            )
+            .where(SessionRow.user_id.in_(select(active_subq.c.user_id)))
+            .group_by(SessionRow.mode)
+        )
+        by_mode = {mode: int(secs or 0) for mode, secs in res.all()}
+        total = sum(by_mode.values())
+        return {"active_users": n, "total_seconds": total, "by_mode_seconds": by_mode}
+
     async def listening_top_categories(
         self, since_dt: datetime, *, limit: int = 5,
     ) -> list[dict]:

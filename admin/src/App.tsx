@@ -466,6 +466,39 @@ function ModesTodayCard({ metrics }: { metrics: Metrics }) {
   );
 }
 
+// ─── Карточка «Средний активный юзер» (заходил более 2 раз) ──────────────────
+function ActiveAvgCard({ metrics }: { metrics: Metrics }) {
+  const isMobile = useIsMobile();
+  const avg = metrics.active_avg;
+  if (!avg || avg.active_users === 0) return null;
+
+  const order = ["speaking", "listening", "grammar", "srs"];
+  const bm = avg.by_mode_minutes ?? {};
+
+  return (
+    <div style={{ ...S.card, marginTop: 20 }}>
+      <h3 style={S.h3}>Средний активный юзер</h3>
+      <p style={{ ...S.metricLabel, marginTop: -6, marginBottom: 14 }}>
+        По {avg.active_users} юзерам, заходившим более 2 раз · в среднем{" "}
+        <b>{avg.avg_minutes_total} мин</b> на человека (за всё время)
+      </p>
+      <div style={metricsGridStyle(isMobile)}>
+        {order.map((mode) => {
+          const meta = modeMeta(mode);
+          return (
+            <div key={mode} style={S.metricCard}>
+              <p style={S.metricValue}>
+                {meta.emoji} {bm[mode] ?? 0}
+              </p>
+              <p style={S.metricLabel}>{meta.label} · мин/чел</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 function Dashboard() {
   const isMobile = useIsMobile();
@@ -539,6 +572,7 @@ function Dashboard() {
       </div>
 
       <ModesTodayCard metrics={metrics} />
+      <ActiveAvgCard metrics={metrics} />
 
       <ChartBlock
         title="DAU за 30 дней"
