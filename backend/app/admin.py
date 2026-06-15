@@ -93,7 +93,8 @@ class MetricsResponse(BaseModel):
     # Топ категорий listening-подкастов за 7 дней.
     listening_top_categories: list[dict] = Field(default_factory=list)
     # Средний «активный» юзер (заходил более 2 раз) — время по режимам.
-    active_avg: ActiveAvg = Field(default_factory=ActiveAvg)
+    active_avg: ActiveAvg = Field(default_factory=ActiveAvg)        # за всё время
+    active_avg_30d: ActiveAvg = Field(default_factory=ActiveAvg)    # за последние 30 дней
 
 
 class UserBrief(BaseModel):
@@ -315,10 +316,11 @@ async def _build_metrics() -> MetricsResponse:
 
         # Средний «активный» юзер (заходил более 2 раз) — время по режимам.
         # voice+chat сводим в «speaking», как и в mini-app / профиле.
-        avg_raw = await repo.active_user_avg_seconds_by_mode(min_sessions_exclusive=2)
-        n_active = int(avg_raw.get("active_users") or 0)
-        by_mode_sec = avg_raw.get("by_mode_seconds") or {}
-        if n_active > 0:
+        def _to_active_avg(avg_raw: dict) -> ActiveAvg:
+            n_active = int(avg_raw.get("active_users") or 0)
+            by_mode_sec = avg_raw.get("by_mode_seconds") or {}
+            if n_active <= 0:
+                return ActiveAvg()
             speaking_sec = int(by_mode_sec.get("voice", 0)) + int(by_mode_sec.get("chat", 0))
             grouped = {
                 "speaking": speaking_sec,
@@ -326,16 +328,21 @@ async def _build_metrics() -> MetricsResponse:
                 "grammar": int(by_mode_sec.get("grammar", 0)),
                 "srs": int(by_mode_sec.get("srs", 0)),
             }
-            by_mode_minutes = {
-                mode: round(sec / n_active / 60, 1) for mode, sec in grouped.items()
-            }
-            active_avg = ActiveAvg(
+            return ActiveAvg(
                 active_users=n_active,
                 avg_minutes_total=round(int(avg_raw.get("total_seconds") or 0) / n_active / 60, 1),
-                by_mode_minutes=by_mode_minutes,
+                by_mode_minutes={m: round(s / n_active / 60, 1) for m, s in grouped.items()},
             )
-        else:
-            active_avg = ActiveAvg()
+
+        active_avg = _to_active_avg(
+            await repo.active_user_avg_seconds_by_mode(min_sessions_exclusive=2)
+        )
+        active_avg_30d = _to_active_avg(
+            await repo.active_user_avg_seconds_by_mode(
+                min_sessions_exclusive=2,
+                since_dt=datetime.utcnow() - timedelta(days=30),
+            )
+        )
 
         return MetricsResponse(
             total_users=total,
@@ -352,6 +359,7 @@ async def _build_metrics() -> MetricsResponse:
             modes_today=modes_today,
             listening_top_categories=top_categories,
             active_avg=active_avg,
+            active_avg_30d=active_avg_30d,
         )
 
 
