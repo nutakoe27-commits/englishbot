@@ -886,7 +886,7 @@ export function GrammarScreen({ onExit }: Props) {
         <LockScreen
           kind="limit_reached"
           botUsername={BOT_USERNAME}
-          message="Бесплатный урок грамматики на сегодня уже использован. С подпиской — без лимитов."
+          message="Бесплатные уроки грамматики на сегодня закончились. С подпиской — без лимитов."
           onDismiss={() => setPaywall(false)}
         />
       )}

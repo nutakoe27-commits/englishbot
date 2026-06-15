@@ -70,7 +70,7 @@ PRICE_YEARLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_YEARLY_RUB", "2999"))
 # Дневной лимит для free-тарифа (секунды). Источник истины — settings_kv
 # в backend (ключ free_seconds_per_day), здесь держим фолбэк-значение для
 # отображения в профиле.
-FREE_DAILY_SECONDS = int(os.getenv("FREE_DAILY_SECONDS", "600"))
+FREE_DAILY_SECONDS = int(os.getenv("FREE_DAILY_SECONDS", "1200"))
 
 # ADMIN_IDS (через запятую) — эти tg_id минуют maintenance-гейт.
 _ADMIN_IDS: set[int] = {
@@ -486,8 +486,11 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
     if FREE_PERIOD or profile["has_subscription"]:
         lines.append(f"Практика: <b>{_fmt_minutes(used_today)}</b> — без лимитов")
     else:
-        limit_min = FREE_DAILY_SECONDS // 60
-        total_limit = FREE_DAILY_SECONDS + bonus_today
+        free_speaking = int(profile.get("free_seconds_per_day") or FREE_DAILY_SECONDS)
+        free_listening = int(profile.get("free_listening_per_day") or 2)
+        free_grammar = int(profile.get("free_grammar_per_day") or 3)
+        limit_min = free_speaking // 60
+        total_limit = free_speaking + bonus_today
         left_sec = max(0, total_limit - speaking_today)
         if bonus_today > 0:
             lines.append(
@@ -507,7 +510,8 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
                 "Лимит разговора исчерпан — продолжи завтра или оформи подписку."
             )
         lines.append(
-            "🎧 Слушание и 📝 грамматика: по <b>1</b> в день · "
+            f"🎧 Слушание: <b>{free_listening}</b>/день · "
+            f"📝 грамматика: <b>{free_grammar}</b>/день · "
             "📚 слова — <b>без лимита</b>"
         )
     lines.append("")
@@ -617,8 +621,8 @@ async def cb_profile_subscribe(query: CallbackQuery) -> None:
 # ─── /subscribe ──────────────────────────────────────────────────────────────
 SUBSCRIBE_TEXT = (
     "⭐ <b>Подписка English Tutor</b>\n\n"
-    "На бесплатном тарифе в день доступно: <b>10 минут разговора</b>, "
-    "<b>1 подкаст</b> и <b>1 урок грамматики</b>. Словарь и повторение слов — "
+    "На бесплатном тарифе в день доступно: <b>20 минут разговора</b>, "
+    "<b>2 подкаста</b> и <b>3 урока грамматики</b>. Словарь и повторение слов — "
     "всегда бесплатно. Лимиты сбрасываются в полночь по МСК.\n\n"
     "С подпиской — <b>без лимитов</b> и круглые сутки:\n"
     f"• <b>{PRICE_TRIAL3_RUB} ₽ / 3 дня</b>\n"
