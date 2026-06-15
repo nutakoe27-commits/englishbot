@@ -256,7 +256,7 @@ export function ListeningScreen({ onExit }: Props) {
         <LockScreen
           kind="limit_reached"
           botUsername={BOT_USERNAME}
-          message="Бесплатный подкаст на сегодня уже использован. С подпиской — без лимитов."
+          message="Бесплатные подкасты на сегодня закончились. С подпиской — без лимитов."
           onDismiss={() => setPaywall(false)}
         />
       )}

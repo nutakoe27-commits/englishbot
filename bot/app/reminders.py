@@ -498,6 +498,28 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
             # earned > total — фронт-логика спрячет блок.
             ach_total = max(ach_earned, 12)
 
+            # Бесплатные лимиты — единый источник истины settings_kv (их же
+            # читает backend). Тянем, чтобы профиль показывал актуальные числа.
+            free_seconds_per_day = 1200
+            free_listening_per_day = 2
+            free_grammar_per_day = 3
+            try:
+                r_kv = await s.execute(
+                    select(_SettingKV).where(
+                        _SettingKV.key.in_([
+                            "free_seconds_per_day",
+                            "free_listening_per_day",
+                            "free_grammar_per_day",
+                        ])
+                    )
+                )
+                kv = {row.key: row.value for row in r_kv.scalars().all()}
+                free_seconds_per_day = int(kv.get("free_seconds_per_day") or free_seconds_per_day)
+                free_listening_per_day = int(kv.get("free_listening_per_day") or free_listening_per_day)
+                free_grammar_per_day = int(kv.get("free_grammar_per_day") or free_grammar_per_day)
+            except Exception:
+                pass
+
             return {
                 "user_db_id": int(u.id),
                 "username": u.username,
@@ -511,6 +533,9 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
                 "used_seconds_total": used_total,
                 "bonus_seconds_today": bonus_today,
                 "speaking_seconds_today": speaking_today,
+                "free_seconds_per_day": free_seconds_per_day,
+                "free_listening_per_day": free_listening_per_day,
+                "free_grammar_per_day": free_grammar_per_day,
                 "streak_days": int(u.streak_days or 0),
                 "best_streak_days": int(u.best_streak_days or 0),
                 "last_practice_date": u.last_practice_date,
