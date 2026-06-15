@@ -27,7 +27,7 @@ openssl rand -base64 24
 ## Шаг 2. Зайти на VPS и проверить, что MySQL 5.7 жив
 
 ```bash
-ssh root@89.111.143.45
+ssh root@89.131.133.46
 mysql --version
 # должно показать что-то вроде: mysql  Ver 14.14 Distrib 5.7.x
 
