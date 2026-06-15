@@ -75,6 +75,8 @@ class _DailyUsage(_Base):
     usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
     used_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bonus_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Миграция 0016: время только говорения (voice/chat) — для лимита разговора.
+    speaking_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
@@ -409,7 +411,11 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
             # Использование сегодня
             today = _msk_today()
             r_today = await s.execute(
-                select(_DailyUsage.used_seconds, _DailyUsage.bonus_seconds).where(
+                select(
+                    _DailyUsage.used_seconds,
+                    _DailyUsage.bonus_seconds,
+                    _DailyUsage.speaking_seconds,
+                ).where(
                     _DailyUsage.user_id == u.id,
                     _DailyUsage.usage_date == today,
                 )
@@ -418,9 +424,11 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
             if row_today is not None:
                 used_today = int(row_today[0] or 0)
                 bonus_today = int(row_today[1] or 0)
+                speaking_today = int(row_today[2] or 0)
             else:
                 used_today = 0
                 bonus_today = 0
+                speaking_today = 0
 
             # Всего за всё время
             r_total = await s.execute(
@@ -502,6 +510,7 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
                 "used_seconds_today": used_today,
                 "used_seconds_total": used_total,
                 "bonus_seconds_today": bonus_today,
+                "speaking_seconds_today": speaking_today,
                 "streak_days": int(u.streak_days or 0),
                 "best_streak_days": int(u.best_streak_days or 0),
                 "last_practice_date": u.last_practice_date,
@@ -608,13 +617,10 @@ async def credit_subscription_payment(
 
 # ─── Фоновая корутина рассылки ────────────────────────────────────────────────
 
-# ─── Утренний push квеста ────────────────────────────────────────────────
-# Правило: если у юзера reminder_enabled=TRUE, квест уходит в тот же час,
-# что и напоминание (совмещённое сообщение). Если reminder выключен — шлём
-# в 9:00 МСК отдельно. Подписка не требуется — квест даёт +30 минут к лимиту,
-# это как раз мотивация для free-юзеров.
-
-QUEST_DEFAULT_PUSH_HOUR_MSK = 9  # для юзеров, у которых reminder выключен
+# ─── Ежедневное напоминание ──────────────────────────────────────────────
+# Шлём в час, выбранный юзером (reminder_time). Текст подбирается под
+# streak/активность в _render_reminder_text. (Квесты убраны — здесь только
+# напоминание о практике.)
 
 
 async def _send_reminders_for_hour(bot: Bot, hour_msk: int, miniapp_url: str) -> None:
