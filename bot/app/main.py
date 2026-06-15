@@ -481,30 +481,35 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
     # Сегодня
     used_today = profile["used_seconds_today"]
     bonus_today = int(profile.get("bonus_seconds_today") or 0)
+    speaking_today = int(profile.get("speaking_seconds_today") or 0)
     lines.append("<b>⏱ Сегодня</b>")
     if FREE_PERIOD or profile["has_subscription"]:
         lines.append(f"Практика: <b>{_fmt_minutes(used_today)}</b> — без лимитов")
     else:
         limit_min = FREE_DAILY_SECONDS // 60
         total_limit = FREE_DAILY_SECONDS + bonus_today
-        left_sec = max(0, total_limit - used_today)
+        left_sec = max(0, total_limit - speaking_today)
         if bonus_today > 0:
             lines.append(
-                f"Практика: <b>{_fmt_minutes(used_today)}</b> из "
+                f"🗣 Разговор: <b>{_fmt_minutes(speaking_today)}</b> из "
                 f"{limit_min} мин + бонус <b>{_fmt_minutes(bonus_today)}</b>"
             )
         else:
             lines.append(
-                f"Практика: <b>{_fmt_minutes(used_today)}</b> из {limit_min} мин"
+                f"🗣 Разговор: <b>{_fmt_minutes(speaking_today)}</b> из {limit_min} мин"
             )
         if left_sec > 0:
             lines.append(
-                f"Осталось: <b>{_fmt_minutes(left_sec)}</b> (сброс в 00:00 МСК)"
+                f"Осталось разговора: <b>{_fmt_minutes(left_sec)}</b> (сброс в 00:00 МСК)"
             )
         else:
             lines.append(
-                "Дневной лимит исчерпан — продолжи завтра или оформи подписку."
+                "Лимит разговора исчерпан — продолжи завтра или оформи подписку."
             )
+        lines.append(
+            "🎧 Слушание и 📝 грамматика: по <b>1</b> в день · "
+            "📚 слова — <b>без лимита</b>"
+        )
     lines.append("")
 
     # Всего практики
