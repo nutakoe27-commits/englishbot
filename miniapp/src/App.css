@@ -2111,6 +2111,18 @@ button {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ms-stats:active {
+  transform: scale(0.99);
 }
 .ms-stat {
   display: flex;

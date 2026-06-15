@@ -3,6 +3,7 @@
 
 import WebApp from "@twa-dev/sdk";
 import { useEffect, useState } from "react";
+import { ProgressScreen } from "./ProgressScreen";
 
 export type Mode = "speaking" | "listening" | "grammar" | "srs";
 
@@ -25,6 +26,7 @@ interface MeStats {
 export function ModeSelector({ onPick }: Props) {
   const [userName, setUserName] = useState<string>("there");
   const [stats, setStats] = useState<MeStats | null>(null);
+  const [progressOpen, setProgressOpen] = useState<boolean>(false);
 
   useEffect(() => {
     try { WebApp.ready(); } catch { /* старые клиенты */ }
@@ -123,7 +125,12 @@ export function ModeSelector({ onPick }: Props) {
         </div>
 
         {stats && (
-          <div className="ms-stats" aria-label="Моя статистика">
+          <button
+            type="button"
+            className="ms-stats"
+            aria-label="Моя статистика — открыть полный прогресс"
+            onClick={() => setProgressOpen(true)}
+          >
             <div className="ms-stat">
               <span className="ms-stat__value">🔥 {stats.streak.current}</span>
               <span className="ms-stat__label">дней подряд</span>
@@ -142,9 +149,17 @@ export function ModeSelector({ onPick }: Props) {
               </span>
               <span className="ms-stat__label">медалей</span>
             </div>
-          </div>
+          </button>
         )}
       </main>
+
+      {progressOpen && (
+        <ProgressScreen
+          apiBase={API_BASE}
+          initData={WebApp.initData || ""}
+          onClose={() => setProgressOpen(false)}
+        />
+      )}
     </div>
   );
 }

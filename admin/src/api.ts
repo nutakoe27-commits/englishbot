@@ -87,6 +87,7 @@ export interface Metrics {
   modes_today?: Record<string, ModeStat>;
   listening_top_categories?: { category: string; count: number }[];
   active_avg?: ActiveAvg;
+  active_avg_30d?: ActiveAvg;
 }
 
 export interface OnlineSession {
