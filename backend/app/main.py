@@ -19,14 +19,16 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .admin import router as admin_router
+from .auth_routes import router as auth_router
 from .grammar import router as grammar_router
 from .listening import router as listening_router
 from .srs import router as srs_router
+from .auth import resolve_user
 from .config import settings
 from .db import db_session, init_db
 from .limits import LimitsContext, build_limits_context
@@ -124,6 +126,7 @@ def validate_telegram_init_data(init_data_raw: str, bot_token: str) -> Optional[
 # ─── Healthcheck ──────────────────────────────────────────────────────────────
 
 app.include_router(admin_router)
+app.include_router(auth_router)
 app.include_router(listening_router)
 app.include_router(grammar_router)
 app.include_router(srs_router)
@@ -178,7 +181,9 @@ def _tg_id_from_init_data(init_data: str) -> int:
 
 
 @app.get("/api/learner/recent-context", tags=["Learner"])
-async def learner_recent_context(init_data: str = "") -> dict:
+async def learner_recent_context(
+    init_data: str = "", authorization: Optional[str] = Header(None),
+) -> dict:
     """Контекст учащегося для Mini App: для post-session summary экрана.
 
     Возвращает:
@@ -187,10 +192,8 @@ async def learner_recent_context(init_data: str = "") -> dict:
       - mistakes: [{category, bad, good, occurred_at}, ...] (топ-5 за неделю)
       - today_used_seconds: сколько юзер сегодня практиковался
 
-    Аутентификация — Telegram WebApp initData.
+    Аутентификация — Bearer JWT (веб) или Telegram initData (Mini App).
     """
-    tg_id = _tg_id_from_init_data(init_data)
-
     if not settings.DATABASE_URL:
         return {
             "streak": {"current": 0, "best": 0, "last_practice_date": None},
@@ -203,14 +206,7 @@ async def learner_recent_context(init_data: str = "") -> dict:
 
     async with db_session() as session:
         repo = Repo(session)
-        user = await repo.get_user_by_tg_id(tg_id)
-        if user is None:
-            return {
-                "streak": {"current": 0, "best": 0, "last_practice_date": None},
-                "vocab": [],
-                "mistakes": [],
-                "today_used_seconds": 0,
-            }
+        user = await resolve_user(repo, authorization=authorization, init_data=init_data)
         ctx = await repo.get_learner_context(user.id)
         used_today = await repo.get_used_seconds_today(user.id)
 
@@ -251,24 +247,23 @@ async def learner_recent_context(init_data: str = "") -> dict:
 # Лимит — Repo.USER_WORDS_LIMIT.
 
 class _AddWordIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None    # Mini App; веб шлёт Bearer JWT
     word: str
     translation: Optional[str] = None  # перевод RU для SRS-карточки
     note: Optional[str] = None          # зарезервировано для импорта
 
 
 @app.get("/api/user-words", tags=["UserWords"])
-async def get_user_words(init_data: str = "") -> dict:
-    """Список user-слов для Mini App."""
+async def get_user_words(
+    init_data: str = "", authorization: Optional[str] = Header(None),
+) -> dict:
+    """Список user-слов для Mini App / веба."""
     from .db import Repo
-    tg_id = _tg_id_from_init_data(init_data)
     if not settings.DATABASE_URL:
         return {"words": [], "total": 0, "limit": Repo.USER_WORDS_LIMIT}
     async with db_session() as session:
         repo = Repo(session)
-        user = await repo.get_user_by_tg_id(tg_id)
-        if user is None:
-            return {"words": [], "total": 0, "limit": Repo.USER_WORDS_LIMIT}
+        user = await resolve_user(repo, authorization=authorization, init_data=init_data)
         items = await repo.list_user_words(user.id)
     return {
         "words": [
@@ -288,27 +283,24 @@ async def get_user_words(init_data: str = "") -> dict:
 
 
 @app.post("/api/user-words", tags=["UserWords"])
-async def post_user_word(body: _AddWordIn) -> dict:
+async def post_user_word(
+    body: _AddWordIn, authorization: Optional[str] = Header(None),
+) -> dict:
     """Добавить user-слово.
 
-    400 с error-кодом если empty/too_long/limit_reached/user-not-found.
+    400 с error-кодом если empty/too_long/limit_reached.
     """
     from fastapi import HTTPException, status
 
-    tg_id = _tg_id_from_init_data(body.init_data)
     if not settings.DATABASE_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "DB not configured")
 
     from .db import Repo
     async with db_session() as session:
         repo = Repo(session)
-        user = await repo.get_user_by_tg_id(tg_id)
-        if user is None:
-            # Юзер ещё не upsert'нут — попросим открыть Mini App обычным
-            # способом сначала (там в WS-preflight идёт upsert_user).
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "user_not_found"
-            )
+        user = await resolve_user(
+            repo, authorization=authorization, init_data=body.init_data,
+        )
         result = await repo.add_user_word(
             user.id, body.word, translation=body.translation, note=body.note,
         )
@@ -324,20 +316,19 @@ async def post_user_word(body: _AddWordIn) -> dict:
 
 
 @app.delete("/api/user-words/{word}", tags=["UserWords"])
-async def delete_user_word(word: str, init_data: str = "") -> dict:
+async def delete_user_word(
+    word: str, init_data: str = "", authorization: Optional[str] = Header(None),
+) -> dict:
     """Удалить user-слово."""
     from fastapi import HTTPException, status
 
-    tg_id = _tg_id_from_init_data(init_data)
     if not settings.DATABASE_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "DB not configured")
 
     from .db import Repo
     async with db_session() as session:
         repo = Repo(session)
-        user = await repo.get_user_by_tg_id(tg_id)
-        if user is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
+        user = await resolve_user(repo, authorization=authorization, init_data=init_data)
         removed = await repo.remove_user_word(user.id, word)
         if not removed:
             await session.rollback()
@@ -393,23 +384,24 @@ async def _get_translation_cached(word: str, context: str) -> list[str]:
 
 
 class _TranslateIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
     word: str = Field(..., min_length=1, max_length=64)
     context: str = Field("", max_length=500)
 
 
 @app.post("/api/translate", tags=["Translate"])
-async def translate(body: _TranslateIn) -> dict:
+async def translate(body: _TranslateIn, authorization: Optional[str] = Header(None)) -> dict:
     """Перевод одного английского слова на русский с учётом контекста реплики.
 
     Возвращает {word, translations: [primary, alt1, alt2]}. На пустой результат
     от LLM — translations=[].
     """
-    tg_id = _tg_id_from_init_data(body.init_data)
+    from .auth import auth_key
+    key = auth_key(authorization, body.init_data)
     word = body.word.strip().lower()
     if not word:
         raise HTTPException(status_code=400, detail="empty_word")
-    _enforce_rate_limit(tg_id)
+    _enforce_rate_limit(key)
     translations = await _get_translation_cached(word, body.context)
     return {"word": word, "translations": translations}
 
@@ -421,20 +413,22 @@ _EXPLAIN_CACHE_MAX = 1000
 
 
 class _ExplainIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
     original: str = Field(..., min_length=1, max_length=300)
     corrected: str = Field(..., min_length=1, max_length=300)
 
 
 @app.post("/api/explain-correction", tags=["Translate"])
-async def explain_correction_endpoint(body: _ExplainIn) -> dict:
+async def explain_correction_endpoint(
+    body: _ExplainIn, authorization: Optional[str] = Header(None),
+) -> dict:
     """Короткое объяснение по-русски, что не так с user-фразой.
 
     Возвращает {explanation: str}. На ошибку LLM — пустая строка.
     """
-    tg_id = _tg_id_from_init_data(body.init_data)
+    from .auth import auth_key
     # Переиспользуем существующий rate-limit бакет с translate'ом.
-    _enforce_rate_limit(tg_id)
+    _enforce_rate_limit(auth_key(authorization, body.init_data))
 
     original = body.original.strip()[:200]
     corrected = body.corrected.strip()[:200]
@@ -462,18 +456,17 @@ async def explain_correction_endpoint(body: _ExplainIn) -> dict:
 # ─── Retention v1: /api/me/progress + /api/me/achievements ──────────────────
 
 @app.get("/api/me/progress", tags=["Me"])
-async def me_progress(init_data: str = "") -> dict:
-    """Сводка прогресса для экрана «Мой прогресс» в mini-app."""
+async def me_progress(
+    init_data: str = "", authorization: Optional[str] = Header(None),
+) -> dict:
+    """Сводка прогресса для экрана «Мой прогресс» в mini-app / на вебе."""
     from fastapi import HTTPException, status
-    tg_id = _tg_id_from_init_data(init_data)
     if not settings.DATABASE_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
     from .db import Repo
     async with db_session() as session:
         repo = Repo(session)
-        user = await repo.get_user_by_tg_id(tg_id)
-        if user is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
+        user = await resolve_user(repo, authorization=authorization, init_data=init_data)
         streak_current, streak_best, last_practice = await repo.get_streak(user.id)
         total_seconds = await repo.user_total_seconds(user.id)
         total_sessions = await repo.user_total_sessions(user.id)
@@ -515,20 +508,19 @@ async def me_progress(init_data: str = "") -> dict:
 
 
 @app.get("/api/me/achievements", tags=["Me"])
-async def me_achievements(init_data: str = "") -> dict:
+async def me_achievements(
+    init_data: str = "", authorization: Optional[str] = Header(None),
+) -> dict:
     """Каталог медалей с пометками earned/locked и current_value по каждой."""
     from fastapi import HTTPException, status
     from .achievements import ACHIEVEMENTS, collect_user_metrics, get_earned_keys
     from .db import Repo
 
-    tg_id = _tg_id_from_init_data(init_data)
     if not settings.DATABASE_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
     async with db_session() as session:
         repo = Repo(session)
-        user = await repo.get_user_by_tg_id(tg_id)
-        if user is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
+        user = await resolve_user(repo, authorization=authorization, init_data=init_data)
         metrics = await collect_user_metrics(repo, user.id)
         earned_keys = await get_earned_keys(repo, user.id)
     return {
@@ -582,7 +574,7 @@ async def _backfill_achievements_on_startup() -> None:
 # ─── WebSocket — голосовой диалог ─────────────────────────────────────────────
 
 @app.websocket("/ws/voice")
-async def ws_voice(websocket: WebSocket, init_data: str = ""):
+async def ws_voice(websocket: WebSocket, init_data: str = "", token: str = ""):
     """
     WebSocket-эндпоинт для голосового диалога с AI-репетитором.
 
@@ -595,10 +587,18 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
         Исходящие бинарные сообщения → PCM 16-bit 24kHz mono (от TTS).
         Исходящие JSON-сообщения → {"type": "text", "role": "user"|"tutor", "text": "..."}
     """
-    # ── Валидация Telegram initData ────────────────────────────────────────
+    # ── Авторизация: Bearer JWT (веб) ИЛИ Telegram initData (Mini App) ─────
     user_info: Optional[dict] = None
+    web_uid: Optional[int] = None  # users.id для веб-сессии (JWT)
 
-    if init_data:
+    if token:
+        from .auth import verify_jwt
+        web_uid = verify_jwt(token)
+        if web_uid is None and not settings.is_development:
+            await websocket.close(code=4001, reason="Unauthorized: invalid token")
+            return
+
+    if not web_uid and init_data:
         if settings.BOT_TOKEN:
             validated = validate_telegram_init_data(init_data, settings.BOT_TOKEN)
             if validated:
@@ -623,14 +623,14 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
                     logger.warning("DEV: невалидная подпись initData — пропускаем проверку")
         else:
             logger.warning("BOT_TOKEN не задан — пропускаем валидацию initData")
-    else:
-        # init_data отсутствует
+    elif not web_uid:
+        # Ни JWT, ни init_data
         if not settings.is_development:
-            logger.warning("init_data отсутствует в production — отклоняем соединение")
-            await websocket.close(code=4001, reason="Unauthorized: missing initData")
+            logger.warning("Нет токена/init_data в production — отклоняем соединение")
+            await websocket.close(code=4001, reason="Unauthorized: missing credentials")
             return
         else:
-            logger.info("DEV: init_data отсутствует — пропускаем проверку")
+            logger.info("DEV: нет токена/init_data — пропускаем проверку")
 
     # ── Принимаем WebSocket-соединение ────────────────────────────────────
     await websocket.accept()
@@ -644,16 +644,18 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
     # Важно: весь блок под таймаутом — если MySQL висит/пул исчерпан,
     # лучше пропустить человека без лимитов, чем вечно держать сокет молча.
     limits_ctx: Optional[LimitsContext] = None
-    if user_info and settings.DATABASE_URL:
+    if (user_info or web_uid) and settings.DATABASE_URL:
         logger.info("[WS] начинаю проверку maintenance/лимитов")
 
         async def _check_db_preflight() -> Optional[LimitsContext]:
             async with db_session() as session:
                 from .db import Repo
+                from .limits import context_for_user
                 repo = Repo(session)
+                tg_for_admin = int(user_info["id"]) if user_info else None
                 # 1. Maintenance — всех отправляем лесом, кроме админов
                 if await repo.get_kv_bool("maintenance_mode", False):
-                    if user_info.get("id") not in settings.admin_ids_list:
+                    if tg_for_admin not in settings.admin_ids_list:
                         msg = await repo.get_kv(
                             "maintenance_message",
                             "Бот временно недоступен — ведутся технические работы.",
@@ -663,7 +665,13 @@ async def ws_voice(websocket: WebSocket, init_data: str = ""):
                         )
                         await websocket.close(code=4002, reason="Maintenance mode")
                         return None
-                # 2. Upsert + лимиты
+                # 2. Лимиты: веб (JWT) → по users.id; Mini App → upsert по tg_id
+                if web_uid:
+                    user = await repo.get_user_by_id(web_uid)
+                    if user is None:
+                        await websocket.close(code=4001, reason="Unauthorized")
+                        return None
+                    return await context_for_user(repo, db_session, user)
                 return await build_limits_context(
                     repo=repo,
                     repo_factory=db_session,

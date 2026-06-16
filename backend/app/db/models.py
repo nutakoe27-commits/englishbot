@@ -35,11 +35,13 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
+    tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, unique=True)
     username: Mapped[Optional[str]] = mapped_column(String(64))
     first_name: Mapped[Optional[str]] = mapped_column(String(128))
     last_name: Mapped[Optional[str]] = mapped_column(String(128))
     language_code: Mapped[Optional[str]] = mapped_column(String(8))
+    # Миграция 0020: email (от Google/Apple) + мульти-провайдерный вход.
+    email: Mapped[Optional[str]] = mapped_column(String(255))
 
     subscription_until: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
@@ -75,6 +77,29 @@ class User(Base):
     # появился только из Mini App, бота в чате не открывал. Заполняется один
     # раз — bot middleware пишет только если поле было NULL.
     bot_activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class UserIdentity(Base):
+    """Личность пользователя у внешнего провайдера (миграция 0020).
+
+    Один users.id может иметь несколько identity (telegram + google + apple).
+    UNIQUE(provider, provider_uid) — одна внешняя личность принадлежит одному
+    аккаунту. Для telegram provider_uid = строковый tg_id.
+    """
+
+    __tablename__ = "user_identities"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(
+        SAEnum("telegram", "google", "apple", name="identity_provider"),
+        nullable=False,
+    )
+    provider_uid: Mapped[str] = mapped_column(String(191), nullable=False)
+    email: Mapped[Optional[str]] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class Session(Base):

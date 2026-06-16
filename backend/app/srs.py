@@ -30,10 +30,11 @@ import logging
 import secrets
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel
 
 from . import presence
+from .auth import auth_key, resolve_user
 from .config import settings
 from .db import db_session
 
@@ -59,7 +60,7 @@ _SESSION_STORE: dict[str, dict] = {}
 
 
 class _StartIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
 
 
 class _StartOut(BaseModel):
@@ -83,12 +84,12 @@ class _StatsOut(BaseModel):
 
 
 class _HeartbeatIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
     session_id: str
 
 
 class _ReviewIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
     word: str
     correct: bool
 
@@ -100,7 +101,7 @@ class _ReviewOut(BaseModel):
 
 
 class _FinishIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
     session_id: str
     reviewed: int = 0
     correct: int = 0
@@ -127,28 +128,27 @@ def _tg_id_from_init_data(init_data: str) -> int:
 
 
 @router.get("/stats", response_model=_StatsOut)
-async def stats(init_data: str = "") -> _StatsOut:
+async def stats(
+    init_data: str = "", authorization: Optional[str] = Header(None),
+) -> _StatsOut:
     """Сколько карточек готово к повторению + общий счётчик слов."""
-    tg_id = _tg_id_from_init_data(init_data)
-    if not settings.DATABASE_URL:
-        from .db.repo import Repo
-        return _StatsOut(due_count=0, total_count=0, limit=Repo.USER_WORDS_LIMIT)
-
     from .db.repo import Repo
+    if not settings.DATABASE_URL:
+        return _StatsOut(due_count=0, total_count=0, limit=Repo.USER_WORDS_LIMIT)
     async with db_session() as session:
         repo = Repo(session)
-        user = await repo.get_user_by_tg_id(tg_id)
-        if user is None:
-            return _StatsOut(due_count=0, total_count=0, limit=Repo.USER_WORDS_LIMIT)
+        user = await resolve_user(repo, authorization=authorization, init_data=init_data)
         due = await repo.count_srs_due(user.id)
         total = await repo.count_user_words(user.id)
     return _StatsOut(due_count=due, total_count=total, limit=Repo.USER_WORDS_LIMIT)
 
 
 @router.get("/session", response_model=_SessionOut)
-async def get_session(init_data: str = "", limit: int = SESSION_CARDS_LIMIT) -> _SessionOut:
+async def get_session(
+    init_data: str = "", limit: int = SESSION_CARDS_LIMIT,
+    authorization: Optional[str] = Header(None),
+) -> _SessionOut:
     """Топ-N due-карточек для review. Если 0 — пустой массив."""
-    tg_id = _tg_id_from_init_data(init_data)
     n = max(1, min(int(limit or 0), SESSION_CARDS_LIMIT))
     if not settings.DATABASE_URL:
         return _SessionOut(cards=[])
@@ -156,9 +156,7 @@ async def get_session(init_data: str = "", limit: int = SESSION_CARDS_LIMIT) -> 
     from .db.repo import Repo
     async with db_session() as session:
         repo = Repo(session)
-        user = await repo.get_user_by_tg_id(tg_id)
-        if user is None:
-            return _SessionOut(cards=[])
+        user = await resolve_user(repo, authorization=authorization, init_data=init_data)
         rows = await repo.list_srs_due(user.id, limit=n)
     return _SessionOut(
         cards=[
@@ -169,10 +167,10 @@ async def get_session(init_data: str = "", limit: int = SESSION_CARDS_LIMIT) -> 
 
 
 @router.post("/session/start", response_model=_StartOut)
-async def start_session(body: _StartIn) -> _StartOut:
+async def start_session(
+    body: _StartIn, authorization: Optional[str] = Header(None),
+) -> _StartOut:
     """Открывает Session(mode='srs') в БД и регистрирует presence."""
-    tg_id = _tg_id_from_init_data(body.init_data)
-
     user_id: Optional[int] = None
     session_id_str = ""
 
@@ -180,7 +178,9 @@ async def start_session(body: _StartIn) -> _StartOut:
         from .db.repo import Repo
         async with db_session() as session:
             repo = Repo(session)
-            user = await repo.upsert_user(tg_id=tg_id)
+            user = await resolve_user(
+                repo, authorization=authorization, init_data=body.init_data,
+            )
             user_id = user.id
             row = await repo.open_session(
                 user_id=user_id, mode="srs", level=None, role=None,
@@ -199,9 +199,9 @@ async def start_session(body: _StartIn) -> _StartOut:
 
 
 @router.post("/heartbeat")
-async def heartbeat(body: _HeartbeatIn) -> dict:
+async def heartbeat(body: _HeartbeatIn, authorization: Optional[str] = Header(None)) -> dict:
     """Продлевает presence. Без обращений к БД."""
-    _tg_id_from_init_data(body.init_data)
+    auth_key(authorization, body.init_data)  # проверка авторизации
     entry = _SESSION_STORE.get(body.session_id)
     if entry is None:
         return {"ok": True, "known": False}
@@ -212,20 +212,17 @@ async def heartbeat(body: _HeartbeatIn) -> dict:
 
 
 @router.post("/review", response_model=_ReviewOut)
-async def review(body: _ReviewIn) -> _ReviewOut:
+async def review(body: _ReviewIn, authorization: Optional[str] = Header(None)) -> _ReviewOut:
     """Применить Leitner к карточке. Один UPDATE на карточку, без открытия
     отдельной Session — review дёргается на каждый ответ юзера, гранулярность
     Session тут не нужна (общая обёртка — POST /session/start)."""
-    tg_id = _tg_id_from_init_data(body.init_data)
     if not settings.DATABASE_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "DB not configured")
 
     from .db.repo import Repo
     async with db_session() as session:
         repo = Repo(session)
-        user = await repo.get_user_by_tg_id(tg_id)
-        if user is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
+        user = await resolve_user(repo, authorization=authorization, init_data=body.init_data)
         result = await repo.record_srs_review(user.id, body.word, correct=body.correct)
         if result is None:
             await session.rollback()
@@ -239,21 +236,22 @@ async def review(body: _ReviewIn) -> _ReviewOut:
 
 
 @router.post("/session/finish", response_model=_FinishOut)
-async def finish_session(body: _FinishIn) -> _FinishOut:
+async def finish_session(body: _FinishIn, authorization: Optional[str] = Header(None)) -> _FinishOut:
     """Закрывает Session, инкрементит DailyUsage, поднимает streak.
 
     Зеркалит финализацию grammar.finish / listening.
     """
-    tg_id = _tg_id_from_init_data(body.init_data)
     entry = _SESSION_STORE.pop(body.session_id, None)
     user_id = entry.get("user_id") if entry else None
 
-    # Если store потерял запись (рестарт backend) — резолвим юзера через tg_id.
+    # Если store потерял запись (рестарт backend) — резолвим юзера заново.
     if user_id is None and settings.DATABASE_URL:
         from .db.repo import Repo
         async with db_session() as session:
             repo = Repo(session)
-            user = await repo.get_user_by_tg_id(tg_id)
+            user = await resolve_user(
+                repo, authorization=authorization, init_data=body.init_data,
+            )
             if user is not None:
                 user_id = user.id
 

@@ -28,7 +28,7 @@ from datetime import datetime
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -239,7 +239,7 @@ async def _synthesize_full(text: str, speed: float) -> bytes:
 
 
 class _GenerateIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
     duration_min: int = Field(..., ge=1, le=MAX_DURATION_MIN)
     category: str
     use_vocab: bool = False
@@ -262,7 +262,10 @@ def _tg_id_from_init_data(init_data: str) -> int:
 
 
 @router.post("/generate", response_model=_GenerateOut)
-async def generate_podcast(body: _GenerateIn, request: Request) -> _GenerateOut:
+async def generate_podcast(
+    body: _GenerateIn, request: Request,
+    authorization: Optional[str] = Header(None),
+) -> _GenerateOut:
     # ── Валидация входа ─────────────────────────────────────────────────
     if body.category not in ALLOWED_CATEGORIES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_category")
@@ -271,17 +274,18 @@ async def generate_podcast(body: _GenerateIn, request: Request) -> _GenerateOut:
     if body.level not in ALLOWED_LEVELS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_level")
 
-    tg_id = _tg_id_from_init_data(body.init_data)
-
     # ── Подгружаем user-слова если включён тумблер ──────────────────────
     user_id: Optional[int] = None
     vocab_words: list[str] = []
     if settings.DATABASE_URL:
         from .db import Repo
         from .limits import is_section_limit_reached
+        from .auth import resolve_user
         async with db_session() as session:
             repo = Repo(session)
-            user = await repo.upsert_user(tg_id=tg_id)
+            user = await resolve_user(
+                repo, authorization=authorization, init_data=body.init_data,
+            )
             user_id = user.id
             # Посекционный дневной лимит (free: 1 подкаст/день). Проверяем ДО
             # дорогой LLM/TTS-генерации. Подписчики/FREE_PERIOD — безлимит.
@@ -433,11 +437,13 @@ async def get_audio(audio_id: str, request: Request) -> Response:
 
 
 @router.get("/quota")
-async def get_quota(init_data: str = "") -> dict:
+async def get_quota(
+    init_data: str = "", authorization: Optional[str] = Header(None),
+) -> dict:
     """Лимит на listening. Сейчас заглушка: все юзеры — premium."""
-    # Валидируем init_data чтобы не отдавать инфу анонимам, но результат всё
-    # равно фиксирован.
-    _tg_id_from_init_data(init_data)
+    # Проверяем авторизацию (JWT или initData), но результат фиксирован.
+    from .auth import auth_key
+    auth_key(authorization, init_data)
     return {
         "premium": True,
         "remaining_seconds": 999_999,
