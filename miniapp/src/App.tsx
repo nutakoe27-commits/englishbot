@@ -1155,6 +1155,19 @@ export default function App({ onExit }: AppProps = {}) {
   // Режим текстового чата
   const isChatMode = settings.mode === "chat";
 
+  // Таймер дневного лимита (free-тариф) — показываем над вводом/кнопкой.
+  const showTimer =
+    !!limits && !limits.has_subscription && limits.remaining_seconds >= 0;
+  const timerNode = showTimer ? (
+    <div
+      className="limit-timer"
+      data-warning={limits!.remaining_seconds <= 60 ? "true" : "false"}
+      aria-label="Осталось времени на сегодня (бесплатный тариф)"
+    >
+      ⏱ Осталось сегодня: {formatMmSs(limits!.remaining_seconds)}
+    </div>
+  ) : null;
+
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="tutor-app">
@@ -1180,16 +1193,8 @@ export default function App({ onExit }: AppProps = {}) {
           <span className="tutor-brand__name">English Tutor</span>
         </div>
         <div className="tutor-header__right">
-          {limits && !limits.has_subscription && limits.remaining_seconds >= 0 && (
-            <span
-              className="timer-pill"
-              data-warning={limits.remaining_seconds <= 60 ? "true" : "false"}
-              title="Осталось на сегодня (бесплатный тариф)"
-              aria-label="Осталось времени на сегодня"
-            >
-              ⏱ {formatMmSs(limits.remaining_seconds)}
-            </span>
-          )}
+          {/* Таймер лимита перенесён к строке ввода / кнопке разговора, чтобы
+              не ломать шапку. Здесь — только иконки действий. */}
           {/* Приветствие «Hi, name» в рабочей шапке не показываем — три
               иконки действий важнее и иначе на узких экранах не помещаются
               (приветствие есть на стартовом экране выбора режима). */}
@@ -1311,6 +1316,7 @@ export default function App({ onExit }: AppProps = {}) {
       {/* Стабильный футер — разный для voice / chat режимов */}
       {isChatMode ? (
         <footer className="tutor-controls tutor-controls--chat">
+          {timerNode}
           {/* Индикатор «tutor is typing…» фиксированной высоты */}
           <div className="chat-thinking-indicator" aria-live="polite">
             {chatThinking ? (
@@ -1397,6 +1403,7 @@ export default function App({ onExit }: AppProps = {}) {
         </footer>
       ) : (
         <footer className="tutor-controls">
+          {timerNode}
           {/* Статус — фиксированной высоты, меняется только opacity/текст */}
           <div className="tutor-status" data-variant={buttonVariant}>
             <span className="tutor-status__dot" aria-hidden />

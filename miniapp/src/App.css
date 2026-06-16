@@ -3272,3 +3272,28 @@ button {
   width: 100%;
   justify-content: center;
 }
+
+/* ─── Таймер дневного лимита над вводом / кнопкой разговора ──────────── */
+.limit-timer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  align-self: center;
+  margin: 0 auto 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.limit-timer[data-warning="true"] {
+  background: rgba(255, 84, 112, 0.12);
+  border-color: rgba(255, 84, 112, 0.3);
+  color: var(--record);
+}
