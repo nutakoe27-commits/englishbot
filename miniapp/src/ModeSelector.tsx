@@ -40,14 +40,16 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
     if (user?.first_name) setUserName(user.first_name);
 
     // Статистика на главном экране — чтобы прогресс был виден сразу.
-    // Тихо игнорируем ошибки (новый юзер / нет сети) — блок просто не покажем.
+    // На вебе JWT подставляется автоматически (installFetchAuth), в Telegram
+    // дополнительно передаём init_data как fallback. Тихо игнорируем ошибки.
     const initData = WebApp.initData || "";
-    if (initData) {
-      fetch(`${API_BASE}/api/me/progress?init_data=${encodeURIComponent(initData)}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { if (d) setStats(d as MeStats); })
-        .catch(() => { /* нет статистики — не критично */ });
-    }
+    const url = initData
+      ? `${API_BASE}/api/me/progress?init_data=${encodeURIComponent(initData)}`
+      : `${API_BASE}/api/me/progress`;
+    fetch(url)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setStats(d as MeStats); })
+      .catch(() => { /* нет статистики — не критично */ });
   }, []);
 
   return (

@@ -61,7 +61,13 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
       setMsg("");
       const r = await linkGoogle(resp.credential);
       if (r.ok) { setMsg("Google привязан ✓"); void reload(); }
-      else if (r.error === "taken") setMsg("Этот Google уже привязан к другому аккаунту.");
+      else if (r.error === "taken") {
+        setMsg(
+          "Этот Google уже привязан к другому аккаунту. Выйди и войди через " +
+          "Google — в том аккаунте твой прогресс. Если нужно объединить " +
+          "аккаунты — напиши в @kmo_ai.",
+        );
+      }
       else setMsg("Не удалось привязать Google.");
     };
 
@@ -98,7 +104,13 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
       setMsg("");
       const r = await linkTelegramWidget(user);
       if (r.ok) { setMsg("Telegram привязан ✓"); void reload(); }
-      else if (r.error === "taken") setMsg("Этот Telegram уже привязан к другому аккаунту.");
+      else if (r.error === "taken") {
+        setMsg(
+          "У этого Telegram уже есть отдельный аккаунт в English Tutor — " +
+          "там твой прежний прогресс. Выйди и войди через Telegram, чтобы " +
+          "продолжить с ним. Если нужно объединить аккаунты — напиши в @kmo_ai.",
+        );
+      }
       else setMsg("Не удалось привязать Telegram.");
     };
 
