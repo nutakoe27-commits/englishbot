@@ -99,10 +99,12 @@ class MetricsResponse(BaseModel):
 
 class UserBrief(BaseModel):
     id: int
-    tg_id: int
+    tg_id: Optional[int] = None
     username: Optional[str]
     first_name: Optional[str]
     last_name: Optional[str]
+    email: Optional[str] = None
+    auth_providers: list[str] = Field(default_factory=list)
     is_blocked: bool
     has_subscription: bool
     subscription_until: Optional[str]
@@ -240,12 +242,18 @@ async def _user_to_detail(repo: Repo, u) -> UserDetail:
 
 async def _user_to_brief(repo: Repo, u) -> UserBrief:
     has_sub = await repo.has_active_subscription(u)
+    try:
+        providers = [i["provider"] for i in await repo.list_identities(u.id)]
+    except Exception:
+        providers = []
     return UserBrief(
         id=u.id,
         tg_id=u.tg_id,
         username=u.username,
         first_name=u.first_name,
         last_name=u.last_name,
+        email=getattr(u, "email", None),
+        auth_providers=providers,
         is_blocked=u.is_blocked,
         has_subscription=has_sub,
         subscription_until=(

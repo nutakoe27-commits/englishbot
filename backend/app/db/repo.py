@@ -886,6 +886,7 @@ class Repo:
                 User.username.like(like),
                 User.first_name.like(like),
                 User.last_name.like(like),
+                User.email.like(like),
             ]
             if q.lstrip("-").isdigit():
                 conds.append(User.tg_id == int(q))

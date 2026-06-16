@@ -313,6 +313,17 @@ function modeMeta(mode: string): { label: string; emoji: string } {
   return MODE_META[mode] ?? { label: mode, emoji: "•" };
 }
 
+// Провайдеры входа → компактные иконки для списка/детали.
+const PROVIDER_EMOJI: Record<string, string> = {
+  telegram: "✈️",
+  google: "🟢",
+  apple: "",
+};
+function authProvidersLabel(providers?: string[]): string {
+  if (!providers || providers.length === 0) return "—";
+  return providers.map((p) => PROVIDER_EMOJI[p] ?? p).join(" ");
+}
+
 function modeBadgeStyle(mode: string): React.CSSProperties {
   if (mode === "voice") return S.modeBadgeVoice;
   if (mode === "listening") return S.modeBadgeListening;
@@ -800,7 +811,7 @@ function UsersList() {
       <form onSubmit={submit} style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <input
           style={{ ...S.input, flex: 1 }}
-          placeholder="Поиск: имя, @username или tg_id"
+          placeholder="Поиск: имя, @username, tg_id или email"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -821,6 +832,7 @@ function UsersList() {
                   <th style={S.th}>Имя</th>
                   <th style={S.th}>@username</th>
                   <th style={S.th}>TG ID</th>
+                  <th style={S.th}>Вход</th>
                   <th style={S.th}>Подписка</th>
                   <th style={S.th}>Блок</th>
                   <th style={S.th}>Создан</th>
@@ -835,7 +847,8 @@ function UsersList() {
                   >
                     <td style={S.td}>{userFullName(u)}</td>
                     <td style={S.td}>{u.username ? `@${u.username}` : "—"}</td>
-                    <td style={S.td}>{u.tg_id}</td>
+                    <td style={S.td}>{u.tg_id ?? "—"}</td>
+                    <td style={S.td}>{authProvidersLabel(u.auth_providers)}</td>
                     <td style={S.td}>
                       {u.has_subscription ? (
                         <span
@@ -943,9 +956,16 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
       </button>
       <h2 style={S.h2}>{userFullName(u)}</h2>
       <div style={S.muted}>
-        tg_id {u.tg_id}
+        tg_id {u.tg_id ?? "—"}
         {u.username ? ` · @${u.username}` : ""} · язык {u.language_code || "—"}{" "}
         · создан {fmtDate(u.created_at)}
+      </div>
+      <div style={{ ...S.muted, marginTop: 4 }}>
+        Вход: {authProvidersLabel(u.auth_providers)}
+        {u.auth_providers && u.auth_providers.length
+          ? ` (${u.auth_providers.join(", ")})`
+          : ""}
+        {u.email ? ` · ${u.email}` : ""}
       </div>
 
       {msg && <div style={{ ...S.success, marginTop: 12 }}>{msg}</div>}
