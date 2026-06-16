@@ -187,16 +187,6 @@ async def auth_link(body: _LinkIn, authorization: Optional[str] = Header(None)) 
         if body.provider == "telegram":
             fields = _telegram_fields(body.init_data, body.widget)
             uid, email = str(fields["tg_id"]), None
-            # если у аккаунта нет tg_id — проставим
-            if user.tg_id is None:
-                from sqlalchemy import update as _upd
-                from .db.models import User as _U
-                from .db.repo import utcnow as _now
-                await repo.s.execute(
-                    _upd(_U).where(_U.id == user.id).values(
-                        tg_id=fields["tg_id"], updated_at=_now(),
-                    )
-                )
         else:  # google
             if not body.id_token:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "id_token required")
@@ -205,10 +195,25 @@ async def auth_link(body: _LinkIn, authorization: Optional[str] = Header(None)) 
                 raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_google_token")
             uid, email = info["sub"], info.get("email")
 
+        # Сначала проверяем занятость identity — иначе для telegram попытка
+        # выставить users.tg_id (UNIQUE) упадёт дублем (500), если у этого TG
+        # уже есть свой аккаунт.
         result = await repo.link_identity(user.id, body.provider, uid, email)
         if result == "taken":
             await session.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, "taken")
+
+        # Только после успешной привязки telegram проставляем tg_id (если пуст).
+        if body.provider == "telegram" and user.tg_id is None:
+            from sqlalchemy import update as _upd
+            from .db.models import User as _U
+            from .db.repo import utcnow as _now
+            await repo.s.execute(
+                _upd(_U).where(_U.id == user.id).values(
+                    tg_id=int(uid), updated_at=_now(),
+                )
+            )
+
         identities = await repo.list_identities(user.id)
         await session.commit()
     return {"ok": True, "identities": [

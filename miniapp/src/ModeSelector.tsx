@@ -5,6 +5,7 @@ import WebApp from "@twa-dev/sdk";
 import { useEffect, useState } from "react";
 import { ProgressScreen } from "./ProgressScreen";
 import { AccountSheet } from "./AccountSheet";
+import { fetchMe } from "./auth";
 
 export type Mode = "speaking" | "listening" | "grammar" | "srs";
 
@@ -37,7 +38,14 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
     // Без этого свайп вниз при скролле карточек сворачивает Mini App.
     try { WebApp.disableVerticalSwipes?.(); } catch { /* старые клиенты */ }
     const user = WebApp.initDataUnsafe?.user;
-    if (user?.first_name) setUserName(user.first_name);
+    if (user?.first_name) {
+      setUserName(user.first_name);
+    } else {
+      // Веб: имени из Telegram нет — берём из аккаунта (Google name / TG name).
+      void fetchMe().then((me) => {
+        if (me?.first_name) setUserName(me.first_name);
+      });
+    }
 
     // Статистика на главном экране — чтобы прогресс был виден сразу.
     // На вебе JWT подставляется автоматически (installFetchAuth), в Telegram
