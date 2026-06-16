@@ -23,7 +23,7 @@ import re
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from . import presence
@@ -66,7 +66,7 @@ _SESSION_STORE: dict[str, dict] = {}
 
 
 class _GenerateIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
     mode: str = "weak_points"     # weak_points | topic
     level: str = "B1"
     category: Optional[str] = None  # обязательно для mode=topic
@@ -88,7 +88,7 @@ class _GenerateOut(BaseModel):
 
 
 class _HeartbeatIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
     session_id: str
 
 
@@ -100,7 +100,7 @@ class _ResultItem(BaseModel):
 
 
 class _FinishIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
     session_id: str
     results: list[_ResultItem]
     duration_sec: int = 0
@@ -319,7 +319,10 @@ def _build_prompt(
 
 
 @router.post("/generate", response_model=_GenerateOut)
-async def generate_exercises(body: _GenerateIn, request: Request) -> _GenerateOut:
+async def generate_exercises(
+    body: _GenerateIn, request: Request,
+    authorization: Optional[str] = Header(None),
+) -> _GenerateOut:
     # ── Валидация ────────────────────────────────────────────────────────
     if body.mode not in ALLOWED_MODES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_mode")
@@ -329,8 +332,6 @@ async def generate_exercises(body: _GenerateIn, request: Request) -> _GenerateOu
         if not body.category or body.category not in ALLOWED_CATEGORIES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_category")
 
-    tg_id = _tg_id_from_init_data(body.init_data)
-
     # ── Резолвим юзера и (для weak_points) тянем recent mistakes ────────
     user_id: Optional[int] = None
     recent_mistakes: list[dict] = []
@@ -338,9 +339,12 @@ async def generate_exercises(body: _GenerateIn, request: Request) -> _GenerateOu
     if settings.DATABASE_URL:
         from .db import Repo
         from .limits import is_section_limit_reached
+        from .auth import resolve_user
         async with db_session() as session:
             repo = Repo(session)
-            user = await repo.upsert_user(tg_id=tg_id)
+            user = await resolve_user(
+                repo, authorization=authorization, init_data=body.init_data,
+            )
             user_id = user.id
             # Посекционный дневной лимит (free: 1 урок/тест в день). ДО LLM.
             if await is_section_limit_reached(repo, user, section="grammar"):
@@ -430,10 +434,11 @@ async def generate_exercises(body: _GenerateIn, request: Request) -> _GenerateOu
 
 
 @router.post("/heartbeat")
-async def heartbeat(body: _HeartbeatIn) -> dict:
+async def heartbeat(body: _HeartbeatIn, authorization: Optional[str] = Header(None)) -> dict:
     """Продлевает онлайн-присутствие. Фронт шлёт раз в 20с пока юзер на
     экране упражнений. Не делает БД-запросов — максимально лёгкий."""
-    _tg_id_from_init_data(body.init_data)  # validate sig
+    from .auth import auth_key
+    auth_key(authorization, body.init_data)  # validate auth
     entry = _SESSION_STORE.get(body.session_id)
     if entry is None:
         # Сессия не из этого процесса (рестарт backend) — мягко игнорируем
@@ -445,18 +450,20 @@ async def heartbeat(body: _HeartbeatIn) -> dict:
 
 
 @router.post("/finish", response_model=_FinishOut)
-async def finish_session(body: _FinishIn) -> _FinishOut:
-    tg_id = _tg_id_from_init_data(body.init_data)
+async def finish_session(body: _FinishIn, authorization: Optional[str] = Header(None)) -> _FinishOut:
     entry = _SESSION_STORE.pop(body.session_id, None)
     user_id = entry.get("user_id") if entry else None
 
-    # Если store потерял запись (рестарт) — резолвим юзера через tg_id, чтобы
+    # Если store потерял запись (рестарт) — резолвим юзера заново, чтобы
     # хотя бы streak/usage всё равно начислился.
     if user_id is None and settings.DATABASE_URL:
         from .db import Repo
+        from .auth import resolve_user
         async with db_session() as session:
             repo = Repo(session)
-            user = await repo.get_user_by_tg_id(tg_id)
+            user = await resolve_user(
+                repo, authorization=authorization, init_data=body.init_data,
+            )
             if user is not None:
                 user_id = user.id
 
@@ -535,7 +542,7 @@ class _TopicsOut(BaseModel):
 
 
 class _LessonIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
     topic_key: str
 
 
@@ -548,7 +555,7 @@ class _LessonOut(BaseModel):
 
 
 class _LessonFinishIn(BaseModel):
-    init_data: str
+    init_data: Optional[str] = None
     topic_key: str
     session_id: str
     correct: int = 0
@@ -627,15 +634,17 @@ def _build_lesson_exercises_prompt(
 
 
 @router.get("/topics", response_model=_TopicsOut)
-async def list_topics(init_data: str = "") -> _TopicsOut:
-    tg_id = _tg_id_from_init_data(init_data)
+async def list_topics(
+    init_data: str = "", authorization: Optional[str] = Header(None),
+) -> _TopicsOut:
     if not settings.DATABASE_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db_not_configured")
 
     from .db import Repo
+    from .auth import resolve_user
     async with db_session() as session:
         repo = Repo(session)
-        user = await repo.upsert_user(tg_id=tg_id)
+        user = await resolve_user(repo, authorization=authorization, init_data=init_data)
         topics = list(await repo.list_grammar_topics())
         progress = await repo.get_user_grammar_progress(user.id)
         await session.commit()
@@ -654,18 +663,23 @@ async def list_topics(init_data: str = "") -> _TopicsOut:
     return _TopicsOut(levels=levels)
 
 
-async def _resolve_topic_for_user(body_init_data: str, topic_key: str) -> tuple:
+async def _resolve_topic_for_user(
+    body_init_data: Optional[str], topic_key: str,
+    authorization: Optional[str] = None,
+) -> tuple:
     """Общий preflight для /lesson и /lesson/exercises: юзер, тема,
     проверка locked. Возвращает (user_id, level, title_ru, category)."""
-    tg_id = _tg_id_from_init_data(body_init_data)
     if not settings.DATABASE_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db_not_configured")
 
     from .db import Repo
     from .limits import is_section_limit_reached
+    from .auth import resolve_user
     async with db_session() as session:
         repo = Repo(session)
-        user = await repo.upsert_user(tg_id=tg_id)
+        user = await resolve_user(
+            repo, authorization=authorization, init_data=body_init_data,
+        )
         user_id = user.id
         # Посекционный дневной лимит (free: 1 урок/тест в день). Сессия урока
         # открывается только в /lesson/exercises, поэтому в рамках текущего
@@ -687,12 +701,12 @@ async def _resolve_topic_for_user(body_init_data: str, topic_key: str) -> tuple:
 
 
 @router.post("/lesson", response_model=_LessonOut)
-async def get_lesson(body: _LessonIn) -> _LessonOut:
+async def get_lesson(body: _LessonIn, authorization: Optional[str] = Header(None)) -> _LessonOut:
     """Быстрый endpoint: ТОЛЬКО рукописная теория, без LLM. Юзер начинает
     читать урок мгновенно; упражнения фронт запрашивает параллельно через
     /lesson/exercises и они готовятся, пока человек читает."""
     user_id, topic_level, topic_title, _category = await _resolve_topic_for_user(
-        body.init_data, body.topic_key,
+        body.init_data, body.topic_key, authorization,
     )
 
     from .grammar_lessons import THEORY
@@ -725,11 +739,14 @@ class _LessonExercisesOut(BaseModel):
 
 
 @router.post("/lesson/exercises", response_model=_LessonExercisesOut)
-async def get_lesson_exercises(body: _LessonIn, request: Request) -> _LessonExercisesOut:
+async def get_lesson_exercises(
+    body: _LessonIn, request: Request,
+    authorization: Optional[str] = Header(None),
+) -> _LessonExercisesOut:
     """Медленный endpoint: LLM-генерация упражнений (каждому юзеру свежие)
     + открытие Session. Фронт зовёт его в фоне сразу после /lesson."""
     user_id, topic_level, topic_title, topic_category = await _resolve_topic_for_user(
-        body.init_data, body.topic_key,
+        body.init_data, body.topic_key, authorization,
     )
 
     from .grammar_lessons import THEORY
@@ -781,8 +798,7 @@ async def get_lesson_exercises(body: _LessonIn, request: Request) -> _LessonExer
 
 
 @router.post("/lesson/finish", response_model=_LessonFinishOut)
-async def finish_lesson(body: _LessonFinishIn) -> _LessonFinishOut:
-    tg_id = _tg_id_from_init_data(body.init_data)
+async def finish_lesson(body: _LessonFinishIn, authorization: Optional[str] = Header(None)) -> _LessonFinishOut:
     if not settings.DATABASE_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db_not_configured")
 
@@ -806,7 +822,10 @@ async def finish_lesson(body: _LessonFinishIn) -> _LessonFinishOut:
     async with db_session() as session:
         repo = Repo(session)
         if user_id is None:
-            user = await repo.get_user_by_tg_id(tg_id)
+            from .auth import resolve_user
+            user = await resolve_user(
+                repo, authorization=authorization, init_data=body.init_data,
+            )
             user_id = user.id if user else None
         if user_id is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "user_not_found")

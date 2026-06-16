@@ -8,3 +8,4 @@ websockets>=13.0
 sqlalchemy[asyncio]==2.0.36
 asyncmy==0.2.10
 cryptography>=42.0.0
+pyjwt[crypto]==2.9.0

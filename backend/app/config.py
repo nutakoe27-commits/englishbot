@@ -18,8 +18,17 @@ class Settings(BaseSettings):
     # Хост admin-панели — используется в CORS
     ADMIN_HOST: str = "admin-english.krichigindocs.ru"
 
-    # Telegram Bot token — используется для валидации initData
+    # Telegram Bot token — используется для валидации initData и Login Widget
     BOT_TOKEN: Optional[str] = None
+
+    # ─── Веб-авторизация (миграция 0020) ─────────────────────────────────
+    # Секрет для подписи JWT сессий. Генерируй: openssl rand -hex 32
+    # Если не задан — выдача/проверка JWT отключена (работает только Mini App).
+    AUTH_JWT_SECRET: Optional[str] = None
+    # Срок жизни JWT (дни).
+    AUTH_JWT_TTL_DAYS: int = 30
+    # Google OAuth Client ID (тип Web) — для проверки aud в Google ID-token.
+    GOOGLE_CLIENT_ID: Optional[str] = None
 
     # ─── База данных ──────────────────────────────────────────────────────
     # Формат: mysql+asyncmy://user:password@host:port/dbname?charset=utf8mb4

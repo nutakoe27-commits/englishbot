@@ -138,6 +138,28 @@ class LimitsContext:
         return self.used_seconds_today
 
 
+async def context_for_user(repo: Repo, repo_factory, user) -> LimitsContext:
+    """Собрать LimitsContext для уже резолвнутого User (веб/JWT-путь)."""
+    has_sub = await repo.has_active_subscription(user)
+    if settings.FREE_PERIOD:
+        has_sub = True
+    free_seconds = await repo.get_kv_int(
+        "free_seconds_per_day", DEFAULT_FREE_SECONDS_PER_DAY
+    )
+    used = await repo.get_speaking_seconds_today(user.id)
+    bonus = await repo.get_bonus_seconds_today(user.id)
+    return LimitsContext(
+        user_db_id=user.id,
+        tg_id=int(user.tg_id) if user.tg_id is not None else 0,
+        has_subscription=has_sub,
+        free_seconds_per_day=free_seconds,
+        used_seconds_today=used,
+        bonus_seconds_today=bonus,
+        is_blocked=user.is_blocked,
+        repo_factory=repo_factory,
+    )
+
+
 async def build_limits_context(
     *,
     repo: Repo,
@@ -148,7 +170,7 @@ async def build_limits_context(
     last_name: Optional[str],
     language_code: Optional[str],
 ) -> LimitsContext:
-    """Upsert юзера и собрать LimitsContext (вызвать ОДИН раз при connect)."""
+    """Upsert Telegram-юзера и собрать LimitsContext (Mini App / initData-путь)."""
     user = await repo.upsert_user(
         tg_id=tg_id,
         username=username,
@@ -156,27 +178,7 @@ async def build_limits_context(
         last_name=last_name,
         language_code=language_code,
     )
-    has_sub = await repo.has_active_subscription(user)
-    # Free Period: открываем всем доступ как подписчикам, не трогая БД.
-    if settings.FREE_PERIOD:
-        has_sub = True
-    free_seconds = await repo.get_kv_int(
-        "free_seconds_per_day", DEFAULT_FREE_SECONDS_PER_DAY
-    )
-    # Гейт говорения строится на speaking_seconds (миграция 0016), а не на
-    # общем used_seconds — иначе слушание/грамматика тратили бы бюджет говорения.
-    used = await repo.get_speaking_seconds_today(user.id)
-    bonus = await repo.get_bonus_seconds_today(user.id)
-    return LimitsContext(
-        user_db_id=user.id,
-        tg_id=tg_id,
-        has_subscription=has_sub,
-        free_seconds_per_day=free_seconds,
-        used_seconds_today=used,
-        bonus_seconds_today=bonus,
-        is_blocked=user.is_blocked,
-        repo_factory=repo_factory,
-    )
+    return await context_for_user(repo, repo_factory, user)
 
 
 # ─── Посекционные лимиты (listening / grammar) ───────────────────────────

@@ -22,6 +22,7 @@ from .models import (
     Session as SessionRow,
     User,
     UserGrammarProgress,
+    UserIdentity,
     UserMistake,
     UserVocabulary,
 )
@@ -76,7 +77,12 @@ class Repo:
             updated_at=now,
         )
         await self.s.execute(stmt)
-        return await self.get_user_by_tg_id(tg_id)
+        user = await self.get_user_by_tg_id(tg_id)
+        # Гарантируем telegram-identity (для юзеров, созданных до миграции 0020
+        # backfill или вне неё). Идемпотентно через UNIQUE(provider, uid).
+        if user is not None:
+            await self._ensure_identity(user.id, "telegram", str(tg_id), None)
+        return user
 
     async def get_user_by_tg_id(self, tg_id: int) -> Optional[User]:
         res = await self.s.execute(select(User).where(User.tg_id == tg_id))
@@ -85,6 +91,122 @@ class Repo:
     async def get_user_by_id(self, user_id: int) -> Optional[User]:
         res = await self.s.execute(select(User).where(User.id == user_id))
         return res.scalar_one_or_none()
+
+    # ─── auth identities (миграция 0020) ────────────────────────────────
+    async def get_user_by_identity(
+        self, provider: str, provider_uid: str,
+    ) -> Optional[User]:
+        res = await self.s.execute(
+            select(User)
+            .join(UserIdentity, UserIdentity.user_id == User.id)
+            .where(
+                UserIdentity.provider == provider,
+                UserIdentity.provider_uid == provider_uid,
+            )
+        )
+        return res.scalar_one_or_none()
+
+    async def get_user_by_email(self, email: str) -> Optional[User]:
+        if not email:
+            return None
+        res = await self.s.execute(
+            select(User).where(User.email == email).limit(1)
+        )
+        return res.scalar_one_or_none()
+
+    async def list_identities(self, user_id: int) -> list[dict]:
+        res = await self.s.execute(
+            select(UserIdentity.provider, UserIdentity.email, UserIdentity.created_at)
+            .where(UserIdentity.user_id == user_id)
+            .order_by(UserIdentity.created_at.asc())
+        )
+        return [
+            {"provider": p, "email": e, "created_at": c}
+            for p, e, c in res.all()
+        ]
+
+    async def _ensure_identity(
+        self, user_id: int, provider: str, provider_uid: str, email: Optional[str],
+    ) -> None:
+        """INSERT IGNORE identity (идемпотентно по UNIQUE(provider, uid))."""
+        stmt = mysql_insert(UserIdentity).values(
+            user_id=user_id,
+            provider=provider,
+            provider_uid=provider_uid,
+            email=email,
+            created_at=utcnow(),
+        ).prefix_with("IGNORE")
+        await self.s.execute(stmt)
+
+    async def create_user_with_identity(
+        self,
+        *,
+        provider: str,
+        provider_uid: str,
+        email: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        tg_id: Optional[int] = None,
+        username: Optional[str] = None,
+        language_code: Optional[str] = None,
+    ) -> User:
+        """Создать новый аккаунт + identity (для регистрации через провайдера)."""
+        now = utcnow()
+        user = User(
+            tg_id=tg_id,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            language_code=language_code,
+            email=email,
+            reminder_time=time(19, 0),
+            reminder_enabled=True,
+            is_blocked=False,
+            created_at=now,
+            updated_at=now,
+        )
+        self.s.add(user)
+        await self.s.flush()  # получить user.id
+        await self._ensure_identity(user.id, provider, provider_uid, email)
+        return user
+
+    async def link_identity(
+        self, user_id: int, provider: str, provider_uid: str,
+        email: Optional[str] = None,
+    ) -> str:
+        """Привязать провайдер к аккаунту. 'ok' | 'taken' (уже у другого)."""
+        existing = await self.get_user_by_identity(provider, provider_uid)
+        if existing is not None:
+            return "ok" if existing.id == user_id else "taken"
+        await self._ensure_identity(user_id, provider, provider_uid, email)
+        # Если у аккаунта ещё нет email — проставим из провайдера.
+        if email:
+            await self.s.execute(
+                update(User).where(User.id == user_id, User.email.is_(None))
+                .values(email=email, updated_at=utcnow())
+            )
+        return "ok"
+
+    async def count_identities(self, user_id: int) -> int:
+        res = await self.s.execute(
+            select(func.count(UserIdentity.id)).where(
+                UserIdentity.user_id == user_id
+            )
+        )
+        return int(res.scalar() or 0)
+
+    async def unlink_identity(self, user_id: int, provider: str) -> bool:
+        """Удалить привязку провайдера. False если это последний способ входа."""
+        if await self.count_identities(user_id) <= 1:
+            return False
+        from sqlalchemy import delete
+        await self.s.execute(
+            delete(UserIdentity).where(
+                UserIdentity.user_id == user_id,
+                UserIdentity.provider == provider,
+            )
+        )
+        return True
 
     async def has_active_subscription(self, user: User) -> bool:
         if user.subscription_until is None:
