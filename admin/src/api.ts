@@ -109,10 +109,12 @@ export interface OnlineResponse {
 
 export interface UserBrief {
   id: number;
-  tg_id: number;
+  tg_id: number | null;
   username: string | null;
   first_name: string | null;
   last_name: string | null;
+  email?: string | null;
+  auth_providers?: string[];
   is_blocked: boolean;
   has_subscription: boolean;
   subscription_until: string | null;
