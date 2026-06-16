@@ -144,6 +144,75 @@ export async function loginGoogle(idToken: string): Promise<{ ok: boolean; error
   return { ok: false, error };
 }
 
+export interface MeIdentity {
+  provider: string;
+  email: string | null;
+}
+
+export interface MeInfo {
+  id: number;
+  tg_id: number | null;
+  first_name: string | null;
+  username: string | null;
+  email: string | null;
+  identities: MeIdentity[];
+  has_subscription?: boolean;
+}
+
+/** Текущий аккаунт + привязки. null если не авторизован/ошибка. */
+export async function fetchMe(): Promise<MeInfo | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/me`);
+    if (!res.ok) return null;
+    return (await res.json()) as MeInfo;
+  } catch {
+    return null;
+  }
+}
+
+interface LinkResult {
+  ok: boolean;
+  error?: string;
+}
+
+/** Привязать Google (id_token из GIS) к текущему аккаунту. */
+export async function linkGoogle(idToken: string): Promise<LinkResult> {
+  const res = await _postJson("/api/auth/link", {
+    provider: "google",
+    id_token: idToken,
+  });
+  if (res.ok) return { ok: true };
+  let error = `HTTP ${res.status}`;
+  try {
+    const d = await res.json();
+    if (d?.detail) error = String(d.detail);
+  } catch {
+    /* ignore */
+  }
+  return { ok: false, error };
+}
+
+/** Привязать Telegram (Login Widget) к текущему аккаунту (для веб-юзеров). */
+export async function linkTelegramWidget(
+  widget: Record<string, unknown>,
+): Promise<LinkResult> {
+  const res = await _postJson("/api/auth/link", { provider: "telegram", widget });
+  if (res.ok) return { ok: true };
+  let error = `HTTP ${res.status}`;
+  try {
+    const d = await res.json();
+    if (d?.detail) error = String(d.detail);
+  } catch {
+    /* ignore */
+  }
+  return { ok: false, error };
+}
+
+/** Выйти из аккаунта (только клиентски — стираем токен). */
+export function logout(): void {
+  clearToken();
+}
+
 /** Проверить, что сохранённый токен ещё валиден (GET /api/auth/me). */
 export async function verifySession(): Promise<boolean> {
   if (!getToken()) return false;
