@@ -12,7 +12,8 @@ import {
   BOT_USERNAME,
   GOOGLE_CLIENT_ID,
   fetchMe,
-  linkGoogle,
+  getToken,
+  googleStartUrl,
   linkTelegramWidget,
   logout,
   type MeInfo,
@@ -33,7 +34,6 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
   const [me, setMe] = useState<MeInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string>("");
-  const googleBoxRef = useRef<HTMLDivElement | null>(null);
   const tgBoxRef = useRef<HTMLDivElement | null>(null);
 
   const inTelegram = (() => {
@@ -52,50 +52,18 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
   const hasGoogle = linked.has("google");
   const hasTelegram = linked.has("telegram");
 
-  // ── Кнопка привязки Google (GIS) ───────────────────────────────────────
-  useEffect(() => {
-    if (loading || hasGoogle || !GOOGLE_CLIENT_ID || !googleBoxRef.current) return;
-
-    const onCredential = async (resp: { credential?: string }) => {
-      if (!resp?.credential) return;
-      setMsg("");
-      const r = await linkGoogle(resp.credential);
-      if (r.ok) { setMsg("Google привязан ✓"); void reload(); }
-      else if (r.error === "taken") {
-        setMsg(
-          "Этот Google уже привязан к другому аккаунту. Выйди и войди через " +
-          "Google — в том аккаунте твой прогресс. Если нужно объединить " +
-          "аккаунты — напиши в @kmo_ai.",
-        );
-      }
-      else setMsg("Не удалось привязать Google.");
-    };
-
-    const render = () => {
-      if (!window.google?.accounts?.id || !googleBoxRef.current) return;
-      window.google.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: onCredential,
-        ux_mode: "popup",
-      });
-      window.google.accounts.id.renderButton(googleBoxRef.current, {
-        theme: "filled_black", size: "large", shape: "pill",
-        text: "continue_with",
-      });
-    };
-
-    if (window.google?.accounts?.id) render();
-    else {
-      const ex = document.getElementById("gsi-script");
-      if (!ex) {
-        const s = document.createElement("script");
-        s.id = "gsi-script";
-        s.src = "https://accounts.google.com/gsi/client";
-        s.async = true; s.defer = true; s.onload = render;
-        document.head.appendChild(s);
-      } else ex.addEventListener("load", render);
+  // ── Привязка Google: серверный OAuth-redirect ──────────────────────────
+  // GIS не используем (webview Telegram его блокирует). В Telegram открываем
+  // внешний браузер; на вебе — обычный full-page redirect.
+  const handleLinkGoogle = () => {
+    const url = googleStartUrl(getToken() || undefined);
+    if (inTelegram) {
+      try { WebApp.openLink(url); } catch { window.open(url, "_blank"); }
+      setMsg("Открыл браузер для входа через Google. После — вернись и обнови.");
+    } else {
+      window.location.href = url;
     }
-  }, [loading, hasGoogle, reload]);
+  };
 
   // ── Кнопка привязки Telegram (Login Widget, только на вебе) ────────────
   useEffect(() => {
@@ -167,8 +135,13 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
 
               {!hasGoogle && GOOGLE_CLIENT_ID && (
                 <div className="acc-link-block">
-                  <div className="acc-link-title">Привязать Google</div>
-                  <div ref={googleBoxRef} className="acc-gbtn" />
+                  <button
+                    type="button"
+                    className="btn btn--ghost acc-link-btn"
+                    onClick={handleLinkGoogle}
+                  >
+                    <span aria-hidden>🟢</span> Привязать Google
+                  </button>
                 </div>
               )}
 

@@ -151,6 +151,56 @@ async def verify_google_id_token(id_token: str) -> Optional[dict]:
     return await asyncio.to_thread(_verify_google_sync, id_token)
 
 
+# ─── Google OAuth redirect-флоу (Authorization Code) ──────────────────────────
+
+def make_oauth_state(payload: dict, ttl_sec: int = 600) -> str:
+    """Подписанный короткоживущий state для OAuth (защита от CSRF/подмены)."""
+    if not settings.AUTH_JWT_SECRET:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "auth not configured")
+    now = int(time.time())
+    data = {**payload, "iat": now, "exp": now + ttl_sec}
+    return jwt.encode(data, settings.AUTH_JWT_SECRET, algorithm="HS256")
+
+
+def read_oauth_state(token: str) -> Optional[dict]:
+    if not token or not settings.AUTH_JWT_SECRET:
+        return None
+    try:
+        return jwt.decode(token, settings.AUTH_JWT_SECRET, algorithms=["HS256"])
+    except Exception:
+        return None
+
+
+async def exchange_google_code(code: str, redirect_uri: str) -> Optional[dict]:
+    """Обменять authorization code на токены, вернуть проверенный профиль
+    {sub,email,email_verified,name} либо None."""
+    if not (settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET):
+        return None
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": settings.GOOGLE_CLIENT_ID,
+                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+        if resp.status_code != 200:
+            logger.warning("[auth] google token exchange %s: %s", resp.status_code, resp.text[:300])
+            return None
+        id_token = resp.json().get("id_token")
+        if not id_token:
+            return None
+    except Exception as exc:
+        logger.warning("[auth] google code exchange failed: %s", exc)
+        return None
+    return await verify_google_id_token(id_token)
+
+
 def auth_key(
     authorization: Optional[str] = None,
     init_data: Optional[str] = None,

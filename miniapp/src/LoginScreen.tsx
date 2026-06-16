@@ -1,15 +1,15 @@
 /**
  * LoginScreen.tsx — экран входа для веб-версии (вне Telegram).
  *
- * Варианты: Telegram Login Widget и Google Identity Services.
- * После успешного входа сохраняем JWT и зовём onAuthed().
+ * Telegram — через Login Widget. Google — через серверный OAuth-redirect
+ * (GIS не используем: его блокирует webview Telegram, а в браузере он капризен).
  */
 
 import { useEffect, useRef, useState } from "react";
 import {
   BOT_USERNAME,
   GOOGLE_CLIENT_ID,
-  loginGoogle,
+  googleStartUrl,
   loginTelegramWidget,
 } from "./auth";
 
@@ -17,7 +17,6 @@ interface Props {
   onAuthed: () => void;
 }
 
-// Глобальные коллбеки/SDK сторонних виджетов.
 declare global {
   interface Window {
     onTelegramAuth?: (user: Record<string, unknown>) => void;
@@ -29,7 +28,6 @@ export function LoginScreen({ onAuthed }: Props) {
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
   const tgBoxRef = useRef<HTMLDivElement | null>(null);
-  const googleBoxRef = useRef<HTMLDivElement | null>(null);
 
   // ── Telegram Login Widget ──────────────────────────────────────────────
   useEffect(() => {
@@ -64,62 +62,6 @@ export function LoginScreen({ onAuthed }: Props) {
     };
   }, [onAuthed]);
 
-  // ── Google Identity Services ───────────────────────────────────────────
-  useEffect(() => {
-    if (!GOOGLE_CLIENT_ID) return;
-
-    const handleCredential = async (resp: { credential?: string }) => {
-      if (!resp?.credential) return;
-      setBusy(true);
-      setError("");
-      try {
-        const r = await loginGoogle(resp.credential);
-        if (r.ok) onAuthed();
-        else if (r.error === "email_taken")
-          setError("Этот email уже используется. Войди прежним способом и привяжи Google в настройках.");
-        else setError("Не удалось войти через Google.");
-      } catch {
-        setError("Ошибка сети. Попробуй ещё раз.");
-      } finally {
-        setBusy(false);
-      }
-    };
-
-    const render = () => {
-      if (!window.google?.accounts?.id || !googleBoxRef.current) return;
-      window.google.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: handleCredential,
-        ux_mode: "popup",
-      });
-      // Без фикс. width — иначе GIS не рендерит кнопку на узких экранах,
-      // где контейнер уже запрошенной ширины (мобильные телефоны).
-      window.google.accounts.id.renderButton(googleBoxRef.current, {
-        theme: "filled_black",
-        size: "large",
-        shape: "pill",
-        text: "continue_with",
-      });
-    };
-
-    if (window.google?.accounts?.id) {
-      render();
-    } else {
-      const existing = document.getElementById("gsi-script");
-      if (!existing) {
-        const s = document.createElement("script");
-        s.id = "gsi-script";
-        s.src = "https://accounts.google.com/gsi/client";
-        s.async = true;
-        s.defer = true;
-        s.onload = render;
-        document.head.appendChild(s);
-      } else {
-        existing.addEventListener("load", render);
-      }
-    }
-  }, [onAuthed]);
-
   return (
     <div className="login-screen">
       <div className="login-card">
@@ -136,7 +78,13 @@ export function LoginScreen({ onAuthed }: Props) {
         <div className="login-buttons">
           <div ref={tgBoxRef} className="login-tg" />
           {GOOGLE_CLIENT_ID ? (
-            <div ref={googleBoxRef} className="login-google" />
+            <button
+              type="button"
+              className="login-google-btn"
+              onClick={() => { window.location.href = googleStartUrl(); }}
+            >
+              <span aria-hidden>🟢</span> Войти через Google
+            </button>
           ) : (
             <p className="login-hint">Вход через Google скоро будет доступен.</p>
           )}

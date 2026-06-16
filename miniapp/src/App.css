@@ -3246,3 +3246,29 @@ button {
   text-decoration: none;
 }
 .acc-channel:hover { text-decoration: underline; }
+
+/* ─── Google-кнопка (серверный OAuth-redirect) ──────────────────────── */
+.login-google-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 280px;
+  padding: 12px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text, #fff);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.login-google-btn:hover { background: rgba(255, 255, 255, 0.1); }
+.acc-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  justify-content: center;
+}

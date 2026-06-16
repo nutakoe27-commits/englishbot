@@ -10,7 +10,10 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, status
+from urllib.parse import urlencode
+
+from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from . import auth as auth_lib
@@ -238,3 +241,93 @@ async def auth_unlink(body: _UnlinkIn, authorization: Optional[str] = Header(Non
     return {"ok": True, "identities": [
         {"provider": i["provider"], "email": i.get("email")} for i in identities
     ]}
+
+
+# ─── Google OAuth redirect-флоу (работает в браузере и из Telegram через ───────
+# внешний браузер — в отличие от GIS, который webview Telegram блокирует) ───────
+
+def _site_redirect(redirect: Optional[str]) -> str:
+    """Куда вернуть браузер после OAuth. Только разрешённые хосты (анти-open-redirect)."""
+    allowed = (settings.WEB_APP_URL or settings.MINIAPP_URL or "").rstrip("/")
+    if redirect:
+        for base in (allowed, "http://localhost:5173", "http://localhost:5174"):
+            if base and redirect.startswith(base):
+                return redirect.rstrip("/")
+    return allowed or "/"
+
+
+def _api_base(request: Request) -> str:
+    if settings.API_PUBLIC_URL:
+        return settings.API_PUBLIC_URL.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+@router.get("/google/start")
+async def google_start(
+    request: Request, redirect: str = "", link_token: str = "",
+):
+    """Старт Google OAuth: 302 на Google. redirect — куда вернуть сайт;
+    link_token (наш JWT) — режим привязки к существующему аккаунту."""
+    if not (settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET):
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "google not configured")
+    redirect_uri = f"{_api_base(request)}/api/auth/google/callback"
+    state_payload: dict = {"site": _site_redirect(redirect)}
+    if link_token:
+        uid = auth_lib.verify_jwt(link_token)
+        if uid is not None:
+            state_payload["link_uid"] = uid
+    state = auth_lib.make_oauth_state(state_payload)
+    params = {
+        "client_id": settings.GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+        "access_type": "online",
+    }
+    return RedirectResponse(
+        "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params),
+        status_code=302,
+    )
+
+
+@router.get("/google/callback")
+async def google_callback(
+    request: Request, code: str = "", state: str = "", error: str = "",
+):
+    """Google вернул code → меняем на токен, логиним/привязываем, редирект на сайт
+    с #token=… (вход) или #linked=google / #link_error=… (привязка)."""
+    st = auth_lib.read_oauth_state(state) or {}
+    site = (st.get("site") or settings.WEB_APP_URL or settings.MINIAPP_URL or "/").rstrip("/")
+    if error or not code or not st:
+        return RedirectResponse(f"{site}/#auth_error=google", status_code=302)
+
+    redirect_uri = f"{_api_base(request)}/api/auth/google/callback"
+    info = await auth_lib.exchange_google_code(code, redirect_uri)
+    if info is None:
+        return RedirectResponse(f"{site}/#auth_error=google", status_code=302)
+
+    sub = info["sub"]
+    email = info.get("email")
+    from .db import Repo
+    link_uid = st.get("link_uid")
+    async with db_session() as session:
+        repo = Repo(session)
+        if link_uid:
+            res = await repo.link_identity(int(link_uid), "google", sub, email)
+            await session.commit()
+            frag = "linked=google" if res == "ok" else "link_error=taken"
+            return RedirectResponse(f"{site}/#{frag}", status_code=302)
+
+        user = await repo.get_user_by_identity("google", sub)
+        if user is None:
+            if email and await repo.get_user_by_email(email):
+                return RedirectResponse(f"{site}/#auth_error=email_taken", status_code=302)
+            user = await repo.create_user_with_identity(
+                provider="google", provider_uid=sub, email=email,
+                first_name=info.get("name"),
+            )
+        await session.commit()
+        token = auth_lib.issue_jwt(user.id)
+    return RedirectResponse(f"{site}/#token={token}", status_code=302)
