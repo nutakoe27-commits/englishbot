@@ -4,6 +4,7 @@
 import WebApp from "@twa-dev/sdk";
 import { useEffect, useState } from "react";
 import { ProgressScreen } from "./ProgressScreen";
+import { AccountSheet } from "./AccountSheet";
 
 export type Mode = "speaking" | "listening" | "grammar" | "srs";
 
@@ -13,6 +14,7 @@ const API_BASE =
 
 interface Props {
   onPick: (mode: Mode) => void;
+  onLoggedOut?: () => void;
 }
 
 interface MeStats {
@@ -23,10 +25,11 @@ interface MeStats {
   achievements_total: number;
 }
 
-export function ModeSelector({ onPick }: Props) {
+export function ModeSelector({ onPick, onLoggedOut }: Props) {
   const [userName, setUserName] = useState<string>("there");
   const [stats, setStats] = useState<MeStats | null>(null);
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
+  const [accountOpen, setAccountOpen] = useState<boolean>(false);
 
   useEffect(() => {
     try { WebApp.ready(); } catch { /* старые клиенты */ }
@@ -57,7 +60,18 @@ export function ModeSelector({ onPick }: Props) {
           <span className="tutor-brand__dot" aria-hidden />
           <span className="tutor-brand__name">English Tutor</span>
         </div>
-        <p className="tutor-hello">Hi, {userName}</p>
+        <div className="mode-selector__header-right">
+          <p className="tutor-hello">Hi, {userName}</p>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setAccountOpen(true)}
+            aria-label="Аккаунт и настройки входа"
+            title="Аккаунт"
+          >
+            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>👤</span>
+          </button>
+        </div>
       </header>
 
       <main className="mode-selector__main">
@@ -158,6 +172,16 @@ export function ModeSelector({ onPick }: Props) {
           apiBase={API_BASE}
           initData={WebApp.initData || ""}
           onClose={() => setProgressOpen(false)}
+        />
+      )}
+
+      {accountOpen && (
+        <AccountSheet
+          onClose={() => setAccountOpen(false)}
+          onLoggedOut={() => {
+            setAccountOpen(false);
+            onLoggedOut?.();
+          }}
         />
       )}
     </div>

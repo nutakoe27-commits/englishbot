@@ -3181,3 +3181,64 @@ button {
 .login-channel:hover {
   text-decoration: underline;
 }
+
+/* ─── ModeSelector header right (имя + кнопка аккаунта) ──────────────── */
+.mode-selector__header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ─── AccountSheet (привязки входа) ──────────────────────────────────── */
+.acc-lead {
+  margin: 0 0 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-dim, rgba(255, 255, 255, 0.65));
+}
+.acc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.acc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.acc-row__name { font-weight: 600; font-size: 14px; }
+.acc-row__on {
+  font-size: 12.5px;
+  color: #7ee0a3;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acc-row__off { font-size: 12.5px; color: var(--text-faint, rgba(255,255,255,0.45)); }
+.acc-link-block { margin-bottom: 14px; }
+.acc-link-title {
+  font-size: 13px;
+  color: var(--text-dim, rgba(255, 255, 255, 0.65));
+  margin-bottom: 8px;
+}
+.acc-gbtn, .acc-tgbtn { display: flex; justify-content: center; min-height: 40px; }
+.acc-msg {
+  margin: 4px 0 10px;
+  font-size: 13px;
+  color: var(--accent-soft, #a489ff);
+}
+.acc-hint { font-size: 13px; color: var(--text-faint, rgba(255,255,255,0.5)); }
+.acc-channel {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--accent-soft, #a489ff);
+  text-decoration: none;
+}
+.acc-channel:hover { text-decoration: underline; }

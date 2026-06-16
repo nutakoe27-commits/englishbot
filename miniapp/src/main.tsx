@@ -128,7 +128,7 @@ function Root() {
   if (screen === "listening") return <ListeningScreen onExit={backToSelector} />;
   if (screen === "grammar") return <GrammarScreen onExit={backToSelector} />;
   if (screen === "srs") return <SrsScreen onExit={backToSelector} />;
-  return <ModeSelector onPick={setScreen} />;
+  return <ModeSelector onPick={setScreen} onLoggedOut={() => setAuth("login")} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
