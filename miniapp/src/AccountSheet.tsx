@@ -76,10 +76,11 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
       window.google.accounts.id.initialize({
         client_id: GOOGLE_CLIENT_ID,
         callback: onCredential,
+        ux_mode: "popup",
       });
       window.google.accounts.id.renderButton(googleBoxRef.current, {
         theme: "filled_black", size: "large", shape: "pill",
-        text: "continue_with", width: 260,
+        text: "continue_with",
       });
     };
 

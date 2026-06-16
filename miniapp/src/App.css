@@ -118,7 +118,8 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-shrink: 0;   /* бренд/«Грамматика» не схлопывается — ужимается имя справа */
+  min-width: 0;     /* бренд может ужиматься, чтобы таймер+иконки не обрезались */
+  flex-shrink: 1;
 }
 .tutor-brand__dot {
   width: 10px;
@@ -132,6 +133,8 @@ button {
   font-size: 16px;
   letter-spacing: -0.2px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tutor-hello {
   margin: 0;

@@ -90,13 +90,15 @@ export function LoginScreen({ onAuthed }: Props) {
       window.google.accounts.id.initialize({
         client_id: GOOGLE_CLIENT_ID,
         callback: handleCredential,
+        ux_mode: "popup",
       });
+      // Без фикс. width — иначе GIS не рендерит кнопку на узких экранах,
+      // где контейнер уже запрошенной ширины (мобильные телефоны).
       window.google.accounts.id.renderButton(googleBoxRef.current, {
         theme: "filled_black",
         size: "large",
         shape: "pill",
         text: "continue_with",
-        width: 280,
       });
     };
 
