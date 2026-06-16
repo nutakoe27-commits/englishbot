@@ -3089,3 +3089,95 @@ button {
   gap: 10px;
 }
 
+
+/* ─── Boot splash (пока резолвим авторизацию) ───────────────────────── */
+.boot-splash {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-0, #0b0d12);
+}
+
+/* ─── LoginScreen (веб-вход вне Telegram) ───────────────────────────── */
+.login-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background:
+    radial-gradient(1200px 600px at 50% -200px, rgba(124, 92, 255, 0.18), transparent 60%),
+    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
+    var(--bg-0, #0b0d12);
+  color: var(--text, #fff);
+  overflow-y: auto;
+}
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+  padding: 28px 22px;
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.login-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.login-brand__name {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-dim, rgba(255, 255, 255, 0.7));
+}
+.login-title {
+  margin: 4px 0 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.login-subtitle {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-dim, rgba(255, 255, 255, 0.65));
+}
+.login-buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  min-height: 48px;
+}
+.login-tg,
+.login-google {
+  display: flex;
+  justify-content: center;
+  min-height: 40px;
+}
+.login-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-faint, rgba(255, 255, 255, 0.5));
+}
+.login-error {
+  margin: 0;
+  font-size: 13px;
+  color: #ffb0b0;
+  line-height: 1.45;
+}
+.login-channel {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--accent-soft, #a489ff);
+  text-decoration: none;
+}
+.login-channel:hover {
+  text-decoration: underline;
+}

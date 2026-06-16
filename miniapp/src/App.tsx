@@ -23,6 +23,7 @@ import { SessionSummary } from "./SessionSummary";
 import { WordsScreen } from "./WordsScreen";
 import { ProgressScreen } from "./ProgressScreen";
 import { wordDiff, diffLooksMeaningful, type DiffOp } from "./wordDiff";
+import { wsTokenParam } from "./auth";
 import {
   loadSettings,
   saveSettings,
@@ -601,10 +602,13 @@ export default function App({ onExit }: AppProps = {}) {
       }
 
       const initData = WebApp.initData;
-      // Собираем query-строку: init_data + настройки тьютора.
+      // Собираем query-строку: auth (initData в Telegram / JWT на вебе) + настройки.
       const queryParts: string[] = [];
       if (initData) {
         queryParts.push(`init_data=${encodeURIComponent(initData)}`);
+      } else {
+        const tp = wsTokenParam();
+        if (tp) queryParts.push(tp);
       }
       queryParts.push(settingsToQuery(settingsRef.current));
       const wsUrl = queryParts.length

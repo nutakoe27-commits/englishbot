@@ -64,6 +64,8 @@ services:
         # https://api-english-test.krichigindocs.ru, иначе Mini App
         # будет стучаться в прод.
         VITE_API_BASE: ${VITE_API_BASE:-https://api-english.krichigindocs.ru}
+        # Google OAuth Client ID (тип Web) — кнопка входа через Google на вебе.
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
     restart: unless-stopped
     ports:
       - "127.0.0.1:8081:80"
