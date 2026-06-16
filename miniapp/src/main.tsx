@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import WebApp from "@twa-dev/sdk";
 import App from "./App";
@@ -7,6 +7,16 @@ import { ModeSelector, type Mode } from "./ModeSelector";
 import { ListeningScreen } from "./ListeningScreen";
 import { GrammarScreen } from "./GrammarScreen";
 import { SrsScreen } from "./SrsScreen";
+import { LoginScreen } from "./LoginScreen";
+import {
+  installFetchAuth,
+  getToken,
+  loginTelegramInitData,
+  verifySession,
+} from "./auth";
+
+// Авторизация в fetch — внедряем Authorization: Bearer ко всем API-запросам.
+installFetchAuth();
 
 // Error boundary — без него любая runtime-ошибка в React 18 размонтирует
 // всё дерево и оставляет пустой #root (чёрный экран в Telegram). Здесь мы
@@ -69,15 +79,48 @@ function parseBattle(param: string): { id: number; side: "a" | "b" } | null {
   return { id, side };
 }
 
+type AuthState = "loading" | "authed" | "login";
+
 function Root() {
-  // Хук всегда первый, до условных return — иначе React 18 в проде может
+  // Хуки всегда первыми, до условных return — иначе React 18 в проде может
   // выкинуть «rendered fewer hooks than expected».
   const [screen, setScreen] = useState<Mode | "selector">("selector");
   const [startParam] = useState<string>(() => readStartParam());
+  const [auth, setAuth] = useState<AuthState>("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // 1. Внутри Telegram — авто-логин по initData (получаем JWT).
+      const initData = (() => {
+        try { return WebApp.initData || ""; } catch { return ""; }
+      })();
+      if (initData) {
+        await loginTelegramInitData(initData);
+        if (!cancelled) setAuth("authed");
+        return;
+      }
+      // 2. Браузер: есть сохранённый токен → проверим; иначе экран входа.
+      if (getToken()) {
+        const ok = await verifySession();
+        if (!cancelled) setAuth(ok ? "authed" : "login");
+        return;
+      }
+      if (!cancelled) setAuth("login");
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const battle = parseBattle(startParam);
   if (battle) {
     return <BattleScreen battleId={battle.id} side={battle.side} />;
+  }
+
+  if (auth === "loading") {
+    return <div className="boot-splash" aria-label="Загрузка" />;
+  }
+  if (auth === "login") {
+    return <LoginScreen onAuthed={() => setAuth("authed")} />;
   }
 
   const backToSelector = () => setScreen("selector");
