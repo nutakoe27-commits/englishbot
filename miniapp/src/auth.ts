@@ -47,6 +47,47 @@ export function clearToken(): void {
   }
 }
 
+/** URL старта серверного Google OAuth (redirect-флоу). linkToken — привязка. */
+export function googleStartUrl(linkToken?: string): string {
+  const redirect = encodeURIComponent(
+    window.location.origin + window.location.pathname,
+  );
+  let u = `${API_BASE}/api/auth/google/start?redirect=${redirect}`;
+  if (linkToken) u += `&link_token=${encodeURIComponent(linkToken)}`;
+  return u;
+}
+
+/** Разобрать #token / #linked / #auth_error из URL после возврата с OAuth.
+ *  Возвращает {authed?} если в хэше пришёл JWT, и {notice?} для сообщений. */
+export function consumeAuthHash(): { authed?: boolean; notice?: string } {
+  const h = window.location.hash || "";
+  if (!h || h.indexOf("=") === -1) return {};
+  const params = new URLSearchParams(h.replace(/^#/, ""));
+  // Не трогаем Telegram-хэш (tgWebAppData…) — реагируем только на наши ключи.
+  const known = ["token", "linked", "link_error", "auth_error"];
+  if (!known.some((k) => params.has(k))) return {};
+  const clean = () =>
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+
+  const token = params.get("token");
+  if (token) { setToken(token); clean(); return { authed: true }; }
+  if (params.get("linked")) { clean(); return { notice: "Google привязан ✓" }; }
+  if (params.get("link_error") === "taken") {
+    clean();
+    return { notice: "Этот Google уже привязан к другому аккаунту." };
+  }
+  const err = params.get("auth_error");
+  if (err === "email_taken") {
+    clean();
+    return {
+      notice:
+        "Этот email уже используется. Войди прежним способом и привяжи Google в настройках.",
+    };
+  }
+  if (err) { clean(); return { notice: "Не удалось войти через Google. Попробуй ещё раз." }; }
+  return {};
+}
+
 /** Token-параметр для WebSocket (заголовки на WS не повесить). */
 export function wsTokenParam(): string {
   const t = getToken();

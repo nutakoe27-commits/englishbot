@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     AUTH_JWT_TTL_DAYS: int = 30
     # Google OAuth Client ID (тип Web) — для проверки aud в Google ID-token.
     GOOGLE_CLIENT_ID: Optional[str] = None
+    # Google OAuth Client Secret — для серверного обмена code→token (redirect-флоу).
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    # Публичный URL backend (для redirect_uri Google). Напр.
+    # https://api-english-test.krichigindocs.ru — без слэша в конце.
+    # Должен совпадать с Authorized redirect URI в Google Cloud (+/api/auth/google/callback).
+    API_PUBLIC_URL: Optional[str] = None
+    # Куда возвращать браузер после OAuth (сайт). По умолчанию = MINIAPP_URL.
+    WEB_APP_URL: Optional[str] = None
 
     # ─── База данных ──────────────────────────────────────────────────────
     # Формат: mysql+asyncmy://user:password@host:port/dbname?charset=utf8mb4
