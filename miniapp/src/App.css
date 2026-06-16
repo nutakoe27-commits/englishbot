@@ -140,12 +140,12 @@ button {
   margin: 0;
   font-size: 14px;
   color: var(--text-dim);
-  /* Длинное имя юзера (без пробелов) больше не распирает шапку и не наезжает
-     на бренд — обрезаем многоточием. */
-  min-width: 0;
+  /* Длинное имя юзера не распирает шапку: ограничиваем ширину и обрезаем. */
+  max-width: 90px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* ─── Лог диалога — фиксированная область со внутренним скроллом ── */
@@ -532,8 +532,9 @@ button {
 .tutor-header__right {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0;   /* позволяет .tutor-hello внутри ужиматься и обрезаться */
+  gap: 8px;
+  flex-shrink: 0;   /* группа действий (таймер+иконки) НЕ сжимается и не спиллит;
+                       ужимается только бренд слева */
 }
 
 .icon-button {
