@@ -183,6 +183,58 @@ interface TgStartResponse {
 }
 
 /** Старт Telegram deep-link флоу. mode='login' (anon) | 'link' (Bearer). */
+interface YandexStartResponse {
+  token: string;
+  url: string;
+}
+
+/** Старт OAuth-флоу через Яндекс ID. mode='login' (anon) | 'link' (Bearer). */
+export async function startYandexFlow(mode: "login" | "link"): Promise<YandexStartResponse | null> {
+  try {
+    const res = await _postJson("/api/auth/yandex/start", { mode });
+    if (!res.ok) return null;
+    return (await res.json()) as YandexStartResponse;
+  } catch {
+    return null;
+  }
+}
+
+export interface YandexCallback {
+  jwt?: string;
+  mode?: "login" | "link";
+  merged?: boolean;
+  error?: string;
+}
+
+/** Разобрать URL fragment после возврата с Яндекса.
+ *  Backend редиректит на <MINIAPP_URL>/#yandex_jwt=…&mode=…[&merged=1] или
+ *  #yandex_error=<reason>. После чтения чистит URL.
+ */
+export function extractYandexCallback(): YandexCallback | null {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash || "";
+  if (!hash || (!hash.includes("yandex_jwt=") && !hash.includes("yandex_error="))) return null;
+  const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
+  const out: YandexCallback = {};
+  const jwt = params.get("yandex_jwt");
+  const err = params.get("yandex_error");
+  const mode = params.get("mode");
+  if (jwt) {
+    out.jwt = jwt;
+    setToken(jwt);
+  }
+  if (err) out.error = err;
+  if (mode === "login" || mode === "link") out.mode = mode;
+  if (params.get("merged") === "1") out.merged = true;
+  try {
+    window.history.replaceState(
+      null, "", window.location.pathname + window.location.search,
+    );
+  } catch { /* ignore */ }
+  return out;
+}
+
+
 export async function startTelegramFlow(mode: "login" | "link"): Promise<TgStartResponse | null> {
   try {
     const res = await _postJson("/api/auth/telegram/start", { mode });

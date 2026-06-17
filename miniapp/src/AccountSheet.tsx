@@ -9,12 +9,15 @@
 import { useCallback, useEffect, useState } from "react";
 import WebApp from "@twa-dev/sdk";
 import {
+  extractYandexCallback,
   fetchMe,
   logout,
   pollAuth,
   requestUnlinkNative,
   setPassword,
+  setToken,
   startTelegramFlow,
+  startYandexFlow,
   type MeInfo,
 } from "./auth";
 
@@ -26,6 +29,7 @@ interface Props {
 const PROVIDER_LABEL: Record<string, string> = {
   telegram: "Telegram",
   native: "Email/пароль",
+  yandex: "Яндекс ID",
   vk: "VK ID",
 };
 
@@ -55,6 +59,35 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
   const linked = new Set((me?.identities || []).map((i) => i.provider));
   const hasTelegram = linked.has("telegram");
   const hasNative = linked.has("native");
+  const hasYandex = linked.has("yandex");
+
+  // ── Привязка через Яндекс OAuth: после возврата (#yandex_jwt=…) ────────
+  const [yandexBusy, setYandexBusy] = useState<boolean>(false);
+  useEffect(() => {
+    const r = extractYandexCallback();
+    if (!r) return;
+    if (r.error) {
+      setMsg("Не удалось привязать Яндекс. Попробуй ещё раз.");
+      return;
+    }
+    if (r.jwt && r.mode === "link") {
+      setToken(r.jwt);                  // мог обновиться после merge
+      setMsg(r.merged
+        ? "Аккаунты объединены ✓ — данные сохранены."
+        : "Яндекс привязан ✓");
+      void reload();
+    }
+  }, [reload]);
+
+  const startYandexLink = async () => {
+    if (yandexBusy) return;
+    setYandexBusy(true); setMsg("");
+    try {
+      const r = await startYandexFlow("link");
+      if (!r) { setMsg("Не удалось запустить привязку Яндекса. Попробуй позже."); return; }
+      window.location.href = r.url;
+    } finally { setYandexBusy(false); }
+  };
 
   const [pwdEmail, setPwdEmail] = useState<string>("");
   const [pwd1, setPwd1] = useState<string>("");
@@ -187,7 +220,7 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
               </p>
 
               <div className="acc-list">
-                {(["telegram", "native", "vk"] as const).map((p) => {
+                {(["telegram", "native", "yandex", "vk"] as const).map((p) => {
                   const id = me?.identities.find((i) => i.provider === p);
                   return (
                     <div key={p} className="acc-row">
@@ -229,6 +262,22 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
                     <p className="acc-hint">Откроется приложение Telegram, нажми «Start».</p>
                   </div>
                 )
+              )}
+
+              {!hasYandex && !inTelegram && (
+                <div className="acc-link-block">
+                  <button
+                    type="button"
+                    className="btn btn--primary acc-link-btn"
+                    onClick={startYandexLink}
+                    disabled={yandexBusy}
+                  >
+                    🟡 Привязать Яндекс ID
+                  </button>
+                  <p className="acc-hint">
+                    Перейдёшь на oauth.yandex.ru, вернёшься на сайт уже привязанным.
+                  </p>
+                </div>
               )}
 
               {!hasNative && (

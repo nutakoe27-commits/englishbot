@@ -141,6 +141,85 @@ async def send_bot_message(
         return False
 
 
+# ─── Яндекс ID (PR-7) ────────────────────────────────────────────────────
+def _yandex_redirect_uri() -> str:
+    """Redirect URI для Яндекс OAuth. Из env YANDEX_REDIRECT_URI или
+    из API_PUBLIC_URL + '/api/auth/yandex/callback'."""
+    if settings.YANDEX_REDIRECT_URI:
+        return settings.YANDEX_REDIRECT_URI
+    base = (settings.API_PUBLIC_URL or "").rstrip("/")
+    if not base:
+        raise RuntimeError("API_PUBLIC_URL or YANDEX_REDIRECT_URI must be set")
+    return f"{base}/api/auth/yandex/callback"
+
+
+def yandex_authorize_url(state: str) -> str:
+    """Собирает URL для редиректа юзера на oauth.yandex.ru/authorize."""
+    from urllib.parse import urlencode
+    params = {
+        "response_type": "code",
+        "client_id": settings.YANDEX_CLIENT_ID or "",
+        "redirect_uri": _yandex_redirect_uri(),
+        "state": state,
+        "force_confirm": "yes",
+    }
+    return "https://oauth.yandex.ru/authorize?" + urlencode(params)
+
+
+async def exchange_yandex_code(code: str) -> Optional[dict]:
+    """Обмен authorization_code на access_token. Возвращает payload или None."""
+    if not settings.YANDEX_CLIENT_ID or not settings.YANDEX_CLIENT_SECRET:
+        logger.warning("[auth] yandex code-exchange skipped: client_id/secret not set")
+        return None
+    import httpx
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": settings.YANDEX_CLIENT_ID,
+        "client_secret": settings.YANDEX_CLIENT_SECRET,
+        "redirect_uri": _yandex_redirect_uri(),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "https://oauth.yandex.ru/token",
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        if resp.status_code != 200:
+            logger.warning(
+                "[auth] yandex token exchange failed %s: %s",
+                resp.status_code, resp.text[:300],
+            )
+            return None
+        return resp.json()
+    except Exception as exc:
+        logger.warning("[auth] yandex token exchange exception: %s", exc)
+        return None
+
+
+async def fetch_yandex_userinfo(access_token: str) -> Optional[dict]:
+    """Запрос user info: id, default_email, real_name, login."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://login.yandex.ru/info",
+                params={"format": "json"},
+                headers={"Authorization": f"OAuth {access_token}"},
+            )
+        if resp.status_code != 200:
+            logger.warning(
+                "[auth] yandex userinfo failed %s: %s",
+                resp.status_code, resp.text[:300],
+            )
+            return None
+        return resp.json()
+    except Exception as exc:
+        logger.warning("[auth] yandex userinfo exception: %s", exc)
+        return None
+
+
 def _bearer_token(authorization: Optional[str]) -> Optional[str]:
     if not authorization:
         return None
