@@ -12,6 +12,7 @@ import {
   fetchMe,
   logout,
   pollAuth,
+  requestUnlinkNative,
   setPassword,
   startTelegramFlow,
   type MeInfo,
@@ -84,6 +85,28 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
         setMsg("Не удалось сохранить пароль.");
       }
     } finally { setPwdBusy(false); }
+  };
+
+  // ── Отвязка email/пароля через подтверждение в боте ────────────────────
+  const [unlinkBusy, setUnlinkBusy] = useState(false);
+  const handleRequestUnlinkNative = async () => {
+    if (unlinkBusy) return;
+    setUnlinkBusy(true); setMsg("");
+    try {
+      const r = await requestUnlinkNative();
+      if (r.ok) {
+        setMsg(
+          "Отправили подтверждение в Telegram-бот. Открой чат, нажми " +
+          "«✅ Подтвердить» — и обнови этот экран.",
+        );
+      } else if (r.error === "no_telegram") {
+        setMsg("Сначала привяжи Telegram — это запасной способ входа.");
+      } else if (r.error === "telegram_send_failed") {
+        setMsg("Не получилось отправить сообщение в Telegram. Проверь, что не блокировал бота.");
+      } else {
+        setMsg("Не удалось запросить отвязку. Попробуй позже.");
+      }
+    } finally { setUnlinkBusy(false); }
   };
 
   // ── Привязка Telegram через deep-link в бот + poll ─────────────────────
@@ -243,6 +266,24 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
                     {pwdBusy ? "…" : "Задать пароль"}
                   </button>
                 </form>
+              )}
+
+              {hasTelegram && hasNative && (
+                <div className="acc-link-block">
+                  <div className="acc-link-title">Снять email/пароль</div>
+                  <p className="acc-hint">
+                    Останется только вход через Telegram. Подтвердить нужно
+                    будет в Telegram-боте.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn--ghost acc-link-btn"
+                    onClick={handleRequestUnlinkNative}
+                    disabled={unlinkBusy}
+                  >
+                    {unlinkBusy ? "…" : "Отвязать email/пароль"}
+                  </button>
+                </div>
               )}
 
               {msg && <p className="acc-msg">{msg}</p>}

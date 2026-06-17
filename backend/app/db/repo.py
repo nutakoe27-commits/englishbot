@@ -306,6 +306,35 @@ class Repo:
             )
         )
 
+    async def delete_native_identity(self, user_id: int) -> bool:
+        """Снять привязку email/password.
+
+        Возвращает False, если у юзера нет Telegram (нельзя оставить аккаунт
+        совсем без способа входа). Иначе удаляет native-identity и
+        обнуляет users.password_hash. users.email НЕ трогаем — можно потом
+        снова «Задать пароль», логика возьмёт users.email.
+        """
+        # Должен быть Telegram, иначе отказываем.
+        has_tg_res = await self.s.execute(
+            select(func.count(UserIdentity.id)).where(
+                UserIdentity.user_id == user_id,
+                UserIdentity.provider == "telegram",
+            )
+        )
+        if int(has_tg_res.scalar() or 0) == 0:
+            return False
+        from sqlalchemy import delete as _del
+        await self.s.execute(_del(UserIdentity).where(
+            UserIdentity.user_id == user_id,
+            UserIdentity.provider == "native",
+        ))
+        await self.s.execute(
+            update(User).where(User.id == user_id).values(
+                password_hash=None, updated_at=utcnow(),
+            )
+        )
+        return True
+
     async def link_or_merge(
         self, user_id: int, provider: str, provider_uid: str,
         email: Optional[str] = None,

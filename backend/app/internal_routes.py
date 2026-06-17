@@ -46,6 +46,11 @@ class _CancelIn(BaseModel):
     token: str
 
 
+class _ApplyUnlinkNativeIn(BaseModel):
+    token: str
+    tg_id: int                     # tg_id того, кто нажал кнопку в боте
+
+
 @router.post("/auth/apply-telegram")
 async def apply_telegram(
     body: _ApplyTelegramIn,
@@ -107,6 +112,37 @@ async def apply_telegram(
             }
         # Неподдерживаемый action для этого эндпоинта (например unlink_native)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "unsupported_action")
+
+
+@router.post("/auth/apply-unlink-native")
+async def apply_unlink_native(
+    body: _ApplyUnlinkNativeIn,
+    x_bot_secret: Optional[str] = Header(None, alias="X-Bot-Secret"),
+) -> dict:
+    """Бот зовёт после «Подтвердить» в чате. Проверяет, что нажавший — тот же
+    юзер, что инициировал (по action.user_id ↔ users.tg_id). Удаляет
+    native-identity и обнуляет password_hash."""
+    _check_bot_secret(x_bot_secret)
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        action = await repo.get_pending_action(body.token)
+        if action is None or action.action != "unlink_native" or action.user_id is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "action_invalid")
+        user = await repo.get_user_by_id(action.user_id)
+        if user is None or user.tg_id is None or int(user.tg_id) != int(body.tg_id):
+            # Не тот юзер нажал — отказ.
+            await repo.mark_action_failed(body.token)
+            await session.commit()
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "wrong_user")
+        ok = await repo.delete_native_identity(action.user_id)
+        if not ok:
+            await repo.mark_action_failed(body.token)
+            await session.commit()
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "no_telegram_left")
+        await repo.mark_action_done(body.token, resulting_user_id=action.user_id)
+        await session.commit()
+    return {"ok": True}
 
 
 @router.post("/auth/cancel")

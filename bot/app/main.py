@@ -250,6 +250,62 @@ async def _handle_auth_deeplink(message: Message, token: str) -> None:
         await message.answer("✅ Готово. Возвращайся на сайт.")
 
 
+# ─── Подтверждение unlink email/пароля (PR-6) ──────────────────────────────
+# Backend инициирует через send_bot_message: «Подтверди отвязку» с двумя
+# inline-кнопками `cu:<token>` (confirm) / `cn:<token>` (cancel).
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("cu:"))
+async def cb_confirm_unlink_native(query: CallbackQuery) -> None:
+    if not query.from_user or not query.data:
+        return
+    token = query.data.split(":", 1)[1]
+    code, data = await _post_backend(
+        "/api/internal/auth/apply-unlink-native",
+        {"token": token, "tg_id": query.from_user.id},
+    )
+    if code == 200:
+        await query.answer("Отвязано ✓")
+        try:
+            if query.message:
+                await query.message.edit_text(
+                    "✅ <b>Email-вход отвязан.</b>\n\n"
+                    "Теперь войти можно только через Telegram. Если захочешь "
+                    "снова добавить email/пароль — открой настройки в mini app.",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+    elif code == 403:
+        await query.answer("⚠️ Это подтверждение не для тебя.", show_alert=True)
+    elif code == 404:
+        await query.answer("Ссылка устарела.", show_alert=True)
+        try:
+            if query.message:
+                await query.message.edit_text(
+                    "⚠️ Ссылка устарела или уже использована.",
+                )
+        except Exception:
+            pass
+    else:
+        await query.answer("Что-то пошло не так. Попробуй ещё раз.", show_alert=True)
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("cn:"))
+async def cb_cancel_unlink_native(query: CallbackQuery) -> None:
+    if not query.data:
+        return
+    token = query.data.split(":", 1)[1]
+    await _post_backend("/api/internal/auth/cancel", {"token": token})
+    await query.answer("Отменено")
+    try:
+        if query.message:
+            await query.message.edit_text(
+                "❌ Отмена. Email-вход остался без изменений.",
+            )
+    except Exception:
+        pass
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message, command: CommandObject) -> None:
     # Deep-link от сайта: «/start <login|link|auth>_<token>» — авторизация через бот.
