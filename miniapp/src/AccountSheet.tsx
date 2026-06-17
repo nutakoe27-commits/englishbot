@@ -24,6 +24,7 @@ import {
 interface Props {
   onClose: () => void;
   onLoggedOut: () => void;
+  onOpenSubscribe?: () => void;
 }
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -36,7 +37,7 @@ const PROVIDER_LABEL: Record<string, string> = {
 // возобновляем poll, если юзер вернулся из Telegram.
 const PENDING_TG_KEY = "englishbot_tg_link_pending";
 
-export function AccountSheet({ onClose, onLoggedOut }: Props) {
+export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe }: Props) {
   const [me, setMe] = useState<MeInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string>("");
@@ -218,6 +219,23 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
                 данные сохранятся у того, который был создан раньше.
               </p>
 
+              {onOpenSubscribe && (
+                <div className="acc-link-block">
+                  <div className="acc-link-title">
+                    {me?.subscription_until
+                      ? `Подписка до ${_fmtSubUntil(me.subscription_until)}`
+                      : "Подписка не активна"}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn--primary acc-link-btn"
+                    onClick={onOpenSubscribe}
+                  >
+                    {me?.subscription_until ? "Продлить подписку" : "Оформить подписку"}
+                  </button>
+                </div>
+              )}
+
               <div className="acc-list">
                 {(["telegram", "native", "yandex"] as const).map((p) => {
                   const id = me?.identities.find((i) => i.provider === p);
@@ -365,4 +383,11 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
       </div>
     </div>
   );
+}
+
+function _fmtSubUntil(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString("ru-RU", { year: "numeric", month: "long", day: "numeric" });
+  } catch { return iso; }
 }

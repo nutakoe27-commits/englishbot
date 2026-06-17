@@ -543,6 +543,86 @@ class Repo:
             return False
         return user.subscription_until > utcnow()
 
+    # ─── веб-оплата (PR-8: ЮKassa) ─────────────────────────────────────
+    async def create_pending_payment(
+        self,
+        *,
+        user_id: int,
+        plan: str,
+        amount_rub: int,
+        days_granted: int,
+        provider_payment_id: str,
+        notes: Optional[str] = None,
+    ) -> Payment:
+        """Создать запись о платеже в статусе pending. Используется до того,
+        как webhook ЮKassa подтвердит оплату.
+        """
+        now = utcnow()
+        p = Payment(
+            user_id=user_id,
+            amount_rub=float(amount_rub),
+            plan=plan,
+            status="pending",
+            provider_payment_id=provider_payment_id,
+            days_granted=days_granted,
+            notes=notes,
+            created_at=now,
+            updated_at=now,
+        )
+        self.s.add(p)
+        await self.s.flush()
+        return p
+
+    async def find_payment_by_provider_id(
+        self, provider_payment_id: str,
+    ) -> Optional[Payment]:
+        if not provider_payment_id:
+            return None
+        res = await self.s.execute(
+            select(Payment).where(Payment.provider_payment_id == provider_payment_id)
+        )
+        return res.scalar_one_or_none()
+
+    async def find_payment_by_id(self, payment_id: int) -> Optional[Payment]:
+        res = await self.s.execute(select(Payment).where(Payment.id == payment_id))
+        return res.scalar_one_or_none()
+
+    async def mark_payment_status(self, payment_id: int, status: str) -> None:
+        await self.s.execute(
+            update(Payment).where(Payment.id == payment_id).values(
+                status=status, updated_at=utcnow(),
+            )
+        )
+
+    async def credit_subscription_for_payment(self, payment_id: int) -> bool:
+        """Подтверждение оплаты по webhook'у: продлеваем подписку и метим
+        payment status='succeeded'. Идемпотентно: если уже succeeded — return True
+        без изменений."""
+        payment = await self.find_payment_by_id(payment_id)
+        if payment is None:
+            return False
+        if payment.status == "succeeded":
+            return True
+        user = await self.get_user_by_id(payment.user_id)
+        if user is None:
+            return False
+        now = utcnow()
+        base = (
+            user.subscription_until
+            if user.subscription_until and user.subscription_until > now
+            else now
+        )
+        new_until = base + timedelta(days=payment.days_granted)
+        await self.s.execute(
+            update(User).where(User.id == user.id).values(subscription_until=new_until)
+        )
+        await self.s.execute(
+            update(Payment).where(Payment.id == payment_id).values(
+                status="succeeded", updated_at=now,
+            )
+        )
+        return True
+
     async def add_subscription_days(
         self,
         *,
