@@ -97,6 +97,50 @@ def verify_jwt(token: str) -> Optional[int]:
         return None
 
 
+def telegram_deeplink(prefix: str, token: str) -> str:
+    """Сборка t.me/<bot>?start=<prefix>_<token>.
+
+    `prefix` — короткий маркер для бот-хендлера: 'login' | 'link' | 'auth'.
+    BOT_USERNAME без '@'.
+    """
+    bot = (settings.BOT_USERNAME or "").lstrip("@")
+    return f"https://t.me/{bot}?start={prefix}_{token}"
+
+
+async def send_bot_message(
+    chat_id: int, text: str, reply_markup: Optional[dict] = None,
+) -> bool:
+    """Отправить сообщение в Telegram чат от имени нашего бота.
+
+    Используется для уведомлений (PR-6: подтверждение unlink). Возвращает
+    True/False — успех. Логирует ошибку без исключений.
+    """
+    if not settings.BOT_TOKEN:
+        return False
+    import httpx
+    payload: dict = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+        if resp.status_code != 200:
+            logger.warning(
+                "[auth] sendMessage failed %s: %s", resp.status_code, resp.text[:300]
+            )
+            return False
+        return True
+    except Exception as exc:
+        logger.warning("[auth] sendMessage exception: %s", exc)
+        return False
+
+
 def _bearer_token(authorization: Optional[str]) -> Optional[str]:
     if not authorization:
         return None

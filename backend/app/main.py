@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from .admin import router as admin_router
 from .auth_routes import router as auth_router
+from .internal_routes import router as internal_router
 from .grammar import router as grammar_router
 from .listening import router as listening_router
 from .srs import router as srs_router
@@ -127,6 +128,7 @@ def validate_telegram_init_data(init_data_raw: str, bot_token: str) -> Optional[
 
 app.include_router(admin_router)
 app.include_router(auth_router)
+app.include_router(internal_router)
 app.include_router(listening_router)
 app.include_router(grammar_router)
 app.include_router(srs_router)
