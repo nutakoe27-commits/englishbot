@@ -263,30 +263,46 @@ async def auth_link(body: _LinkIn, authorization: Optional[str] = Header(None)) 
         fields = _telegram_fields(body.init_data, body.widget)
         uid, email = str(fields["tg_id"]), None
 
-        # Сначала проверяем занятость identity — иначе для telegram попытка
-        # выставить users.tg_id (UNIQUE) упадёт дублем (500), если у этого TG
-        # уже есть свой аккаунт.
-        result = await repo.link_identity(user.id, body.provider, uid, email)
-        if result == "taken":
-            await session.rollback()
-            raise HTTPException(status.HTTP_409_CONFLICT, "taken")
+        # link_or_merge: если provider свободен — просто прилинкуем; если занят
+        # другим аккаунтом — сольём (primary = старший по created_at).
+        res = await repo.link_or_merge(user.id, "telegram", uid, email)
+        primary_id = int(res["primary_id"])
+        merged = res["kind"] == "merged"
 
-        # Только после успешной привязки telegram проставляем tg_id (если пуст).
-        if body.provider == "telegram" and user.tg_id is None:
+        # Если в результате слияния primary НЕ имел tg_id, добавим вручную
+        # (для linked-ветки тоже — у нативного веб-аккаунта tg_id NULL).
+        # Делаем это аккуратно: если занят другим — не трогаем.
+        primary = await repo.get_user_by_id(primary_id)
+        if primary is not None and primary.tg_id is None:
             from sqlalchemy import update as _upd
             from .db.models import User as _U
             from .db.repo import utcnow as _now
-            await repo.s.execute(
-                _upd(_U).where(_U.id == user.id).values(
-                    tg_id=int(uid), updated_at=_now(),
+            try:
+                await repo.s.execute(
+                    _upd(_U).where(_U.id == primary_id).values(
+                        tg_id=int(uid), updated_at=_now(),
+                    )
                 )
-            )
+            except Exception:
+                pass
 
-        identities = await repo.list_identities(user.id)
+        identities = await repo.list_identities(primary_id)
         await session.commit()
-    return {"ok": True, "identities": [
-        {"provider": i["provider"], "email": i.get("email")} for i in identities
-    ]}
+
+        # Если был merge и юзер сейчас работает под secondary'ным JWT —
+        # ему нужен новый JWT на primary, чтобы дальше всё работало.
+        new_token = (
+            auth_lib.issue_jwt(primary_id) if primary_id != user.id else None
+        )
+    return {
+        "ok": True,
+        "merged": merged,
+        "primary_id": primary_id,
+        "token": new_token,
+        "identities": [
+            {"provider": i["provider"], "email": i.get("email")} for i in identities
+        ],
+    }
 
 
 @router.post("/unlink")
