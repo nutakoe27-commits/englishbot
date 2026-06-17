@@ -1,11 +1,14 @@
 /**
- * auth.ts — клиентская авторизация (PR-B).
+ * auth.ts — клиентская авторизация.
  *
- * Модель: после входа (Telegram/Google) бэкенд выдаёт JWT, храним в
- * localStorage. На все запросы к API_BASE автоматически добавляем заголовок
- * Authorization: Bearer <jwt> (через monkeypatch window.fetch — чтобы не
- * править каждый fetch по экранам). Бэкенд принимает ЛИБО JWT, ЛИБО initData,
- * поэтому Mini App продолжает работать даже без токена.
+ * Модель: после входа через Telegram (Mini App initData или Login Widget на
+ * сайте) бэкенд выдаёт JWT, храним в localStorage. На все запросы к API_BASE
+ * автоматически добавляем заголовок Authorization: Bearer <jwt> (через
+ * monkeypatch window.fetch). Бэкенд принимает ЛИБО JWT, ЛИБО initData, поэтому
+ * Mini App продолжает работать даже без токена.
+ *
+ * Google/Apple убраны (миграция 0021): иностранный OAuth запрещён в РФ.
+ * Нативная регистрация email+password — PR-2 серии 0021.
  */
 
 export const API_BASE =
@@ -17,9 +20,6 @@ export const BOT_USERNAME = (
 )
   .trim()
   .replace(/^@+/, "");
-
-export const GOOGLE_CLIENT_ID =
-  (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) || "";
 
 const TOKEN_KEY = "englishbot_jwt";
 
@@ -45,47 +45,6 @@ export function clearToken(): void {
   } catch {
     /* ignore */
   }
-}
-
-/** URL старта серверного Google OAuth (redirect-флоу). linkToken — привязка. */
-export function googleStartUrl(linkToken?: string): string {
-  const redirect = encodeURIComponent(
-    window.location.origin + window.location.pathname,
-  );
-  let u = `${API_BASE}/api/auth/google/start?redirect=${redirect}`;
-  if (linkToken) u += `&link_token=${encodeURIComponent(linkToken)}`;
-  return u;
-}
-
-/** Разобрать #token / #linked / #auth_error из URL после возврата с OAuth.
- *  Возвращает {authed?} если в хэше пришёл JWT, и {notice?} для сообщений. */
-export function consumeAuthHash(): { authed?: boolean; notice?: string } {
-  const h = window.location.hash || "";
-  if (!h || h.indexOf("=") === -1) return {};
-  const params = new URLSearchParams(h.replace(/^#/, ""));
-  // Не трогаем Telegram-хэш (tgWebAppData…) — реагируем только на наши ключи.
-  const known = ["token", "linked", "link_error", "auth_error"];
-  if (!known.some((k) => params.has(k))) return {};
-  const clean = () =>
-    history.replaceState(null, "", window.location.pathname + window.location.search);
-
-  const token = params.get("token");
-  if (token) { setToken(token); clean(); return { authed: true }; }
-  if (params.get("linked")) { clean(); return { notice: "Google привязан ✓" }; }
-  if (params.get("link_error") === "taken") {
-    clean();
-    return { notice: "Этот Google уже привязан к другому аккаунту." };
-  }
-  const err = params.get("auth_error");
-  if (err === "email_taken") {
-    clean();
-    return {
-      notice:
-        "Этот email уже используется. Войди прежним способом и привяжи Google в настройках.",
-    };
-  }
-  if (err) { clean(); return { notice: "Не удалось войти через Google. Попробуй ещё раз." }; }
-  return {};
 }
 
 /** Token-параметр для WebSocket (заголовки на WS не повесить). */
@@ -164,27 +123,6 @@ export async function loginTelegramWidget(widget: Record<string, unknown>): Prom
   return false;
 }
 
-/** Вход через Google (ID-token из Google Identity Services). */
-export async function loginGoogle(idToken: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await _postJson("/api/auth/google", { id_token: idToken });
-  if (res.ok) {
-    const data = (await res.json()) as AuthResult;
-    if (data.token) {
-      setToken(data.token);
-      return { ok: true };
-    }
-    return { ok: false, error: "no_token" };
-  }
-  let error = `HTTP ${res.status}`;
-  try {
-    const d = await res.json();
-    if (d?.detail) error = String(d.detail);
-  } catch {
-    /* ignore */
-  }
-  return { ok: false, error };
-}
-
 export interface MeIdentity {
   provider: string;
   email: string | null;
@@ -214,23 +152,6 @@ export async function fetchMe(): Promise<MeInfo | null> {
 interface LinkResult {
   ok: boolean;
   error?: string;
-}
-
-/** Привязать Google (id_token из GIS) к текущему аккаунту. */
-export async function linkGoogle(idToken: string): Promise<LinkResult> {
-  const res = await _postJson("/api/auth/link", {
-    provider: "google",
-    id_token: idToken,
-  });
-  if (res.ok) return { ok: true };
-  let error = `HTTP ${res.status}`;
-  try {
-    const d = await res.json();
-    if (d?.detail) error = String(d.detail);
-  } catch {
-    /* ignore */
-  }
-  return { ok: false, error };
 }
 
 /** Привязать Telegram (Login Widget) к текущему аккаунту (для веб-юзеров). */

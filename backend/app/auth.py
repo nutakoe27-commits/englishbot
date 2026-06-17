@@ -1,18 +1,18 @@
 """
-auth.py — веб-авторизация (миграция 0020).
+auth.py — веб-авторизация.
 
 Содержит:
   - JWT-сессии (HS256, секрет AUTH_JWT_SECRET): issue_jwt / verify_jwt.
   - Валидация Telegram Login Widget (отличается от Mini App initData!).
-  - Проверка Google ID-token (через Google JWKS, aud = GOOGLE_CLIENT_ID).
   - resolve_user — единый резолвер: принимает Bearer JWT ИЛИ legacy initData.
 
 Mini App продолжает слать initData (back-compat), веб — Bearer JWT.
+
+Google/Apple убраны (миграция 0021): иностранный OAuth запрещён в РФ.
 """
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import logging
@@ -26,20 +26,14 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
-_GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
-_GOOGLE_ISSUERS = {"accounts.google.com", "https://accounts.google.com"}
-
 # Login Widget / initData считаем устаревшими через сутки (анти-replay).
 _AUTH_TTL_SEC = 24 * 3600
-
-# Кешируемый клиент JWKS для Google (сам кеширует ключи между вызовами).
-_google_jwks_client: Optional["jwt.PyJWKClient"] = None
 
 
 # ─── JWT-сессии ──────────────────────────────────────────────────────────────
 
 def issue_jwt(user_id: int) -> str:
-    """Подписать JWT сессии для users.id. None, если секрет не задан."""
+    """Подписать JWT сессии для users.id."""
     if not settings.AUTH_JWT_SECRET:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, "auth not configured"
@@ -109,96 +103,6 @@ def validate_telegram_login_widget(data: dict) -> Optional[dict]:
     except Exception as exc:
         logger.warning("[auth] login-widget validation error: %s", exc)
         return None
-
-
-# ─── Google ID-token ──────────────────────────────────────────────────────────
-
-def _verify_google_sync(id_token: str) -> Optional[dict]:
-    global _google_jwks_client
-    if not settings.GOOGLE_CLIENT_ID:
-        return None
-    try:
-        if _google_jwks_client is None:
-            _google_jwks_client = jwt.PyJWKClient(_GOOGLE_CERTS_URL)
-        signing_key = _google_jwks_client.get_signing_key_from_jwt(id_token)
-        claims = jwt.decode(
-            id_token,
-            signing_key.key,
-            algorithms=["RS256"],
-            audience=settings.GOOGLE_CLIENT_ID,
-        )
-        if claims.get("iss") not in _GOOGLE_ISSUERS:
-            return None
-        sub = claims.get("sub")
-        if not sub:
-            return None
-        return {
-            "sub": str(sub),
-            "email": claims.get("email"),
-            "email_verified": bool(claims.get("email_verified")),
-            "name": claims.get("name") or claims.get("given_name"),
-        }
-    except Exception as exc:
-        logger.warning("[auth] google id-token verify failed: %s", exc)
-        return None
-
-
-async def verify_google_id_token(id_token: str) -> Optional[dict]:
-    """Проверить Google ID-token. Возвращает {sub,email,email_verified,name}."""
-    if not id_token:
-        return None
-    # PyJWKClient делает сетевой запрос — уводим в threadpool.
-    return await asyncio.to_thread(_verify_google_sync, id_token)
-
-
-# ─── Google OAuth redirect-флоу (Authorization Code) ──────────────────────────
-
-def make_oauth_state(payload: dict, ttl_sec: int = 600) -> str:
-    """Подписанный короткоживущий state для OAuth (защита от CSRF/подмены)."""
-    if not settings.AUTH_JWT_SECRET:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "auth not configured")
-    now = int(time.time())
-    data = {**payload, "iat": now, "exp": now + ttl_sec}
-    return jwt.encode(data, settings.AUTH_JWT_SECRET, algorithm="HS256")
-
-
-def read_oauth_state(token: str) -> Optional[dict]:
-    if not token or not settings.AUTH_JWT_SECRET:
-        return None
-    try:
-        return jwt.decode(token, settings.AUTH_JWT_SECRET, algorithms=["HS256"])
-    except Exception:
-        return None
-
-
-async def exchange_google_code(code: str, redirect_uri: str) -> Optional[dict]:
-    """Обменять authorization code на токены, вернуть проверенный профиль
-    {sub,email,email_verified,name} либо None."""
-    if not (settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET):
-        return None
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "code": code,
-                    "client_id": settings.GOOGLE_CLIENT_ID,
-                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                    "redirect_uri": redirect_uri,
-                    "grant_type": "authorization_code",
-                },
-            )
-        if resp.status_code != 200:
-            logger.warning("[auth] google token exchange %s: %s", resp.status_code, resp.text[:300])
-            return None
-        id_token = resp.json().get("id_token")
-        if not id_token:
-            return None
-    except Exception as exc:
-        logger.warning("[auth] google code exchange failed: %s", exc)
-        return None
-    return await verify_google_id_token(id_token)
 
 
 def auth_key(

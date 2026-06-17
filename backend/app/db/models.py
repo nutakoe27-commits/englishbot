@@ -82,7 +82,7 @@ class User(Base):
 class UserIdentity(Base):
     """Личность пользователя у внешнего провайдера (миграция 0020).
 
-    Один users.id может иметь несколько identity (telegram + google + apple).
+    Один users.id может иметь несколько identity (telegram + native + vk).
     UNIQUE(provider, provider_uid) — одна внешняя личность принадлежит одному
     аккаунту. Для telegram provider_uid = строковый tg_id.
     """
@@ -94,7 +94,7 @@ class UserIdentity(Base):
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     provider: Mapped[str] = mapped_column(
-        SAEnum("telegram", "google", "apple", name="identity_provider"),
+        SAEnum("telegram", "native", "vk", name="identity_provider"),
         nullable=False,
     )
     provider_uid: Mapped[str] = mapped_column(String(191), nullable=False)

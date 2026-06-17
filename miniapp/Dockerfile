@@ -14,11 +14,6 @@ ENV VITE_BOT_USERNAME=$VITE_BOT_USERNAME
 ARG VITE_API_BASE=https://api-english.krichigindocs.ru
 ENV VITE_API_BASE=$VITE_API_BASE
 
-# Google OAuth Client ID (тип Web) — кнопка «Войти через Google» на вебе.
-# Пусто = кнопка не показывается (Telegram-вход работает всегда).
-ARG VITE_GOOGLE_CLIENT_ID=
-ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
-
 # Устанавливаем зависимости
 COPY package.json ./
 RUN npm install --no-audit --no-fund
