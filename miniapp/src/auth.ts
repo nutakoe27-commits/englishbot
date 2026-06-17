@@ -209,23 +209,29 @@ export async function fetchMe(): Promise<MeInfo | null> {
 
 interface LinkResult {
   ok: boolean;
+  merged?: boolean;
   error?: string;
 }
 
-/** Привязать Telegram (Login Widget) к текущему аккаунту (для веб-юзеров). */
+/** Привязать Telegram (Login Widget) к текущему аккаунту (для веб-юзеров).
+ *  При слиянии бэк может вернуть новый JWT — сохраняем его, чтобы дальнейшие
+ *  запросы шли уже от primary-аккаунта. */
 export async function linkTelegramWidget(
   widget: Record<string, unknown>,
 ): Promise<LinkResult> {
   const res = await _postJson("/api/auth/link", { provider: "telegram", widget });
-  if (res.ok) return { ok: true };
-  let error = `HTTP ${res.status}`;
-  try {
-    const d = await res.json();
-    if (d?.detail) error = String(d.detail);
-  } catch {
-    /* ignore */
+  if (res.ok) {
+    try {
+      const d = (await res.json()) as {
+        merged?: boolean; token?: string | null;
+      };
+      if (d.token) setToken(d.token);
+      return { ok: true, merged: !!d.merged };
+    } catch {
+      return { ok: true };
+    }
   }
-  return { ok: false, error };
+  return { ok: false, error: await _readError(res) };
 }
 
 /** Выйти из аккаунта (только клиентски — стираем токен). */

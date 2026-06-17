@@ -88,15 +88,16 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
     window.onTelegramAuth = async (user) => {
       setMsg("");
       const r = await linkTelegramWidget(user);
-      if (r.ok) { setMsg("Telegram привязан ✓"); void reload(); }
-      else if (r.error === "taken") {
+      if (r.ok) {
         setMsg(
-          "У этого Telegram уже есть отдельный аккаунт в English Tutor — " +
-          "там твой прежний прогресс. Выйди и войди через Telegram, чтобы " +
-          "продолжить с ним. Если нужно объединить аккаунты — напиши в @kmo_ai.",
+          r.merged
+            ? "Аккаунты объединены ✓ — данные сохранены."
+            : "Telegram привязан ✓",
         );
+        void reload();
+      } else {
+        setMsg("Не удалось привязать Telegram.");
       }
-      else setMsg("Не удалось привязать Telegram.");
     };
 
     const box = tgBoxRef.current;
@@ -127,8 +128,10 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
           ) : (
             <>
               <p className="acc-lead">
-                Скоро добавим вход по email и VK ID — это позволит не потерять
-                прогресс, если Telegram заблокируют.
+                Привяжи второй способ входа (email с паролем или Telegram) —
+                не потеряешь прогресс при блокировке. Если у привязываемого
+                способа уже есть отдельный аккаунт — аккаунты объединятся:
+                данные сохранятся у того, который был создан раньше.
               </p>
 
               <div className="acc-list">

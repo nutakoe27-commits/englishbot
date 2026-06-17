@@ -237,6 +237,184 @@ class Repo:
             )
         return "ok"
 
+    async def link_or_merge(
+        self, user_id: int, provider: str, provider_uid: str,
+        email: Optional[str] = None,
+    ) -> dict:
+        """Привязать провайдер. Если он уже у ДРУГОГО аккаунта — слить.
+
+        Правило слияния: primary = старший по created_at (его identifier-поля,
+        subscription_until, streak_days сохраняются). Числовые накопления в
+        таблицах с составным ключом суммируются/MAX.
+
+        Возвращает {kind: 'linked' | 'noop' | 'merged', primary_id: int}.
+        """
+        existing = await self.get_user_by_identity(provider, provider_uid)
+        if existing is None:
+            await self._ensure_identity(user_id, provider, provider_uid, email)
+            if email:
+                await self.s.execute(
+                    update(User).where(User.id == user_id, User.email.is_(None))
+                    .values(email=email, updated_at=utcnow())
+                )
+            return {"kind": "linked", "primary_id": user_id}
+        if existing.id == user_id:
+            return {"kind": "noop", "primary_id": user_id}
+
+        # Слияние. Старший по created_at — primary.
+        current = await self.get_user_by_id(user_id)
+        if current is None:
+            return {"kind": "noop", "primary_id": user_id}
+        if (current.created_at or utcnow()) <= (existing.created_at or utcnow()):
+            primary, secondary = current, existing
+        else:
+            primary, secondary = existing, current
+        await self._merge_accounts(primary.id, secondary.id)
+        return {"kind": "merged", "primary_id": primary.id}
+
+    async def _merge_accounts(self, primary_id: int, secondary_id: int) -> None:
+        """Переносит данные secondary → primary, удаляет secondary.
+
+        Все операции в одной транзакции (внешний вызывающий коммитит). Порядок
+        важен: сначала таблицы с составными ключами через INSERT…ON DUPLICATE…,
+        потом простые UPDATE, в конце DELETE FROM users.
+        """
+        from sqlalchemy import text as _text
+        if primary_id == secondary_id:
+            return
+        params = {"primary": primary_id, "secondary": secondary_id}
+
+        # 1) user_identities — простой UPDATE, конфликта нет
+        # (UNIQUE(provider, provider_uid) — у разных юзеров разные UID).
+        await self.s.execute(_text(
+            "UPDATE user_identities SET user_id = :primary WHERE user_id = :secondary"
+        ), params)
+
+        # 2) sessions, user_mistakes, payments — простые UPDATE.
+        for tbl in ("sessions", "user_mistakes", "payments"):
+            await self.s.execute(_text(
+                f"UPDATE {tbl} SET user_id = :primary WHERE user_id = :secondary"
+            ), params)
+
+        # 3) daily_usage (PK user_id, usage_date) — суммируем по дате.
+        await self.s.execute(_text("""
+            INSERT INTO daily_usage (user_id, usage_date, used_seconds, bonus_seconds, speaking_seconds, updated_at)
+            SELECT :primary, usage_date, used_seconds, bonus_seconds, speaking_seconds, NOW()
+              FROM daily_usage WHERE user_id = :secondary
+            ON DUPLICATE KEY UPDATE
+              used_seconds = used_seconds + VALUES(used_seconds),
+              bonus_seconds = bonus_seconds + VALUES(bonus_seconds),
+              speaking_seconds = speaking_seconds + VALUES(speaking_seconds),
+              updated_at = NOW()
+        """), params)
+        await self.s.execute(_text(
+            "DELETE FROM daily_usage WHERE user_id = :secondary"
+        ), params)
+
+        # 4) user_vocabulary (UNIQUE user_id, word) — мержим общие слова в
+        # primary (MAX/SUM/GREATEST), остальное переносим, secondary удалим.
+        await self.s.execute(_text("""
+            UPDATE user_vocabulary p
+              JOIN user_vocabulary s
+                ON p.word = s.word AND p.user_id = :primary AND s.user_id = :secondary
+            SET p.times_used = p.times_used + s.times_used,
+                p.first_seen_at = LEAST(p.first_seen_at, s.first_seen_at),
+                p.last_seen_at = GREATEST(p.last_seen_at, s.last_seen_at),
+                p.srs_box = GREATEST(p.srs_box, s.srs_box),
+                p.srs_correct_streak = GREATEST(p.srs_correct_streak, s.srs_correct_streak),
+                p.srs_total_attempts = p.srs_total_attempts + s.srs_total_attempts,
+                p.srs_last_reviewed_at = GREATEST(
+                  COALESCE(p.srs_last_reviewed_at, s.srs_last_reviewed_at),
+                  COALESCE(s.srs_last_reviewed_at, p.srs_last_reviewed_at)
+                ),
+                p.translation = COALESCE(p.translation, s.translation),
+                p.source = IF(p.source='user' OR s.source='user', 'user', p.source)
+        """), params)
+        await self.s.execute(_text(
+            "DELETE FROM user_vocabulary WHERE user_id = :secondary "
+            "AND word IN (SELECT word FROM (SELECT word FROM user_vocabulary "
+            "  WHERE user_id = :primary) t)"
+        ), params)
+        await self.s.execute(_text(
+            "UPDATE user_vocabulary SET user_id = :primary WHERE user_id = :secondary"
+        ), params)
+
+        # 5) user_achievements (PK user_id, achievement_key) — INSERT IGNORE.
+        await self.s.execute(_text("""
+            INSERT IGNORE INTO user_achievements (user_id, achievement_key, earned_at)
+            SELECT :primary, achievement_key, earned_at
+              FROM user_achievements WHERE user_id = :secondary
+        """), params)
+        await self.s.execute(_text(
+            "DELETE FROM user_achievements WHERE user_id = :secondary"
+        ), params)
+
+        # 6) user_grammar_progress (PK user_id, topic_key) — мерж score/attempts.
+        await self.s.execute(_text("""
+            INSERT INTO user_grammar_progress
+              (user_id, topic_key, completed_at, best_score, attempts, updated_at)
+            SELECT :primary, topic_key, completed_at, best_score, attempts, NOW()
+              FROM user_grammar_progress WHERE user_id = :secondary
+            ON DUPLICATE KEY UPDATE
+              best_score = GREATEST(best_score, VALUES(best_score)),
+              attempts = attempts + VALUES(attempts),
+              completed_at = COALESCE(completed_at, VALUES(completed_at)),
+              updated_at = NOW()
+        """), params)
+        await self.s.execute(_text(
+            "DELETE FROM user_grammar_progress WHERE user_id = :secondary"
+        ), params)
+
+        # 7) user_quests (UNIQUE user_id, quest_key) — INSERT IGNORE (живёт
+        # таблица из миграции 0002; если battle/quest у тебя выпилен — query
+        # просто отработает 0 rows).
+        try:
+            await self.s.execute(_text("""
+                INSERT IGNORE INTO user_quests
+                  (user_id, quest_key, assigned_at, completed_at, expired_at)
+                SELECT :primary, quest_key, assigned_at, completed_at, expired_at
+                  FROM user_quests WHERE user_id = :secondary
+            """), params)
+            await self.s.execute(_text(
+                "DELETE FROM user_quests WHERE user_id = :secondary"
+            ), params)
+        except Exception:
+            pass  # таблицы могло не быть
+
+        # 8) users (primary): дополняем null-поля из secondary;
+        # subscription_until / streak_days / best_streak_days НЕ ТРОГАЕМ —
+        # строго у старшего.
+        await self.s.execute(_text("""
+            UPDATE users p JOIN users s ON s.id = :secondary
+            SET p.tg_id = COALESCE(p.tg_id, s.tg_id),
+                p.email = COALESCE(p.email, s.email),
+                p.password_hash = COALESCE(p.password_hash, s.password_hash),
+                p.username = COALESCE(p.username, s.username),
+                p.first_name = COALESCE(p.first_name, s.first_name),
+                p.last_name = COALESCE(p.last_name, s.last_name),
+                p.language_code = COALESCE(p.language_code, s.language_code),
+                p.bot_activated_at = LEAST(
+                  COALESCE(p.bot_activated_at, s.bot_activated_at),
+                  COALESCE(s.bot_activated_at, p.bot_activated_at)
+                ),
+                p.last_practice_date = GREATEST(
+                  COALESCE(p.last_practice_date, s.last_practice_date),
+                  COALESCE(s.last_practice_date, p.last_practice_date)
+                ),
+                p.updated_at = NOW()
+            WHERE p.id = :primary
+        """), params)
+
+        # 9) Снять FK-конфликт по tg_id (UNIQUE): у secondary tg_id уже не нужен,
+        # перед удалением сбросим, чтобы DELETE точно прошёл.
+        await self.s.execute(_text(
+            "UPDATE users SET tg_id = NULL WHERE id = :secondary"
+        ), params)
+        # Удалить secondary — остальное подчистится через ON DELETE CASCADE.
+        await self.s.execute(_text(
+            "DELETE FROM users WHERE id = :secondary"
+        ), params)
+
     async def count_identities(self, user_id: int) -> int:
         res = await self.s.execute(
             select(func.count(UserIdentity.id)).where(
