@@ -13,7 +13,6 @@ import {
   getToken,
   loginTelegramInitData,
   verifySession,
-  consumeAuthHash,
 } from "./auth";
 
 // Авторизация в fetch — внедряем Authorization: Bearer ко всем API-запросам.
@@ -91,10 +90,6 @@ function Root() {
 
   useEffect(() => {
     let cancelled = false;
-    // 0. Возврат с Google OAuth: токен/сообщение в URL-хэше.
-    const hashRes = consumeAuthHash();
-    if (hashRes.notice) { try { window.alert(hashRes.notice); } catch { /* ignore */ } }
-    if (hashRes.authed) { setAuth("authed"); return; }
     (async () => {
       // 1. Внутри Telegram — авто-логин по initData (получаем JWT).
       const initData = (() => {

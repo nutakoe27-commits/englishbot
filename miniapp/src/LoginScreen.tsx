@@ -1,17 +1,12 @@
 /**
  * LoginScreen.tsx — экран входа для веб-версии (вне Telegram).
  *
- * Telegram — через Login Widget. Google — через серверный OAuth-redirect
- * (GIS не используем: его блокирует webview Telegram, а в браузере он капризен).
+ * Только Telegram Login Widget. Google/Apple убраны (миграция 0021).
+ * Нативная регистрация (email+password) появится в PR-2 этой серии.
  */
 
 import { useEffect, useRef, useState } from "react";
-import {
-  BOT_USERNAME,
-  GOOGLE_CLIENT_ID,
-  googleStartUrl,
-  loginTelegramWidget,
-} from "./auth";
+import { BOT_USERNAME, loginTelegramWidget } from "./auth";
 
 interface Props {
   onAuthed: () => void;
@@ -20,7 +15,6 @@ interface Props {
 declare global {
   interface Window {
     onTelegramAuth?: (user: Record<string, unknown>) => void;
-    google?: any;
   }
 }
 
@@ -77,17 +71,10 @@ export function LoginScreen({ onAuthed }: Props) {
 
         <div className="login-buttons">
           <div ref={tgBoxRef} className="login-tg" />
-          {GOOGLE_CLIENT_ID ? (
-            <button
-              type="button"
-              className="login-google-btn"
-              onClick={() => { window.location.href = googleStartUrl(); }}
-            >
-              <span aria-hidden>🟢</span> Войти через Google
-            </button>
-          ) : (
-            <p className="login-hint">Вход через Google скоро будет доступен.</p>
-          )}
+          <p className="login-hint">
+            Скоро добавим вход по email и VK ID — резервный способ войти,
+            если Telegram заблокируют.
+          </p>
         </div>
 
         {busy && <p className="login-hint">Входим…</p>}

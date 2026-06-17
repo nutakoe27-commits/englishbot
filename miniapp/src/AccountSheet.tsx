@@ -1,19 +1,16 @@
 /**
- * AccountSheet.tsx — «Аккаунт»: привязки входа (Telegram/Google), ссылка на
- * канал @kmo_ai, выход. Открывается из угла экрана выбора режима.
+ * AccountSheet.tsx — «Аккаунт»: привязки входа (Telegram), ссылка на канал
+ * @kmo_ai, выход. Открывается из угла экрана выбора режима.
  *
- * Идея: привязав второй способ входа (Google), пользователь не потеряет
- * прогресс, если Telegram заблокируют.
+ * Google/Apple убраны (миграция 0021). Нативная регистрация (email+password)
+ * добавится в PR-2 этой серии, VK ID — позже.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import WebApp from "@twa-dev/sdk";
 import {
   BOT_USERNAME,
-  GOOGLE_CLIENT_ID,
   fetchMe,
-  getToken,
-  googleStartUrl,
   linkTelegramWidget,
   logout,
   type MeInfo,
@@ -26,8 +23,8 @@ interface Props {
 
 const PROVIDER_LABEL: Record<string, string> = {
   telegram: "Telegram",
-  google: "Google",
-  apple: "Apple",
+  native: "Email/пароль",
+  vk: "VK ID",
 };
 
 export function AccountSheet({ onClose, onLoggedOut }: Props) {
@@ -49,21 +46,7 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
   useEffect(() => { void reload(); }, [reload]);
 
   const linked = new Set((me?.identities || []).map((i) => i.provider));
-  const hasGoogle = linked.has("google");
   const hasTelegram = linked.has("telegram");
-
-  // ── Привязка Google: серверный OAuth-redirect ──────────────────────────
-  // GIS не используем (webview Telegram его блокирует). В Telegram открываем
-  // внешний браузер; на вебе — обычный full-page redirect.
-  const handleLinkGoogle = () => {
-    const url = googleStartUrl(getToken() || undefined);
-    if (inTelegram) {
-      try { WebApp.openLink(url); } catch { window.open(url, "_blank"); }
-      setMsg("Открыл браузер для входа через Google. После — вернись и обнови.");
-    } else {
-      window.location.href = url;
-    }
-  };
 
   // ── Кнопка привязки Telegram (Login Widget, только на вебе) ────────────
   useEffect(() => {
@@ -111,12 +94,12 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
           ) : (
             <>
               <p className="acc-lead">
-                Привяжи второй способ входа — не потеряешь прогресс, если
-                Telegram заблокируют.
+                Скоро добавим вход по email и VK ID — это позволит не потерять
+                прогресс, если Telegram заблокируют.
               </p>
 
               <div className="acc-list">
-                {(["telegram", "google", "apple"] as const).map((p) => {
+                {(["telegram", "native", "vk"] as const).map((p) => {
                   const id = me?.identities.find((i) => i.provider === p);
                   return (
                     <div key={p} className="acc-row">
@@ -132,18 +115,6 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
                   );
                 })}
               </div>
-
-              {!hasGoogle && GOOGLE_CLIENT_ID && (
-                <div className="acc-link-block">
-                  <button
-                    type="button"
-                    className="btn btn--ghost acc-link-btn"
-                    onClick={handleLinkGoogle}
-                  >
-                    <span aria-hidden>🟢</span> Привязать Google
-                  </button>
-                </div>
-              )}
 
               {!hasTelegram && !inTelegram && BOT_USERNAME && (
                 <div className="acc-link-block">

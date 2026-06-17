@@ -316,8 +316,8 @@ function modeMeta(mode: string): { label: string; emoji: string } {
 // Провайдеры входа → компактные иконки для списка/детали.
 const PROVIDER_EMOJI: Record<string, string> = {
   telegram: "✈️",
-  google: "🟢",
-  apple: "",
+  native: "✉️",
+  vk: "🔵",
 };
 function authProvidersLabel(providers?: string[]): string {
   if (!providers || providers.length === 0) return "—";

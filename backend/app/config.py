@@ -21,21 +21,14 @@ class Settings(BaseSettings):
     # Telegram Bot token — используется для валидации initData и Login Widget
     BOT_TOKEN: Optional[str] = None
 
-    # ─── Веб-авторизация (миграция 0020) ─────────────────────────────────
+    # ─── Веб-авторизация (миграция 0020 + 0021) ──────────────────────────
     # Секрет для подписи JWT сессий. Генерируй: openssl rand -hex 32
     # Если не задан — выдача/проверка JWT отключена (работает только Mini App).
     AUTH_JWT_SECRET: Optional[str] = None
     # Срок жизни JWT (дни).
     AUTH_JWT_TTL_DAYS: int = 30
-    # Google OAuth Client ID (тип Web) — для проверки aud в Google ID-token.
-    GOOGLE_CLIENT_ID: Optional[str] = None
-    # Google OAuth Client Secret — для серверного обмена code→token (redirect-флоу).
-    GOOGLE_CLIENT_SECRET: Optional[str] = None
-    # Публичный URL backend (для redirect_uri Google). Напр.
-    # https://api-english-test.krichigindocs.ru — без слэша в конце.
-    # Должен совпадать с Authorized redirect URI в Google Cloud (+/api/auth/google/callback).
+    # Публичный URL backend и сайта — оставляем под будущий VK ID redirect-флоу.
     API_PUBLIC_URL: Optional[str] = None
-    # Куда возвращать браузер после OAuth (сайт). По умолчанию = MINIAPP_URL.
     WEB_APP_URL: Optional[str] = None
 
     # ─── База данных ──────────────────────────────────────────────────────
