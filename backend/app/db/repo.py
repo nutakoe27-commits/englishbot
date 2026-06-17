@@ -1127,6 +1127,19 @@ class Repo:
         res = await self.s.execute(stmt)
         return list(res.scalars().all())
 
+    async def delete_user(self, user_id: int) -> bool:
+        """Hard-delete юзера. CASCADE подчистит связанные таблицы.
+
+        Возвращает True если что-то удалено, False если такого юзера не было.
+        Перед удалением сбрасываем tg_id (UNIQUE) — лишняя страховка.
+        """
+        from sqlalchemy import delete as _del
+        await self.s.execute(
+            update(User).where(User.id == user_id).values(tg_id=None)
+        )
+        res = await self.s.execute(_del(User).where(User.id == user_id))
+        return (res.rowcount or 0) > 0
+
     async def set_blocked(self, user: User, blocked: bool) -> None:
         await self.s.execute(
             update(User).where(User.id == user.id).values(is_blocked=blocked)

@@ -1120,6 +1120,9 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
 
       {/* ── Напоминание ─────────────────── */}
       <ReminderCard user={u} onDone={(nu) => setU(nu)} />
+
+      {/* ── Удаление аккаунта (необратимо) ─── */}
+      <DeleteAccountCard user={u} onDeleted={onBack} />
         </>
       )}
     </div>
@@ -1561,6 +1564,93 @@ function ReminderCard({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ─── DeleteAccountCard — необратимое удаление профиля ───────────────────────
+function DeleteAccountCard({
+  user,
+  onDeleted,
+}: {
+  user: UserDetail;
+  onDeleted: () => void;
+}) {
+  const expected = String(user.tg_id ?? user.email ?? user.id);
+  const [confirm, setConfirm] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const canDelete = confirm && typed.trim() === expected && !busy;
+
+  const doDelete = async () => {
+    if (!canDelete) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.deleteUser(user.id);
+      onDeleted();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ ...S.card, borderColor: colors.danger, marginTop: 16 }}>
+      <h3 style={{ ...S.h3, color: colors.danger }}>Удалить аккаунт</h3>
+      <p style={{ ...S.muted, marginTop: 0 }}>
+        <b>Это безвозвратно.</b> Будут удалены: сам юзер, привязки входа,
+        сессии, словарь, платежи, прогресс грамматики, медали — всё связанное.
+      </p>
+      {err && <div style={S.error}>{err}</div>}
+
+      <label style={{ display: "block", marginTop: 10, fontSize: 14 }}>
+        <input
+          type="checkbox"
+          checked={confirm}
+          onChange={(e) => setConfirm(e.target.checked)}
+          disabled={busy}
+        />{" "}
+        Я понимаю, что это необратимо.
+      </label>
+
+      <div style={{ marginTop: 8 }}>
+        <div style={{ ...S.muted, marginBottom: 4 }}>
+          Чтобы подтвердить, введи{" "}
+          <code style={{ background: colors.card, padding: "1px 4px" }}>
+            {expected}
+          </code>{" "}
+          (tg_id / email / id):
+        </div>
+        <input
+          type="text"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          disabled={!confirm || busy}
+          placeholder={expected}
+          style={{
+            ...S.input,
+            width: "100%",
+            maxWidth: 320,
+          }}
+        />
+      </div>
+
+      <button
+        type="button"
+        onClick={doDelete}
+        disabled={!canDelete}
+        style={{
+          ...S.btnDanger,
+          marginTop: 10,
+          opacity: canDelete ? 1 : 0.5,
+          cursor: canDelete ? "pointer" : "not-allowed",
+        }}
+      >
+        {busy ? "Удаляю…" : "Удалить аккаунт"}
+      </button>
     </div>
   );
 }

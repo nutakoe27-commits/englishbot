@@ -186,6 +186,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  deleteUser: (id: number) =>
+    request<{ ok: boolean }>(`/api/admin/users/${id}`, {
+      method: "DELETE",
+    }),
   block: (id: number, blocked: boolean) =>
     request<UserDetail>(`/api/admin/users/${id}/block`, {
       method: "POST",
