@@ -24,6 +24,7 @@ import { GrammarExercise, type Exercise } from "./GrammarExercise";
 import { ProgressScreen } from "./ProgressScreen";
 import { WordsScreen } from "./WordsScreen";
 import { LockScreen } from "./LockScreen";
+import { SubscribeScreen } from "./SubscribeScreen";
 import {
   loadGrammarSettings,
   saveGrammarSettings,
@@ -174,6 +175,8 @@ export function GrammarScreen({ onExit }: Props) {
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
   const [wordsOpen, setWordsOpen] = useState<boolean>(false);
   const [paywall, setPaywall] = useState<boolean>(false);
+  const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
+  const inTelegram = !!WebApp.initData;
   const abortRef = useRef<AbortController | null>(null);
 
   // Learn-трек
@@ -888,6 +891,14 @@ export function GrammarScreen({ onExit }: Props) {
           botUsername={BOT_USERNAME}
           message="Бесплатные уроки грамматики на сегодня закончились. С подпиской — без лимитов."
           onDismiss={() => setPaywall(false)}
+          onOpenSubscribe={inTelegram ? undefined : () => setSubscribeOpen(true)}
+        />
+      )}
+
+      {subscribeOpen && (
+        <SubscribeScreen
+          onClose={() => setSubscribeOpen(false)}
+          onPaid={() => setPaywall(false)}
         />
       )}
     </div>

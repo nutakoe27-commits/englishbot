@@ -7,6 +7,10 @@ interface Props {
   message?: string; // для maintenance / blocked
   botUsername?: string; // например "kmo_ai_english_bot" — без @
   onDismiss?: () => void; // например, кнопка «Закрыть» в режиме админа/dev
+  /** Открыть SubscribeScreen внутри приложения (для веб-флоу через ЮKassa).
+   *  Если не задан — fallback на открытие бота (Telegram Mini App: оплата
+   *  через Telegram Payments + provider_token). */
+  onOpenSubscribe?: () => void;
 }
 
 const TITLES: Record<LockKind, string> = {
@@ -30,7 +34,7 @@ const CTA_LABEL: Record<LockKind, string> = {
   blocked: "Открыть бота",
 };
 
-export function LockScreen({ kind, message, botUsername, onDismiss }: Props) {
+export function LockScreen({ kind, message, botUsername, onDismiss, onOpenSubscribe }: Props) {
   // Простой fade-in при монтировании
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -38,13 +42,18 @@ export function LockScreen({ kind, message, botUsername, onDismiss }: Props) {
     return () => window.clearTimeout(id);
   }, []);
 
-  const handleOpenBot = () => {
-    // /subscribe — для limit_reached, /start — для остальных
+  const handleCta = () => {
+    // Главная кнопка. Для limit_reached на вебе родитель пробросит
+    // onOpenSubscribe — открываем SubscribeScreen (оплата через ЮKassa).
+    // В Mini App внутри Telegram callback не пробрасывается — fallback на
+    // открытие бота для оплаты через Telegram Payments.
+    if (kind === "limit_reached" && onOpenSubscribe) {
+      onOpenSubscribe();
+      return;
+    }
     const cmd = kind === "limit_reached" ? "subscribe" : "start";
     if (botUsername) {
-      // Глубокая ссылка прямо на команду в боте
       const url = `https://t.me/${botUsername}?start=${cmd}`;
-      // Telegram Mini App — используем openTelegramLink, чтобы остаться в TG
       const tg = (window as any).Telegram?.WebApp;
       if (tg?.openTelegramLink) {
         tg.openTelegramLink(url);
@@ -92,7 +101,7 @@ export function LockScreen({ kind, message, botUsername, onDismiss }: Props) {
             </div>
           </div>
         )}
-        <button className="lock-screen__cta" onClick={handleOpenBot}>
+        <button className="lock-screen__cta" onClick={handleCta}>
           {CTA_LABEL[kind]}
         </button>
         {kind === "limit_reached" && (
