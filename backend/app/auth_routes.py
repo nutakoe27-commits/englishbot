@@ -14,6 +14,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from . import auth as auth_lib
@@ -59,6 +60,10 @@ class _SetPasswordIn(BaseModel):
 
 
 class _TgStartIn(BaseModel):
+    mode: str                       # 'login' | 'link'
+
+
+class _YandexStartIn(BaseModel):
     mode: str                       # 'login' | 'link'
 
 
@@ -209,6 +214,129 @@ async def auth_poll(token: str = "") -> dict:
         ):
             out["token"] = auth_lib.issue_jwt(action.resulting_user_id)
     return out
+
+
+@router.post("/yandex/start")
+async def auth_yandex_start(
+    body: _YandexStartIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Старт OAuth-флоу через Яндекс ID (PR-7).
+
+    Создаёт auth_action, возвращает {token, url}. Сайт делает
+    `window.location.href = url` — юзер уходит на oauth.yandex.ru, после
+    авторизации Яндекс редиректит на /api/auth/yandex/callback, тот по state
+    находит action и завершает вход.
+    """
+    _require_db()
+    if not settings.YANDEX_CLIENT_ID or not settings.YANDEX_CLIENT_SECRET:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "yandex_oauth_not_configured"
+        )
+    mode = (body.mode or "").strip().lower()
+    if mode not in ("login", "link"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_mode")
+
+    user_id: Optional[int] = None
+    action_name: str
+    if mode == "login":
+        action_name = "login_yandex"
+    else:
+        from .db import Repo
+        async with db_session() as session:
+            repo = Repo(session)
+            user = await auth_lib.resolve_user(repo, authorization=authorization)
+            user_id = user.id
+        action_name = "link_yandex"
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        token = await repo.create_auth_action(action_name, user_id=user_id, ttl_sec=600)
+        await session.commit()
+    return {"token": token, "url": auth_lib.yandex_authorize_url(token)}
+
+
+def _yandex_redirect_to_frontend(**params: str) -> RedirectResponse:
+    """Сборка ответного редиректа на фронт с параметрами в URL fragment.
+
+    Fragment не уходит в access-логи nginx/backend — безопасно отдавать JWT.
+    """
+    from urllib.parse import urlencode
+    base = (settings.MINIAPP_URL or "").rstrip("/") or "/"
+    frag = urlencode({k: v for k, v in params.items() if v is not None})
+    return RedirectResponse(url=f"{base}/#{frag}", status_code=302)
+
+
+@router.get("/yandex/callback")
+async def auth_yandex_callback(
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+) -> RedirectResponse:
+    """Колбэк от Яндекса. Обмен code → user info → upsert/link_or_merge → JWT.
+
+    Результат отдаётся фронту через URL fragment (#yandex_jwt=…&mode=…).
+    """
+    _require_db()
+    if error or not code or not state:
+        return _yandex_redirect_to_frontend(yandex_error=error or "bad_callback")
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        action = await repo.get_pending_action(state)
+        if action is None or action.action not in ("login_yandex", "link_yandex"):
+            return _yandex_redirect_to_frontend(yandex_error="state_invalid")
+
+        token_payload = await auth_lib.exchange_yandex_code(code)
+        if not token_payload or "access_token" not in token_payload:
+            await repo.mark_action_failed(state)
+            await session.commit()
+            return _yandex_redirect_to_frontend(yandex_error="exchange_failed")
+
+        userinfo = await auth_lib.fetch_yandex_userinfo(token_payload["access_token"])
+        if not userinfo or "id" not in userinfo:
+            await repo.mark_action_failed(state)
+            await session.commit()
+            return _yandex_redirect_to_frontend(yandex_error="userinfo_failed")
+
+        yandex_uid = str(userinfo["id"])
+        email = userinfo.get("default_email") or None
+
+        merged = False
+        if action.action == "login_yandex":
+            existing = await repo.get_user_by_identity("yandex", yandex_uid)
+            if existing is not None:
+                resulting_user_id = existing.id
+            else:
+                user = await repo.create_user_with_identity(
+                    provider="yandex",
+                    provider_uid=yandex_uid,
+                    email=email,
+                    first_name=userinfo.get("first_name"),
+                    last_name=userinfo.get("last_name"),
+                )
+                resulting_user_id = user.id
+        else:
+            if action.user_id is None:
+                await repo.mark_action_failed(state)
+                await session.commit()
+                return _yandex_redirect_to_frontend(yandex_error="no_initiator")
+            res = await repo.link_or_merge(
+                action.user_id, "yandex", yandex_uid, email,
+            )
+            resulting_user_id = int(res["primary_id"])
+            merged = res["kind"] == "merged"
+
+        await repo.mark_action_done(state, resulting_user_id=resulting_user_id)
+        await session.commit()
+
+    jwt = auth_lib.issue_jwt(resulting_user_id)
+    mode = "login" if action.action == "login_yandex" else "link"
+    params: dict = {"yandex_jwt": jwt, "mode": mode}
+    if merged:
+        params["merged"] = "1"
+    return _yandex_redirect_to_frontend(**params)
 
 
 @router.post("/register")

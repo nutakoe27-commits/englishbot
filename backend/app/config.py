@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     API_PUBLIC_URL: Optional[str] = None
     WEB_APP_URL: Optional[str] = None
 
+    # ─── Яндекс ID (миграция 0023, PR-7) ─────────────────────────────────
+    # Регистрация: https://oauth.yandex.ru → «Веб-сервисы»; redirect URI =
+    # <API_PUBLIC_URL>/api/auth/yandex/callback. Scopes: login:email, login:info.
+    YANDEX_CLIENT_ID: Optional[str] = None
+    YANDEX_CLIENT_SECRET: Optional[str] = None
+    # Если пусто — собирается из API_PUBLIC_URL + '/api/auth/yandex/callback'.
+    YANDEX_REDIRECT_URI: Optional[str] = None
+
     # ─── База данных ──────────────────────────────────────────────────────
     # Формат: mysql+asyncmy://user:password@host:port/dbname?charset=utf8mb4
     # На VPS: mysql+asyncmy://englishbot:PWD@host.docker.internal:3306/englishbot?charset=utf8mb4

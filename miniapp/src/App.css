@@ -3374,3 +3374,16 @@ button {
   width: 100%;
   padding: 12px 16px;
 }
+
+/* ─── LoginScreen: Яндекс ID (primary) и кнопка submit native (secondary) ─ */
+.login-yandex-btn {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  background: #ffcc00;
+  color: #000;
+  border: none;
+}
+.login-yandex-btn:hover:not(:disabled) { background: #ffd633; }
+.login-yandex-btn:disabled { opacity: 0.55; }
