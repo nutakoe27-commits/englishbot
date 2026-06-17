@@ -13,6 +13,7 @@ import {
   fetchMe,
   linkTelegramWidget,
   logout,
+  setPassword,
   type MeInfo,
 } from "./auth";
 
@@ -47,6 +48,38 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
 
   const linked = new Set((me?.identities || []).map((i) => i.provider));
   const hasTelegram = linked.has("telegram");
+  const hasNative = linked.has("native");
+
+  const [pwdEmail, setPwdEmail] = useState<string>("");
+  const [pwd1, setPwd1] = useState<string>("");
+  const [pwdBusy, setPwdBusy] = useState<boolean>(false);
+  // Если у юзера уже есть email — поле в форме скроем; используем существующий.
+  const accountEmail = me?.email ?? "";
+
+  const handleSetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pwdBusy) return;
+    if (pwd1.length < 8) { setMsg("Пароль слишком короткий — минимум 8 символов."); return; }
+    setPwdBusy(true); setMsg("");
+    try {
+      const r = await setPassword(pwd1, accountEmail ? undefined : pwdEmail);
+      if (r.ok) {
+        setMsg("Пароль задан ✓ — теперь можно войти по email на сайте.");
+        setPwd1(""); setPwdEmail("");
+        void reload();
+      } else if (r.error === "email_taken") {
+        setMsg("Этот email уже занят другим аккаунтом.");
+      } else if (r.error === "weak_password") {
+        setMsg("Пароль слишком короткий — минимум 8 символов.");
+      } else if (r.error === "bad_email") {
+        setMsg("Введи корректный email.");
+      } else if (r.error === "email_required") {
+        setMsg("Сначала укажи email.");
+      } else {
+        setMsg("Не удалось сохранить пароль.");
+      }
+    } finally { setPwdBusy(false); }
+  };
 
   // ── Кнопка привязки Telegram (Login Widget, только на вебе) ────────────
   useEffect(() => {
@@ -121,6 +154,43 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
                   <div className="acc-link-title">Привязать Telegram</div>
                   <div ref={tgBoxRef} className="acc-tgbtn" />
                 </div>
+              )}
+
+              {!hasNative && (
+                <form className="acc-link-block acc-pwd-form" onSubmit={handleSetPassword}>
+                  <div className="acc-link-title">
+                    Задать пароль (для входа по email)
+                  </div>
+                  {!accountEmail && (
+                    <input
+                      className="login-input"
+                      type="email"
+                      placeholder="Email"
+                      value={pwdEmail}
+                      onChange={(e) => setPwdEmail(e.target.value)}
+                      required
+                      inputMode="email"
+                      maxLength={255}
+                    />
+                  )}
+                  <input
+                    className="login-input"
+                    type="password"
+                    placeholder="Пароль (от 8 символов)"
+                    value={pwd1}
+                    onChange={(e) => setPwd1(e.target.value)}
+                    required
+                    minLength={8}
+                    maxLength={128}
+                  />
+                  <button
+                    type="submit"
+                    className="btn btn--primary"
+                    disabled={pwdBusy}
+                  >
+                    {pwdBusy ? "…" : "Задать пароль"}
+                  </button>
+                </form>
               )}
 
               {msg && <p className="acc-msg">{msg}</p>}

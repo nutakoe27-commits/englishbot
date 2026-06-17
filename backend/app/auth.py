@@ -16,15 +16,54 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import re
 import time
 from typing import Optional
 
 import jwt  # PyJWT
+from argon2 import PasswordHasher
+from argon2 import exceptions as _argon2_exc
 from fastapi import HTTPException, status
 
 from .config import settings
 
 logger = logging.getLogger(__name__)
+
+# Один экземпляр argon2id-хешера на процесс (потокобезопасный).
+_PWD_HASHER = PasswordHasher()
+
+# Простая email-валидация (полная RFC 5322 не нужна).
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+# Минимальная длина пароля. Без верификации email это компромисс — но 8
+# символов лучше чем 6 (рекомендация OWASP для непрофилактических сервисов).
+PASSWORD_MIN_LEN = 8
+
+
+def normalize_email(raw: str) -> Optional[str]:
+    """Тримим/lowercase email; None если формат неверный."""
+    if not raw:
+        return None
+    e = raw.strip().lower()
+    return e if _EMAIL_RE.match(e) else None
+
+
+def hash_password(plain: str) -> str:
+    return _PWD_HASHER.hash(plain)
+
+
+def verify_password(plain: str, hashed: Optional[str]) -> bool:
+    """Сравнивает пароль с хешем. False на любую ошибку (тайминг важен меньше,
+    чем простота)."""
+    if not hashed:
+        return False
+    try:
+        _PWD_HASHER.verify(hashed, plain)
+        return True
+    except (_argon2_exc.VerifyMismatchError, _argon2_exc.InvalidHash, _argon2_exc.VerificationError):
+        return False
+    except Exception:
+        return False
 
 # Login Widget / initData считаем устаревшими через сутки (анти-replay).
 _AUTH_TTL_SEC = 24 * 3600

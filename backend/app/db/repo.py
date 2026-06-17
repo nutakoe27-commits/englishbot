@@ -170,6 +170,56 @@ class Repo:
         await self._ensure_identity(user.id, provider, provider_uid, email)
         return user
 
+    async def create_native_user(
+        self, *, email: str, password_hash: str, first_name: Optional[str] = None,
+    ) -> User:
+        """Создать аккаунт через нативную (email+password) регистрацию.
+
+        provider_uid в user_identities = lower(email) — он же логин.
+        """
+        now = utcnow()
+        user = User(
+            email=email,
+            password_hash=password_hash,
+            first_name=first_name,
+            reminder_time=time(19, 0),
+            reminder_enabled=True,
+            is_blocked=False,
+            created_at=now,
+            updated_at=now,
+        )
+        self.s.add(user)
+        await self.s.flush()
+        await self._ensure_identity(user.id, "native", email, email)
+        return user
+
+    async def set_password(self, user_id: int, password_hash: str) -> None:
+        """Задать/обновить пароль и создать native-identity, если её нет.
+
+        provider_uid берём из users.email (он уже должен быть выставлен).
+        """
+        await self.s.execute(
+            update(User).where(User.id == user_id).values(
+                password_hash=password_hash, updated_at=utcnow(),
+            )
+        )
+        user = await self.get_user_by_id(user_id)
+        if user and user.email:
+            await self._ensure_identity(user_id, "native", user.email, user.email)
+
+    async def set_email(self, user_id: int, email: str) -> str:
+        """Выставить email юзеру. 'ok' | 'taken' (email уже у другого).
+        Идентичность native не трогаем — её создаст set_password."""
+        existing = await self.get_user_by_email(email)
+        if existing and existing.id != user_id:
+            return "taken"
+        await self.s.execute(
+            update(User).where(User.id == user_id).values(
+                email=email, updated_at=utcnow(),
+            )
+        )
+        return "ok"
+
     async def link_identity(
         self, user_id: int, provider: str, provider_uid: str,
         email: Optional[str] = None,
