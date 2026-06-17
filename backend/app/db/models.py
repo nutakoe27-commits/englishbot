@@ -96,7 +96,7 @@ class UserIdentity(Base):
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     provider: Mapped[str] = mapped_column(
-        SAEnum("telegram", "native", "vk", "yandex", name="identity_provider"),
+        SAEnum("telegram", "native", "yandex", name="identity_provider"),
         nullable=False,
     )
     provider_uid: Mapped[str] = mapped_column(String(191), nullable=False)

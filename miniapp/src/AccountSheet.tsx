@@ -2,8 +2,8 @@
  * AccountSheet.tsx — «Аккаунт»: привязки входа (Telegram), ссылка на канал
  * @kmo_ai, выход. Открывается из угла экрана выбора режима.
  *
- * Google/Apple убраны (миграция 0021). Нативная регистрация (email+password)
- * добавится в PR-2 этой серии, VK ID — позже.
+ * Поддерживаются провайдеры: telegram (deep-link), native (email+password),
+ * yandex (OAuth, PR-7). Google/Apple убраны миграцией 0021.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -30,7 +30,6 @@ const PROVIDER_LABEL: Record<string, string> = {
   telegram: "Telegram",
   native: "Email/пароль",
   yandex: "Яндекс ID",
-  vk: "VK ID",
 };
 
 // Ключ pending TG link-токена в sessionStorage. На монтировании компонента
@@ -220,7 +219,7 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
               </p>
 
               <div className="acc-list">
-                {(["telegram", "native", "yandex", "vk"] as const).map((p) => {
+                {(["telegram", "native", "yandex"] as const).map((p) => {
                   const id = me?.identities.find((i) => i.provider === p);
                   return (
                     <div key={p} className="acc-row">
