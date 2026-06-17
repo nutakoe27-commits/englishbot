@@ -395,15 +395,18 @@ class Repo:
             ), params)
 
         # 3) daily_usage (PK user_id, usage_date) — суммируем по дате.
+        # SELF-INSERT (source и target — одна таблица) → в ON DUPLICATE
+        # неоднозначность по «голому» имени колонки; квалифицируем target
+        # как `daily_usage.col`, source — через alias `src`.
         await self.s.execute(_text("""
             INSERT INTO daily_usage (user_id, usage_date, used_seconds, bonus_seconds, speaking_seconds, updated_at)
-            SELECT :primary, usage_date, used_seconds, bonus_seconds, speaking_seconds, NOW()
-              FROM daily_usage WHERE user_id = :secondary
+            SELECT :primary, src.usage_date, src.used_seconds, src.bonus_seconds, src.speaking_seconds, NOW()
+              FROM daily_usage AS src WHERE src.user_id = :secondary
             ON DUPLICATE KEY UPDATE
-              used_seconds = used_seconds + VALUES(used_seconds),
-              bonus_seconds = bonus_seconds + VALUES(bonus_seconds),
-              speaking_seconds = speaking_seconds + VALUES(speaking_seconds),
-              updated_at = NOW()
+              used_seconds     = daily_usage.used_seconds     + VALUES(used_seconds),
+              bonus_seconds    = daily_usage.bonus_seconds    + VALUES(bonus_seconds),
+              speaking_seconds = daily_usage.speaking_seconds + VALUES(speaking_seconds),
+              updated_at       = NOW()
         """), params)
         await self.s.execute(_text(
             "DELETE FROM daily_usage WHERE user_id = :secondary"
@@ -448,16 +451,17 @@ class Repo:
         ), params)
 
         # 6) user_grammar_progress (PK user_id, topic_key) — мерж score/attempts.
+        # SELF-INSERT, см. комментарий выше про ambiguous.
         await self.s.execute(_text("""
             INSERT INTO user_grammar_progress
               (user_id, topic_key, completed_at, best_score, attempts, updated_at)
-            SELECT :primary, topic_key, completed_at, best_score, attempts, NOW()
-              FROM user_grammar_progress WHERE user_id = :secondary
+            SELECT :primary, src.topic_key, src.completed_at, src.best_score, src.attempts, NOW()
+              FROM user_grammar_progress AS src WHERE src.user_id = :secondary
             ON DUPLICATE KEY UPDATE
-              best_score = GREATEST(best_score, VALUES(best_score)),
-              attempts = attempts + VALUES(attempts),
-              completed_at = COALESCE(completed_at, VALUES(completed_at)),
-              updated_at = NOW()
+              best_score   = GREATEST(user_grammar_progress.best_score, VALUES(best_score)),
+              attempts     = user_grammar_progress.attempts + VALUES(attempts),
+              completed_at = COALESCE(user_grammar_progress.completed_at, VALUES(completed_at)),
+              updated_at   = NOW()
         """), params)
         await self.s.execute(_text(
             "DELETE FROM user_grammar_progress WHERE user_id = :secondary"
