@@ -42,6 +42,8 @@ class User(Base):
     language_code: Mapped[Optional[str]] = mapped_column(String(8))
     # Миграция 0020: email (от Google/Apple) + мульти-провайдерный вход.
     email: Mapped[Optional[str]] = mapped_column(String(255))
+    # Миграция 0021: хеш argon2 для нативной (email+password) регистрации.
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255))
 
     subscription_until: Mapped[Optional[datetime]] = mapped_column(DateTime)
 

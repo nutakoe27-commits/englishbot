@@ -111,6 +111,64 @@ export async function loginTelegramInitData(initData: string): Promise<boolean> 
   return false;
 }
 
+interface NativeResult {
+  ok: boolean;
+  error?: string;
+}
+
+/** Регистрация по email+password. */
+export async function registerNative(
+  email: string, password: string, firstName?: string,
+): Promise<NativeResult> {
+  const res = await _postJson("/api/auth/register", {
+    email,
+    password,
+    first_name: firstName || null,
+  });
+  if (res.ok) {
+    const d = (await res.json()) as AuthResult;
+    if (d.token) { setToken(d.token); return { ok: true }; }
+    return { ok: false, error: "no_token" };
+  }
+  return { ok: false, error: await _readError(res) };
+}
+
+/** Логин по email+password. */
+export async function loginNative(
+  email: string, password: string,
+): Promise<NativeResult> {
+  const res = await _postJson("/api/auth/login", { email, password });
+  if (res.ok) {
+    const d = (await res.json()) as AuthResult;
+    if (d.token) { setToken(d.token); return { ok: true }; }
+    return { ok: false, error: "no_token" };
+  }
+  return { ok: false, error: await _readError(res) };
+}
+
+/** Задать пароль (и опц. email) текущему юзеру (Bearer JWT). */
+export async function setPassword(
+  password: string, email?: string,
+): Promise<NativeResult> {
+  const res = await _postJson("/api/auth/set-password", {
+    password,
+    email: email || null,
+  });
+  if (res.ok) return { ok: true };
+  return { ok: false, error: await _readError(res) };
+}
+
+async function _readError(res: Response): Promise<string> {
+  let error = `HTTP ${res.status}`;
+  try {
+    const d = await res.json();
+    if (d?.detail) error = String(d.detail);
+  } catch {
+    /* ignore */
+  }
+  return error;
+}
+
 /** Вход через Telegram Login Widget (callback-объект от виджета). */
 export async function loginTelegramWidget(widget: Record<string, unknown>): Promise<boolean> {
   const res = await _postJson("/api/auth/telegram", { widget });

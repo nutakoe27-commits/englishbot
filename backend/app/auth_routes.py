@@ -42,6 +42,22 @@ class _UnlinkIn(BaseModel):
     provider: str
 
 
+class _RegisterIn(BaseModel):
+    email: str
+    password: str
+    first_name: Optional[str] = None
+
+
+class _LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class _SetPasswordIn(BaseModel):
+    email: Optional[str] = None    # для TG-юзеров, у которых email ещё не задан
+    password: str
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _user_summary(user, identities: list[dict]) -> dict:
@@ -121,6 +137,94 @@ async def auth_telegram(body: _TelegramIn) -> dict:
         await session.commit()
         token = auth_lib.issue_jwt(user.id)
         return {"token": token, "user": _user_summary(user, identities)}
+
+
+@router.post("/register")
+async def auth_register(body: _RegisterIn) -> dict:
+    """Регистрация по email+password. Без верификации email (компромисс)."""
+    _require_db()
+    email = auth_lib.normalize_email(body.email)
+    if not email:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_email")
+    if not body.password or len(body.password) < auth_lib.PASSWORD_MIN_LEN:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "weak_password")
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        # Уже занят native-логин (по identity)?
+        existing = await repo.get_user_by_identity("native", email)
+        if existing is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "email_taken")
+        # Или email лежит на чужом аккаунте без native-identity?
+        by_email = await repo.get_user_by_email(email)
+        if by_email is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "email_taken")
+        password_hash = auth_lib.hash_password(body.password)
+        user = await repo.create_native_user(
+            email=email,
+            password_hash=password_hash,
+            first_name=(body.first_name or "").strip() or None,
+        )
+        identities = await repo.list_identities(user.id)
+        await session.commit()
+        token = auth_lib.issue_jwt(user.id)
+        return {"token": token, "user": _user_summary(user, identities)}
+
+
+@router.post("/login")
+async def auth_login(body: _LoginIn) -> dict:
+    """Вход по email+password. На неуспех — 401 без подсказок."""
+    _require_db()
+    email = auth_lib.normalize_email(body.email)
+    if not email or not body.password:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad_credentials")
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.get_user_by_identity("native", email)
+        if user is None or not auth_lib.verify_password(body.password, user.password_hash):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad_credentials")
+        identities = await repo.list_identities(user.id)
+        token = auth_lib.issue_jwt(user.id)
+        return {"token": token, "user": _user_summary(user, identities)}
+
+
+@router.post("/set-password")
+async def auth_set_password(
+    body: _SetPasswordIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Задать пароль (и опц. email) текущему юзеру — например, TG-юзер хочет
+    добавить email-вход. Без проверки старого пароля (нет email-верификации)."""
+    _require_db()
+    if not body.password or len(body.password) < auth_lib.PASSWORD_MIN_LEN:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "weak_password")
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await auth_lib.resolve_user(repo, authorization=authorization)
+
+        # Если email передали — нормализуем и проверяем уникальность.
+        if body.email:
+            new_email = auth_lib.normalize_email(body.email)
+            if not new_email:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_email")
+            res = await repo.set_email(user.id, new_email)
+            if res == "taken":
+                await session.rollback()
+                raise HTTPException(status.HTTP_409_CONFLICT, "email_taken")
+        elif not user.email:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "email_required")
+
+        await repo.set_password(user.id, auth_lib.hash_password(body.password))
+        # set_password создаёт native-identity по email юзера.
+        identities = await repo.list_identities(user.id)
+        await session.commit()
+    return {"ok": True, "identities": [
+        {"provider": i["provider"], "email": i.get("email")} for i in identities
+    ]}
 
 
 @router.get("/me")
