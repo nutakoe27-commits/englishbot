@@ -478,6 +478,27 @@ async def grant_subscription(user_id: int, req: GrantRequest) -> UserDetail:
         return await _user_to_detail(repo, u2)
 
 
+@router.delete(
+    "/users/{user_id}",
+    dependencies=[Depends(require_admin_token)],
+)
+async def delete_user(user_id: int) -> dict:
+    """Hard-delete юзера (CASCADE подчистит sessions/words/payments/identities).
+
+    Подтверждение делает фронт (карточка с двойным чек-боксом + ввод имени).
+    """
+    async with db_session() as s:
+        repo = Repo(s)
+        u = await repo.get_user_by_id(user_id)
+        if u is None:
+            raise HTTPException(404, "Юзер не найден")
+        ok = await repo.delete_user(user_id)
+        if not ok:
+            raise HTTPException(500, "Удаление не выполнено")
+        await s.commit()
+    return {"ok": True}
+
+
 @router.post(
     "/users/{user_id}/block",
     response_model=UserDetail,
