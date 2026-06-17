@@ -17,6 +17,7 @@ import WebApp from "@twa-dev/sdk";
 import "./App.css";
 import { SettingsSheet } from "./SettingsSheet";
 import { LockScreen } from "./LockScreen";
+import { SubscribeScreen } from "./SubscribeScreen";
 import { TranslatePopover } from "./TranslatePopover";
 import { ExplainPopover } from "./ExplainPopover";
 import { SessionSummary } from "./SessionSummary";
@@ -186,6 +187,10 @@ export default function App({ onExit }: AppProps = {}) {
   // Состояние lock-screen: null = обычный UI; иначе — показываем overlay
   const [lockState, setLockState] = useState<LockKind | null>(null);
   const [lockMessage, setLockMessage] = useState<string>("");
+  const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
+  // На вебе оплата идёт через ЮKassa (SubscribeScreen). В Mini App внутри
+  // Telegram остаётся Telegram Payments — там callback не пробрасываем.
+  const inTelegram = !!WebApp.initData;
   // Тап по слову в реплике тьютора → popover с переводом
   const [translateTarget, setTranslateTarget] = useState<TranslateTarget | null>(null);
   // Confirm-модалка перед закрытием сессии. Чат-композер близко к "End
@@ -1498,6 +1503,17 @@ export default function App({ onExit }: AppProps = {}) {
           kind={lockState}
           message={lockMessage}
           botUsername={BOT_USERNAME}
+          onOpenSubscribe={inTelegram ? undefined : () => setSubscribeOpen(true)}
+        />
+      )}
+
+      {subscribeOpen && (
+        <SubscribeScreen
+          onClose={() => setSubscribeOpen(false)}
+          onPaid={() => {
+            // Подписка активна — снимем lock.
+            setLockState(null);
+          }}
         />
       )}
 
