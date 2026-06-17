@@ -18,6 +18,7 @@ import {
   type MeInfo,
   type Plan,
 } from "./auth";
+import { ymHit, ymReachGoal } from "./metrika";
 
 interface Props {
   onClose: () => void;
@@ -42,6 +43,10 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
 
   useEffect(() => {
     let alive = true;
+    // Виртуальный pageview: фронт SPA, поэтому при «навигации» в Subscribe
+    // отправляем hit отдельно. Цель subscribe_opened — точка входа в воронку.
+    ymHit(window.location.origin + "/subscribe", "Подписка — тарифы");
+    if (!initialReturnPaymentId) ymReachGoal("subscribe_opened");
     void (async () => {
       const [p, m] = await Promise.all([listPlans(), fetchMe()]);
       if (!alive) return;
@@ -49,7 +54,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
       if (m?.email) setEmailInput(m.email);
     })();
     return () => { alive = false; };
-  }, []);
+  }, [initialReturnPaymentId]);
 
   // Полл статуса при возврате с ЮKassa.
   useEffect(() => {
@@ -63,6 +68,12 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
       if (cancelled) return;
       if (s?.status === "succeeded") {
         setReturnStatus("succeeded");
+        ymHit(window.location.origin + "/subscribe/thanks", "Спасибо за оплату");
+        ymReachGoal("subscription_paid", {
+          plan: s.plan,
+          amount_rub: s.amount_rub,
+          days: s.days_granted,
+        });
         await fetchMe();          // обновим subscription_until в кэше где-то
         onPaid?.();
         return;
@@ -84,6 +95,11 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
   const launchPayment = useCallback(async (planKey: Plan["key"], emailOverride?: string) => {
     if (busy) return;
     setBusy(planKey); setError("");
+    const planInfo = plans.find((p) => p.key === planKey);
+    ymReachGoal("subscribe_plan_clicked", {
+      plan: planKey,
+      amount_rub: planInfo?.amount_rub,
+    });
     try {
       const r = await createPayment(planKey, emailOverride);
       if (r.ok && r.confirmation_url) {
