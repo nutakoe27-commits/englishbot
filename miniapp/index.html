@@ -11,6 +11,22 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>AI English Tutor</title>
+
+    <!-- Yandex.Metrika counter — стоит на всех страницах SPA, т.к. index.html
+         один. Доп. цели (subscription_paid и т.п.) шлём через window.ym из
+         кода — см. miniapp/src/metrika.ts. -->
+    <script type="text/javascript">
+        (function(m,e,t,r,i,k,a){
+            m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+            m[i].l=1*new Date();
+            for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+            k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+        })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=109924904', 'ym');
+
+        ym(109924904, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});
+    </script>
+    <!-- (noscript-fallback опущен: это SPA, без JS экран всё равно не рендерится.) -->
+    <!-- /Yandex.Metrika counter -->
   </head>
   <body>
     <div id="root"></div>
