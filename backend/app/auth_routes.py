@@ -379,8 +379,16 @@ async def auth_link(body: _LinkIn, authorization: Optional[str] = Header(None)) 
 
 @router.post("/unlink")
 async def auth_unlink(body: _UnlinkIn, authorization: Optional[str] = Header(None)) -> dict:
-    """Отвязать провайдер (нельзя удалить последний способ входа)."""
+    """Отвязать провайдер (нельзя удалить последний способ входа).
+
+    Для native действует особое правило: только через /unlink/request →
+    подтверждение в боте (см. ниже). Здесь native запрещён.
+    """
     _require_db()
+    if body.provider == "native":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "use_unlink_request_for_native"
+        )
     from .db import Repo
     async with db_session() as session:
         repo = Repo(session)
@@ -394,3 +402,64 @@ async def auth_unlink(body: _UnlinkIn, authorization: Optional[str] = Header(Non
     return {"ok": True, "identities": [
         {"provider": i["provider"], "email": i.get("email")} for i in identities
     ]}
+
+
+@router.post("/unlink/request")
+async def auth_unlink_request(
+    body: _UnlinkIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Запросить отвязку native (email/password). Требует Telegram-привязки.
+
+    Backend генерит action-токен, шлёт в Telegram чат сообщение с inline-
+    кнопками. Подтверждение происходит в боте, не на сайте.
+    """
+    _require_db()
+    if body.provider != "native":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "only_native_supported")
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await auth_lib.resolve_user(repo, authorization=authorization)
+
+        # Должен быть native (что отвязывать) и Telegram (что подтверждать).
+        identities = await repo.list_identities(user.id)
+        providers = {i["provider"] for i in identities}
+        if "native" not in providers:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "no_native")
+        if "telegram" not in providers or user.tg_id is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "no_telegram")
+
+        token = await repo.create_auth_action(
+            "unlink_native", user_id=user.id, ttl_sec=600,
+        )
+        await session.commit()
+        tg_chat_id = int(user.tg_id)
+
+    # Сообщение в TG. Inline-кнопки confirm/cancel. callback_data <64 байт
+    # (наш токен — base64url 32 chars).
+    text = (
+        "🔒 <b>Подтверди отвязку входа по email</b>\n\n"
+        "Ты или кто-то от твоего имени просит снять привязку email и "
+        "пароля от аккаунта English Tutor. После отвязки войти на сайте по "
+        "email/паролю будет нельзя — останется только Telegram.\n\n"
+        "Если это не ты — нажми «Отмена»."
+    )
+    markup = {
+        "inline_keyboard": [[
+            {"text": "✅ Подтвердить", "callback_data": f"cu:{token}"},
+            {"text": "❌ Отмена", "callback_data": f"cn:{token}"},
+        ]],
+    }
+    sent = await auth_lib.send_bot_message(tg_chat_id, text, reply_markup=markup)
+    if not sent:
+        # Не смогли уведомить — отменяем action, чтобы он не висел.
+        from .db import Repo
+        async with db_session() as session:
+            repo = Repo(session)
+            await repo.mark_action_cancelled(token)
+            await session.commit()
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "telegram_send_failed",
+        )
+    return {"ok": True}

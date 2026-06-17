@@ -146,6 +146,14 @@ export async function loginNative(
   return { ok: false, error: await _readError(res) };
 }
 
+/** Запросить отвязку email/пароля — backend пошлёт сообщение в Telegram-бот,
+ *  юзер должен подтвердить в чате (PR-6). */
+export async function requestUnlinkNative(): Promise<NativeResult> {
+  const res = await _postJson("/api/auth/unlink/request", { provider: "native" });
+  if (res.ok) return { ok: true };
+  return { ok: false, error: await _readError(res) };
+}
+
 /** Задать пароль (и опц. email) текущему юзеру (Bearer JWT). */
 export async function setPassword(
   password: string, email?: string,
