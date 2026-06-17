@@ -286,6 +286,63 @@ export interface MeIdentity {
   email: string | null;
 }
 
+// ─── Подписка / оплата (PR-8: ЮKassa) ────────────────────────────────
+export interface Plan {
+  key: "trial3" | "monthly" | "yearly";
+  days: number;
+  amount_rub: number;
+  title: string;
+}
+
+export async function listPlans(): Promise<Plan[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/payments/plans`);
+    if (!res.ok) return [];
+    const data = await res.json() as { plans: Plan[] };
+    return data.plans || [];
+  } catch { return []; }
+}
+
+interface CreatePaymentResult {
+  ok: boolean;
+  confirmation_url?: string;
+  payment_id?: number;
+  error?: string;          // 'email_required' | 'yookassa_not_configured' | ...
+}
+
+export async function createPayment(
+  plan: Plan["key"], email?: string,
+): Promise<CreatePaymentResult> {
+  try {
+    const res = await _postJson("/api/payments/create", { plan, email });
+    if (res.ok) {
+      const data = await res.json() as { confirmation_url: string; payment_id: number };
+      return { ok: true, ...data };
+    }
+    return { ok: false, error: await _readError(res) };
+  } catch { return { ok: false, error: "network" }; }
+}
+
+export interface PaymentStatus {
+  payment_id: number;
+  status: "pending" | "succeeded" | "canceled" | "refunded";
+  plan: string;
+  amount_rub: number;
+  days_granted: number;
+}
+
+export async function fetchPaymentStatus(paymentId: number): Promise<PaymentStatus | null> {
+  try {
+    const headers: HeadersInit = {};
+    const tok = getToken();
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const res = await fetch(`${API_BASE}/api/payments/status?payment_id=${paymentId}`, { headers });
+    if (!res.ok) return null;
+    return await res.json() as PaymentStatus;
+  } catch { return null; }
+}
+
+
 export interface MeInfo {
   id: number;
   tg_id: number | null;
@@ -294,6 +351,7 @@ export interface MeInfo {
   email: string | null;
   identities: MeIdentity[];
   has_subscription?: boolean;
+  subscription_until?: string | null;
 }
 
 /** Текущий аккаунт + привязки. null если не авторизован/ошибка. */

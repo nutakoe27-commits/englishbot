@@ -3387,3 +3387,44 @@ button {
 }
 .login-yandex-btn:hover:not(:disabled) { background: #ffd633; }
 .login-yandex-btn:disabled { opacity: 0.55; }
+
+/* ─── SubscribeScreen: тарифы ─────────────────────────────────────────── */
+.sub-plans {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0;
+}
+.sub-plan {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1.5px solid rgba(255, 255, 255, 0.10);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s, transform 0.05s;
+}
+.sub-plan:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 204, 0, 0.55);
+}
+.sub-plan:active:not(:disabled) { transform: scale(0.99); }
+.sub-plan:disabled { opacity: 0.6; cursor: default; }
+.sub-plan__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim, rgba(255, 255, 255, 0.75));
+}
+.sub-plan__price {
+  font-size: 24px;
+  font-weight: 700;
+}
+.sub-plan__days {
+  font-size: 13px;
+  color: var(--text-dim, rgba(255, 255, 255, 0.55));
+}

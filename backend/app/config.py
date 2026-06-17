@@ -47,6 +47,23 @@ class Settings(BaseSettings):
     # Если пусто — собирается из API_PUBLIC_URL + '/api/auth/yandex/callback'.
     YANDEX_REDIRECT_URI: Optional[str] = None
 
+    # ─── ЮKassa веб-оплата (PR-8) ────────────────────────────────────────
+    # Прямой API ЮKassa для оплаты подписки на сайте — параллельно с
+    # Telegram Payments в боте (тот идёт через provider_token).
+    # YOOKASSA_SHOP_ID — тот же магазин, что у бота.
+    # YOOKASSA_SECRET_KEY — API-ключ из ЛК ЮKassa, НЕ provider_token бота.
+    YOOKASSA_SHOP_ID: Optional[str] = None
+    YOOKASSA_SECRET_KEY: Optional[str] = None
+    # Фискализация (54-ФЗ): отправлять чек в ЮKassa. На проде обязательно.
+    YOOKASSA_FISCALIZATION: bool = True
+    # Ставка НДС: 1=без НДС, 2=0%, 3=10%, 4=20% и т.д.
+    YOOKASSA_VAT_CODE: int = 1
+
+    # Цены подписки в рублях (синхронизированы с bot/app/main.py).
+    SUBSCRIPTION_PRICE_TRIAL3_RUB: int = 99
+    SUBSCRIPTION_PRICE_MONTHLY_RUB: int = 499
+    SUBSCRIPTION_PRICE_YEARLY_RUB: int = 2999
+
     # ─── База данных ──────────────────────────────────────────────────────
     # Формат: mysql+asyncmy://user:password@host:port/dbname?charset=utf8mb4
     # На VPS: mysql+asyncmy://englishbot:PWD@host.docker.internal:3306/englishbot?charset=utf8mb4

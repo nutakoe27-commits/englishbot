@@ -5,6 +5,7 @@ import WebApp from "@twa-dev/sdk";
 import { useEffect, useState } from "react";
 import { ProgressScreen } from "./ProgressScreen";
 import { AccountSheet } from "./AccountSheet";
+import { SubscribeScreen } from "./SubscribeScreen";
 import { fetchMe } from "./auth";
 
 export type Mode = "speaking" | "listening" | "grammar" | "srs";
@@ -31,6 +32,25 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
   const [stats, setStats] = useState<MeStats | null>(null);
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
   const [accountOpen, setAccountOpen] = useState<boolean>(false);
+  const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
+  // Если юзер вернулся с ЮKassa — в URL ?payment_id=N. Открываем SubscribeScreen
+  // в режиме «return» с поллингом статуса.
+  const [returnPaymentId, setReturnPaymentId] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    const p = new URLSearchParams(window.location.search);
+    const v = p.get("payment_id");
+    return v && !isNaN(Number(v)) ? Number(v) : null;
+  });
+  useEffect(() => {
+    if (returnPaymentId == null) return;
+    // Открываем SubscribeScreen и чистим query, чтобы при reload не открывалось снова.
+    setSubscribeOpen(true);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("payment_id");
+      window.history.replaceState(null, "", url.pathname + (url.search ? url.search : "") + url.hash);
+    } catch { /* ignore */ }
+  }, [returnPaymentId]);
 
   useEffect(() => {
     try { WebApp.ready(); } catch { /* старые клиенты */ }
@@ -192,6 +212,18 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
             setAccountOpen(false);
             onLoggedOut?.();
           }}
+          onOpenSubscribe={() => setSubscribeOpen(true)}
+        />
+      )}
+
+      {subscribeOpen && (
+        <SubscribeScreen
+          onClose={() => { setSubscribeOpen(false); setReturnPaymentId(null); }}
+          onPaid={() => {
+            // Подписка активировалась — обновим stats/me в фоне.
+            void fetchMe();
+          }}
+          initialReturnPaymentId={returnPaymentId ?? undefined}
         />
       )}
     </div>
