@@ -104,6 +104,29 @@ class UserIdentity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class AuthAction(Base):
+    """Одноразовый токен для Telegram deep-link и подтверждений в боте
+    (миграция 0022).
+
+    Жизненный цикл: pending → done | cancelled | failed (final).
+    Старые expired-row'ы можно периодически чистить, но это не обязательно
+    (статус pending + просрочка достаточны для отказа).
+    """
+
+    __tablename__ = "auth_actions"
+
+    token: Mapped[str] = mapped_column(String(40), primary_key=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE")
+    )
+    resulting_user_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class Session(Base):
     __tablename__ = "sessions"
 

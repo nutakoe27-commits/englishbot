@@ -48,6 +48,11 @@ MINIAPP_URL: str = os.getenv("MINIAPP_URL", "https://englishbot.krichigindocs.ru
 # Username бота без @ — для построения deep-link'ов t.me/<bot>?start=...
 BOT_USERNAME: str = os.getenv("BOT_USERNAME", "kmo_ai_english_bot").lstrip("@")
 
+# Backend ↔ bot: для вызова internal-эндпоинтов (deep-link авторизация,
+# подтверждение unlink). Секрет общий с backend (env BACKEND_BOT_SECRET).
+BACKEND_URL: str = os.getenv("BACKEND_URL", "http://backend:8000").rstrip("/")
+BACKEND_BOT_SECRET: Optional[str] = os.getenv("BACKEND_BOT_SECRET") or None
+
 # Free Period — промо-период без оплаты. При FREE_PERIOD=1 бот скрывает
 # кнопки подписки, /subscribe возвращает уведомление вместо инвойса,
 # в /profile нет блока «оформить подписку», лимит 10 минут не показывается.
@@ -180,11 +185,85 @@ def _miniapp_keyboard() -> InlineKeyboardMarkup:
 
 
 # ─── /start ──────────────────────────────────────────────────────────────────
+async def _post_backend(path: str, payload: dict) -> tuple[int, dict]:
+    """POST на backend internal-эндпоинт с X-Bot-Secret. Возвращает (status, json)."""
+    import httpx
+    headers = {"X-Bot-Secret": BACKEND_BOT_SECRET or ""}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{BACKEND_URL}{path}", json=payload, headers=headers,
+            )
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"detail": resp.text[:200]}
+        return resp.status_code, data
+    except Exception as exc:
+        logger.warning("[bot→backend] %s failed: %s", path, exc)
+        return 0, {"detail": str(exc)}
+
+
+async def _handle_auth_deeplink(message: Message, token: str) -> None:
+    """Юзер пришёл по t.me/<bot>?start=<login|link|auth>_<token>.
+
+    Вызывает backend /api/internal/auth/apply-telegram. Отвечает понятным
+    сообщением в зависимости от kind.
+    """
+    if not message.from_user:
+        return
+    code, data = await _post_backend("/api/internal/auth/apply-telegram", {
+        "token": token,
+        "tg_id": message.from_user.id,
+        "first_name": message.from_user.first_name,
+        "last_name": message.from_user.last_name,
+        "username": message.from_user.username,
+        "language_code": message.from_user.language_code,
+    })
+    if code != 200:
+        await message.answer(
+            "⚠️ Ссылка устарела или уже использована. Открой сайт ещё раз и нажми войти/привязать.",
+        )
+        return
+    kind = data.get("kind")
+    if kind == "login":
+        await message.answer(
+            "✅ Вход через Telegram выполнен.\n\n"
+            "Возвращайся на сайт — страница обновится автоматически.",
+            parse_mode="HTML",
+        )
+    elif kind == "link":
+        if data.get("merged"):
+            await message.answer(
+                "✅ <b>Аккаунты объединены.</b>\n\n"
+                "Прогресс, словарь и подписка сохранены. Возвращайся на сайт.",
+                parse_mode="HTML",
+            )
+        else:
+            await message.answer(
+                "✅ <b>Telegram привязан к твоему аккаунту.</b>\n\n"
+                "Теперь можно входить на сайте и через Telegram, и через "
+                "email/пароль. Возвращайся на сайт.",
+                parse_mode="HTML",
+            )
+    else:
+        await message.answer("✅ Готово. Возвращайся на сайт.")
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message, command: CommandObject) -> None:
+    # Deep-link от сайта: «/start <login|link|auth>_<token>» — авторизация через бот.
+    # Токен base64url — case-sensitive, .lower() не делаем.
+    payload_raw = (command.args or "").strip()
+    for prefix in ("login_", "link_", "auth_"):
+        if payload_raw.startswith(prefix):
+            token = payload_raw[len(prefix):]
+            await _handle_auth_deeplink(message, token)
+            return
+
     # Deep-link из mini app: «/start subscribe» — сразу показываем экран подписки.
     # В Free Period подписка не нужна — отдаём промо-сообщение.
-    payload = (command.args or "").strip().lower()
+    payload = payload_raw.lower()
     if payload == "subscribe":
         if FREE_PERIOD:
             await message.answer(

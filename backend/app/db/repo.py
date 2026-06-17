@@ -22,6 +22,7 @@ from .models import (
     Session as SessionRow,
     User,
     UserGrammarProgress,
+    AuthAction,
     UserIdentity,
     UserMistake,
     UserVocabulary,
@@ -236,6 +237,74 @@ class Repo:
                 .values(email=email, updated_at=utcnow())
             )
         return "ok"
+
+    # ─── auth_actions (миграция 0022) ──────────────────────────────────
+    async def create_auth_action(
+        self,
+        action: str,
+        *,
+        user_id: Optional[int] = None,
+        ttl_sec: int = 600,
+    ) -> str:
+        """Создать новый pending-токен. Возвращает token (32 base64url-символа)."""
+        import secrets
+        token = secrets.token_urlsafe(24)
+        now = utcnow()
+        row = AuthAction(
+            token=token,
+            action=action,
+            user_id=user_id,
+            status="pending",
+            expires_at=now + timedelta(seconds=ttl_sec),
+            created_at=now,
+        )
+        self.s.add(row)
+        await self.s.flush()
+        return token
+
+    async def get_action(self, token: str) -> Optional[AuthAction]:
+        if not token:
+            return None
+        res = await self.s.execute(
+            select(AuthAction).where(AuthAction.token == token)
+        )
+        return res.scalar_one_or_none()
+
+    async def get_pending_action(self, token: str) -> Optional[AuthAction]:
+        """Действие, готовое к применению: status='pending' и не просрочено."""
+        action = await self.get_action(token)
+        if action is None:
+            return None
+        if action.status != "pending":
+            return None
+        if action.expires_at and action.expires_at <= utcnow():
+            return None
+        return action
+
+    async def mark_action_done(
+        self, token: str, resulting_user_id: Optional[int] = None,
+    ) -> None:
+        await self.s.execute(
+            update(AuthAction).where(AuthAction.token == token).values(
+                status="done",
+                resulting_user_id=resulting_user_id,
+                consumed_at=utcnow(),
+            )
+        )
+
+    async def mark_action_cancelled(self, token: str) -> None:
+        await self.s.execute(
+            update(AuthAction).where(AuthAction.token == token).values(
+                status="cancelled", consumed_at=utcnow(),
+            )
+        )
+
+    async def mark_action_failed(self, token: str) -> None:
+        await self.s.execute(
+            update(AuthAction).where(AuthAction.token == token).values(
+                status="failed", consumed_at=utcnow(),
+            )
+        )
 
     async def link_or_merge(
         self, user_id: int, provider: str, provider_uid: str,

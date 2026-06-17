@@ -169,7 +169,47 @@ async function _readError(res: Response): Promise<string> {
   return error;
 }
 
-/** Вход через Telegram Login Widget (callback-объект от виджета). */
+interface TgStartResponse {
+  token: string;
+  url: string;
+}
+
+/** Старт Telegram deep-link флоу. mode='login' (anon) | 'link' (Bearer). */
+export async function startTelegramFlow(mode: "login" | "link"): Promise<TgStartResponse | null> {
+  try {
+    const res = await _postJson("/api/auth/telegram/start", { mode });
+    if (!res.ok) return null;
+    return (await res.json()) as TgStartResponse;
+  } catch {
+    return null;
+  }
+}
+
+export interface PollResult {
+  status: "pending" | "done" | "cancelled" | "failed" | "expired";
+  action?: string;
+  token?: string;          // JWT, выдаётся при done для login/link
+}
+
+/** Опросить состояние action-токена. JWT (если есть) сохраняем сами. */
+export async function pollAuth(token: string): Promise<PollResult> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/auth/poll?token=${encodeURIComponent(token)}`,
+    );
+    if (!res.ok) return { status: "failed" };
+    const data = (await res.json()) as PollResult;
+    if (data.status === "done" && data.token) {
+      setToken(data.token);
+    }
+    return data;
+  } catch {
+    return { status: "failed" };
+  }
+}
+
+/** Вход через Telegram Login Widget (callback-объект от виджета). Оставлен
+ *  для back-compat и тестов; основной флоу теперь — startTelegramFlow. */
 export async function loginTelegramWidget(widget: Record<string, unknown>): Promise<boolean> {
   const res = await _postJson("/api/auth/telegram", { widget });
   if (!res.ok) return false;

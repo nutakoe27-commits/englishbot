@@ -58,6 +58,10 @@ class _SetPasswordIn(BaseModel):
     password: str
 
 
+class _TgStartIn(BaseModel):
+    mode: str                       # 'login' | 'link'
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _user_summary(user, identities: list[dict]) -> dict:
@@ -137,6 +141,74 @@ async def auth_telegram(body: _TelegramIn) -> dict:
         await session.commit()
         token = auth_lib.issue_jwt(user.id)
         return {"token": token, "user": _user_summary(user, identities)}
+
+
+@router.post("/telegram/start")
+async def auth_telegram_start(
+    body: _TgStartIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Старт deep-link авторизации/привязки через Telegram-бот.
+
+    Возвращает {token, url}. Сайт сохраняет токен, открывает url (это
+    `t.me/<bot>?start=<prefix>_<token>` — telegram приложение откроет бот);
+    далее опрашивает /api/auth/poll до status=done и получает JWT.
+    """
+    _require_db()
+    mode = (body.mode or "").strip().lower()
+    if mode not in ("login", "link"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_mode")
+
+    user_id: Optional[int] = None
+    action_name: str
+    prefix: str
+    if mode == "login":
+        action_name = "login_telegram"
+        prefix = "login"
+    else:
+        # Привязка требует Bearer JWT.
+        from .db import Repo
+        async with db_session() as session:
+            repo = Repo(session)
+            user = await auth_lib.resolve_user(repo, authorization=authorization)
+            user_id = user.id
+        action_name = "link_telegram"
+        prefix = "link"
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        token = await repo.create_auth_action(action_name, user_id=user_id, ttl_sec=600)
+        await session.commit()
+    return {"token": token, "url": auth_lib.telegram_deeplink(prefix, token)}
+
+
+@router.get("/poll")
+async def auth_poll(token: str = "") -> dict:
+    """Состояние действия. status: pending | done | cancelled | failed | expired.
+
+    Для done на login/link выдаёт JWT (поле token). Для unlink_native — без
+    токена (юзер уже залогинен, просто покажем сообщение).
+    """
+    _require_db()
+    if not token:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "token required")
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        action = await repo.get_action(token)
+        if action is None:
+            return {"status": "failed"}
+        # Просрочка
+        from datetime import datetime as _dt
+        now = _dt.utcnow()
+        if action.status == "pending" and action.expires_at and action.expires_at <= now:
+            return {"status": "expired"}
+        out: dict = {"status": action.status, "action": action.action}
+        if action.status == "done" and action.resulting_user_id and action.action in (
+            "login_telegram", "link_telegram",
+        ):
+            out["token"] = auth_lib.issue_jwt(action.resulting_user_id)
+    return out
 
 
 @router.post("/register")

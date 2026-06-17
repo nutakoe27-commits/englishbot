@@ -18,8 +18,16 @@ class Settings(BaseSettings):
     # Хост admin-панели — используется в CORS
     ADMIN_HOST: str = "admin-english.krichigindocs.ru"
 
-    # Telegram Bot token — используется для валидации initData и Login Widget
+    # Telegram Bot token — используется для валидации initData и Login Widget,
+    # а также для отправки сообщений в чат юзеру (PR-6: подтверждение unlink).
     BOT_TOKEN: Optional[str] = None
+
+    # Username бота без '@' — для построения deep-link t.me/<bot>?start=…
+    BOT_USERNAME: str = "kmo_ai_english_bot"
+
+    # Общий секрет для аутентификации запросов bot ↔ backend (header
+    # X-Bot-Secret). Используется на /api/internal/auth/* endpoint'ах.
+    BACKEND_BOT_SECRET: Optional[str] = None
 
     # ─── Веб-авторизация (миграция 0020 + 0021) ──────────────────────────
     # Секрет для подписи JWT сессий. Генерируй: openssl rand -hex 32

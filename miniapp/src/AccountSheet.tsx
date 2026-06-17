@@ -6,14 +6,14 @@
  * добавится в PR-2 этой серии, VK ID — позже.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import WebApp from "@twa-dev/sdk";
 import {
-  BOT_USERNAME,
   fetchMe,
-  linkTelegramWidget,
   logout,
+  pollAuth,
   setPassword,
+  startTelegramFlow,
   type MeInfo,
 } from "./auth";
 
@@ -28,11 +28,16 @@ const PROVIDER_LABEL: Record<string, string> = {
   vk: "VK ID",
 };
 
+// Ключ pending TG link-токена в sessionStorage. На монтировании компонента
+// возобновляем poll, если юзер вернулся из Telegram.
+const PENDING_TG_KEY = "englishbot_tg_link_pending";
+
 export function AccountSheet({ onClose, onLoggedOut }: Props) {
   const [me, setMe] = useState<MeInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string>("");
-  const tgBoxRef = useRef<HTMLDivElement | null>(null);
+  const [tgPending, setTgPending] = useState<{ token: string; url: string } | null>(null);
+  const [tgBusy, setTgBusy] = useState<boolean>(false);
 
   const inTelegram = (() => {
     try { return !!WebApp.initData; } catch { return false; }
@@ -81,38 +86,62 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
     } finally { setPwdBusy(false); }
   };
 
-  // ── Кнопка привязки Telegram (Login Widget, только на вебе) ────────────
+  // ── Привязка Telegram через deep-link в бот + poll ─────────────────────
   useEffect(() => {
-    if (loading || hasTelegram || inTelegram || !BOT_USERNAME || !tgBoxRef.current) return;
-
-    window.onTelegramAuth = async (user) => {
-      setMsg("");
-      const r = await linkTelegramWidget(user);
-      if (r.ok) {
-        setMsg(
-          r.merged
-            ? "Аккаунты объединены ✓ — данные сохранены."
-            : "Telegram привязан ✓",
-        );
-        void reload();
-      } else {
-        setMsg("Не удалось привязать Telegram.");
+    try {
+      const raw = sessionStorage.getItem(PENDING_TG_KEY);
+      if (raw) {
+        const p = JSON.parse(raw) as { token: string; url: string };
+        if (p?.token) setTgPending(p);
       }
-    };
+    } catch { /* ignore */ }
+  }, []);
 
-    const box = tgBoxRef.current;
-    if (!box.querySelector("script")) {
-      const s = document.createElement("script");
-      s.src = "https://telegram.org/js/telegram-widget.js?22";
-      s.async = true;
-      s.setAttribute("data-telegram-login", BOT_USERNAME);
-      s.setAttribute("data-size", "large");
-      s.setAttribute("data-radius", "12");
-      s.setAttribute("data-onauth", "onTelegramAuth(user)");
-      box.appendChild(s);
-    }
-    return () => { window.onTelegramAuth = undefined; };
-  }, [loading, hasTelegram, inTelegram, reload]);
+  useEffect(() => {
+    if (!tgPending) return;
+    let cancelled = false;
+    let attempts = 0;
+    const tick = async () => {
+      if (cancelled) return;
+      attempts++;
+      const r = await pollAuth(tgPending.token);
+      if (cancelled) return;
+      if (r.status === "done") {
+        sessionStorage.removeItem(PENDING_TG_KEY);
+        setTgPending(null);
+        setMsg("Telegram привязан ✓ — данные объединены.");
+        void reload();
+        return;
+      }
+      if (r.status === "cancelled" || r.status === "failed" || r.status === "expired") {
+        sessionStorage.removeItem(PENDING_TG_KEY);
+        setTgPending(null);
+        setMsg("Не удалось привязать Telegram. Попробуй ещё раз.");
+        return;
+      }
+      if (attempts > 200) {
+        sessionStorage.removeItem(PENDING_TG_KEY);
+        setTgPending(null);
+        setMsg("Время вышло. Открой Telegram ещё раз.");
+        return;
+      }
+      setTimeout(tick, 3000);
+    };
+    void tick();
+    return () => { cancelled = true; };
+  }, [tgPending, reload]);
+
+  const startTelegramLink = async () => {
+    if (tgBusy) return;
+    setTgBusy(true); setMsg("");
+    try {
+      const r = await startTelegramFlow("link");
+      if (!r) { setMsg("Не удалось запустить привязку. Попробуй позже."); return; }
+      try { sessionStorage.setItem(PENDING_TG_KEY, JSON.stringify(r)); } catch { /* ignore */ }
+      setTgPending(r);
+      window.location.href = r.url;
+    } finally { setTgBusy(false); }
+  };
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -152,11 +181,31 @@ export function AccountSheet({ onClose, onLoggedOut }: Props) {
                 })}
               </div>
 
-              {!hasTelegram && !inTelegram && BOT_USERNAME && (
-                <div className="acc-link-block">
-                  <div className="acc-link-title">Привязать Telegram</div>
-                  <div ref={tgBoxRef} className="acc-tgbtn" />
-                </div>
+              {!hasTelegram && !inTelegram && (
+                tgPending ? (
+                  <div className="acc-link-block">
+                    <div className="acc-link-title">⏳ Ждём подтверждения в Telegram</div>
+                    <p className="acc-hint">
+                      Открой Telegram и нажми «Start» в боте. Этот экран
+                      обновится автоматически.
+                    </p>
+                    <a className="btn btn--primary acc-link-btn" href={tgPending.url}>
+                      Открыть Telegram ещё раз
+                    </a>
+                  </div>
+                ) : (
+                  <div className="acc-link-block">
+                    <button
+                      type="button"
+                      className="btn btn--primary acc-link-btn"
+                      onClick={startTelegramLink}
+                      disabled={tgBusy}
+                    >
+                      ✈️ Привязать Telegram
+                    </button>
+                    <p className="acc-hint">Откроется приложение Telegram, нажми «Start».</p>
+                  </div>
+                )
               )}
 
               {!hasNative && (
