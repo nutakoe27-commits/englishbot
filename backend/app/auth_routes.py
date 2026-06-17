@@ -449,8 +449,7 @@ async def auth_me(authorization: Optional[str] = Header(None)) -> dict:
 async def auth_link(body: _LinkIn, authorization: Optional[str] = Header(None)) -> dict:
     """Привязать провайдер к текущему аккаунту (Bearer JWT).
 
-    Пока поддерживается только telegram (Google убран миграцией 0021,
-    нативная регистрация — PR-2 этой серии, VK ID — позже).
+    Поддерживается telegram (deep-link через бота) и yandex (OAuth, PR-7).
     """
     _require_db()
     if body.provider != "telegram":

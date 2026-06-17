@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     AUTH_JWT_SECRET: Optional[str] = None
     # Срок жизни JWT (дни).
     AUTH_JWT_TTL_DAYS: int = 30
-    # Публичный URL backend и сайта — оставляем под будущий VK ID redirect-флоу.
+    # Публичный URL backend (используется для построения Yandex OAuth redirect URI).
     API_PUBLIC_URL: Optional[str] = None
     WEB_APP_URL: Optional[str] = None
 
