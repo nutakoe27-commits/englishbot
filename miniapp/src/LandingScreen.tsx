@@ -115,7 +115,7 @@ function Hero({ onCta }: { onCta: () => void }) {
             просто исправляет.
           </p>
           <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
-            Попробовать 3 дня за 99 ₽
+            Попробовать бесплатно
           </button>
           <p className="lp-hero__note">
             Без подписки. Отмена в любой момент. Регистрация в один тап
@@ -445,7 +445,7 @@ function FinalCta({ onCta }: { onCta: () => void }) {
       <div className="lp-container lp-final__inner">
         <h2 className="lp-h2">Хватит молчать.<br />Скажи первую фразу сегодня.</h2>
         <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
-          Попробовать 3 дня за 99 ₽
+          Попробовать бесплатно
         </button>
         <p className="lp-final__note">15 минут в день. Без подписки. Отмена в любой момент.</p>
       </div>
