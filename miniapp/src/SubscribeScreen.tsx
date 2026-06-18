@@ -20,6 +20,10 @@ import {
 } from "./auth";
 import { ymHit, ymReachGoal } from "./metrika";
 
+// Публичная оферта — статичный файл, раздаётся nginx'ом miniapp из public/.
+// Лежит в miniapp/public/oferta.html, Vite копирует его в dist при сборке.
+const OFFER_URL = "/oferta.html";
+
 interface Props {
   onClose: () => void;
   onPaid?: () => void;
@@ -230,6 +234,13 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
               >
                 Назад
               </button>
+              <p className="sub-offer">
+                Продолжая, вы принимаете условия{" "}
+                <a href={OFFER_URL} target="_blank" rel="noreferrer">
+                  публичной оферты
+                </a>
+                .
+              </p>
             </form>
           ) : (
             <>
@@ -259,6 +270,13 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
               <p className="acc-hint">
                 Оплата на сайте ЮKassa. После успешной оплаты подписка
                 активируется автоматически. Эл. чек придёт на твой email.
+              </p>
+              <p className="sub-offer">
+                Нажимая «Оплатить», вы принимаете условия{" "}
+                <a href={OFFER_URL} target="_blank" rel="noreferrer">
+                  публичной оферты
+                </a>
+                .
               </p>
             </>
           )}
