@@ -25,6 +25,7 @@ interface Props {
   onClose: () => void;
   onLoggedOut: () => void;
   onOpenSubscribe?: () => void;
+  onOpenTutorial?: () => void;
 }
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -37,7 +38,7 @@ const PROVIDER_LABEL: Record<string, string> = {
 // возобновляем poll, если юзер вернулся из Telegram.
 const PENDING_TG_KEY = "englishbot_tg_link_pending";
 
-export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe }: Props) {
+export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTutorial }: Props) {
   const [me, setMe] = useState<MeInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string>("");
@@ -355,6 +356,16 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe }: Props) {
               )}
 
               {msg && <p className="acc-msg">{msg}</p>}
+
+              {onOpenTutorial && (
+                <button
+                  type="button"
+                  className="acc-channel"
+                  onClick={onOpenTutorial}
+                >
+                  📖 Открыть гид заново
+                </button>
+              )}
 
               <a
                 className="acc-channel"

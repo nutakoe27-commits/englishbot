@@ -642,6 +642,13 @@ class Repo:
         )
         return True
 
+    async def mark_tutorial_done(self, user_id: int) -> None:
+        """Юзер прошёл (или скипнул) онбординг. Идемпотентно."""
+        await self.s.execute(
+            update(User).where(User.id == user_id, User.tutorial_done_at.is_(None))
+            .values(tutorial_done_at=utcnow(), updated_at=utcnow())
+        )
+
     async def add_subscription_days(
         self,
         *,

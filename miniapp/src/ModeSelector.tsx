@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { ProgressScreen } from "./ProgressScreen";
 import { AccountSheet } from "./AccountSheet";
 import { SubscribeScreen } from "./SubscribeScreen";
+import { OnboardingModal } from "./OnboardingModal";
 import { fetchMe } from "./auth";
 
 export type Mode = "speaking" | "listening" | "grammar" | "srs";
@@ -33,6 +34,10 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
   const [accountOpen, setAccountOpen] = useState<boolean>(false);
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
+  // Онбординг. autoOpen — при первом заходе (помечаем done в БД).
+  // manualOpen — юзер сам открыл через «Открыть гид» в Аккаунте (не помечаем).
+  const [onboardingAuto, setOnboardingAuto] = useState<boolean>(false);
+  const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
   // Если юзер вернулся с ЮKassa — в URL ?payment_id=N. Открываем SubscribeScreen
   // в режиме «return» с поллингом статуса.
   const [returnPaymentId, setReturnPaymentId] = useState<number | null>(() => {
@@ -60,12 +65,15 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
     const user = WebApp.initDataUnsafe?.user;
     if (user?.first_name) {
       setUserName(user.first_name);
-    } else {
-      // Веб: имени из Telegram нет — берём из аккаунта (Google name / TG name).
-      void fetchMe().then((me) => {
-        if (me?.first_name) setUserName(me.first_name);
-      });
     }
+    // Подтянем профиль: для веба — first_name; для всех — флаг tutorial_done.
+    // Если онбординг ещё не пройден (новый юзер) — открываем модалку.
+    void fetchMe().then((me) => {
+      if (!user?.first_name && me?.first_name) setUserName(me.first_name);
+      if (me && me.tutorial_done === false) {
+        setOnboardingAuto(true);
+      }
+    });
 
     // Статистика на главном экране — чтобы прогресс был виден сразу.
     // На вебе JWT подставляется автоматически (installFetchAuth), в Telegram
@@ -213,6 +221,7 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
             onLoggedOut?.();
           }}
           onOpenSubscribe={() => setSubscribeOpen(true)}
+          onOpenTutorial={() => { setAccountOpen(false); setOnboardingManual(true); }}
         />
       )}
 
@@ -226,6 +235,12 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
           initialReturnPaymentId={returnPaymentId ?? undefined}
         />
       )}
+
+      <OnboardingModal
+        open={onboardingAuto || onboardingManual}
+        markDoneOnFinish={onboardingAuto && !onboardingManual}
+        onClose={() => { setOnboardingAuto(false); setOnboardingManual(false); }}
+      />
     </div>
   );
 }
