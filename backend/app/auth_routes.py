@@ -325,6 +325,12 @@ async def auth_yandex_callback(
             res = await repo.link_or_merge(
                 action.user_id, "yandex", yandex_uid, email,
             )
+            if res["kind"] == "conflict":
+                await repo.mark_action_failed(state)
+                await session.commit()
+                return _yandex_redirect_to_frontend(
+                    yandex_error="identity_conflict",
+                )
             resulting_user_id = int(res["primary_id"])
             merged = res["kind"] == "merged"
 
@@ -465,6 +471,15 @@ async def auth_link(body: _LinkIn, authorization: Optional[str] = Header(None)) 
         # link_or_merge: если provider свободен — просто прилинкуем; если занят
         # другим аккаунтом — сольём (primary = старший по created_at).
         res = await repo.link_or_merge(user.id, "telegram", uid, email)
+        if res["kind"] == "conflict":
+            await session.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "identity_conflict",
+                    "providers": res["conflict_providers"],
+                },
+            )
         primary_id = int(res["primary_id"])
         merged = res["kind"] == "merged"
 

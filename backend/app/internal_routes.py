@@ -86,6 +86,18 @@ async def apply_telegram(
             res = await repo.link_or_merge(
                 action.user_id, "telegram", str(body.tg_id), None,
             )
+            if res["kind"] == "conflict":
+                # У обоих аккаунтов есть identity одного провайдера — нельзя
+                # молча слить. Помечаем action failed, возвращаем 409.
+                await repo.mark_action_failed(body.token)
+                await session.commit()
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "identity_conflict",
+                        "providers": res["conflict_providers"],
+                    },
+                )
             primary_id = int(res["primary_id"])
             merged = res["kind"] == "merged"
             # У primary мог быть NULL tg_id — у TG-аккаунта он точно есть после

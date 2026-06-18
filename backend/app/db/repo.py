@@ -367,6 +367,25 @@ class Repo:
             primary, secondary = current, existing
         else:
             primary, secondary = existing, current
+
+        # Защита от дублей: если у обоих аккаунтов есть identity одного и
+        # того же провайдера (с разными uid), молчаливый merge оставит обе
+        # — у юзера в итоге окажется, например, два email/password. Это баг
+        # UX. Отказываем merge со списком конфликтующих провайдеров; бот
+        # покажет понятное сообщение, юзер сам решит, какой identity отвязать.
+        primary_identities = await self.list_identities(primary.id)
+        secondary_identities = await self.list_identities(secondary.id)
+        primary_providers = {i["provider"] for i in primary_identities}
+        secondary_providers = {i["provider"] for i in secondary_identities}
+        conflict_providers = sorted(primary_providers & secondary_providers)
+        if conflict_providers:
+            return {
+                "kind": "conflict",
+                "primary_id": primary.id,
+                "secondary_id": secondary.id,
+                "conflict_providers": conflict_providers,
+            }
+
         await self._merge_accounts(primary.id, secondary.id)
         return {"kind": "merged", "primary_id": primary.id}
 
