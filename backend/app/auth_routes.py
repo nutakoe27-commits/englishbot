@@ -448,7 +448,21 @@ async def auth_me(authorization: Optional[str] = Header(None)) -> dict:
     out["subscription_until"] = (
         user.subscription_until.isoformat() if user.subscription_until else None
     )
+    out["tutorial_done"] = user.tutorial_done_at is not None
     return out
+
+
+@router.post("/tutorial/complete")
+async def auth_tutorial_complete(authorization: Optional[str] = Header(None)) -> dict:
+    """Юзер прошёл онбординг (или нажал «Пропустить»). Идемпотентно."""
+    _require_db()
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await auth_lib.resolve_user(repo, authorization=authorization)
+        await repo.mark_tutorial_done(user.id)
+        await session.commit()
+    return {"ok": True}
 
 
 @router.post("/link")

@@ -352,6 +352,14 @@ export interface MeInfo {
   identities: MeIdentity[];
   has_subscription?: boolean;
   subscription_until?: string | null;
+  tutorial_done?: boolean;
+}
+
+/** Пометить онбординг пройденным (или скипнутым). Идемпотентно. */
+export async function completeTutorial(): Promise<void> {
+  try {
+    await _postJson("/api/auth/tutorial/complete", {});
+  } catch { /* ignore — не блокирующая операция */ }
 }
 
 /** Текущий аккаунт + привязки. null если не авторизован/ошибка. */

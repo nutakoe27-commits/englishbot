@@ -3243,6 +3243,12 @@ button {
   font-size: 13px;
   color: var(--accent-soft, #a489ff);
   text-decoration: none;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
 }
 .acc-channel:hover { text-decoration: underline; }
 
@@ -3488,4 +3494,104 @@ button {
   .mode-card {
     padding: 28px 28px;
   }
+}
+
+/* ─── Онбординг-модалка (PR-10) ─────────────────────────────────────── */
+.ob-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+  animation: ob-fade-in 0.18s ease;
+}
+@keyframes ob-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.ob-card {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg-1, #131720);
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+  border-radius: 18px;
+  padding: 28px 24px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.ob-skip {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: background 0.15s;
+}
+.ob-skip:hover { background: rgba(255, 255, 255, 0.12); }
+.ob-emoji {
+  font-size: 48px;
+  text-align: center;
+  margin-top: 6px;
+}
+.ob-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+}
+.ob-body {
+  font-size: 15px;
+  line-height: 1.55;
+  text-align: center;
+  color: var(--text, rgba(255, 255, 255, 0.85));
+  min-height: 110px;
+}
+.ob-body a { color: var(--accent, #4ea1ff); text-decoration: none; }
+.ob-body a:hover { text-decoration: underline; }
+.ob-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.ob-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, transform 0.15s;
+}
+.ob-dot.is-active {
+  background: var(--accent, #4ea1ff);
+  transform: scale(1.25);
+}
+.ob-nav {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+.ob-nav .btn { flex: 1; }
+
+@media (min-width: 768px) {
+  .ob-card { max-width: 560px; padding: 36px 36px 24px; }
+  .ob-emoji { font-size: 56px; }
+  .ob-title { font-size: 26px; }
+  .ob-body { font-size: 16px; }
 }

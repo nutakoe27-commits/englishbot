@@ -79,6 +79,7 @@ class User(Base):
     # появился только из Mini App, бота в чате не открывал. Заполняется один
     # раз — bot middleware пишет только если поле было NULL.
     bot_activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    tutorial_done_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
 class UserIdentity(Base):
