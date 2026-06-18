@@ -10,6 +10,7 @@ import { SrsScreen } from "./SrsScreen";
 import { LoginScreen } from "./LoginScreen";
 import { LandingScreen } from "./LandingScreen";
 import {
+  extractYandexCallback,
   installFetchAuth,
   getToken,
   loginTelegramInitData,
@@ -105,6 +106,11 @@ function Root() {
         if (!cancelled) setAuth("authed");
         return;
       }
+      // 1.5. Возврат с Yandex OAuth: в URL fragment #yandex_jwt=… —
+      // достаём JWT и кладём в localStorage до проверки getToken().
+      // Иначе main.tsx покажет лендинг (showLogin локальный = false после
+      // полной перезагрузки), и юзеру придётся ещё раз кликнуть «Войти».
+      extractYandexCallback();
       // 2. Браузер: есть сохранённый токен → проверим; иначе экран входа.
       if (getToken()) {
         const ok = await verifySession();
