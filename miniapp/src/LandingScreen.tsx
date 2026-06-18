@@ -121,6 +121,10 @@ function Hero({ onCta }: { onCta: () => void }) {
             Без подписки. Отмена в любой момент. Регистрация в один тап
             через Яндекс ID или email.
           </p>
+          <div className="lp-hero__proof">
+            <span className="lp-hero__proof-dot" aria-hidden />
+            Уже <b>2 000+ учеников</b> тренируют речь с English Tutor
+          </div>
         </div>
         <div className="lp-hero__visual">
           <ScreenshotFrame src="/screenshots/main.png" alt="Главный экран English Tutor — выбор режима" />
@@ -252,7 +256,7 @@ function SocialProof() {
   return (
     <section className="lp-section lp-social">
       <div className="lp-container">
-        <h2 className="lp-h2 lp-h2--center">Что говорят те, кто попробовал</h2>
+        <h2 className="lp-h2 lp-h2--center">Что говорят 2 000+ учеников</h2>
         <div className="lp-social__grid">
           <Review name="Вячеслав К." level="">
             Классная история. Спасибо за <b>20 минут — это уже больше, чем в
@@ -322,8 +326,9 @@ function Pricing({ onCta }: { onCta: () => void }) {
           <PlanCard
             title="Годовой"
             price="2 999 ₽"
+            oldPrice="5 988 ₽"
             period="365 дней"
-            hint="Выгоднее на 50%"
+            hint="Экономия 2 989 ₽ — это 50%"
             onCta={onCta}
             ctaLabel="Оформить"
           />
@@ -338,14 +343,15 @@ function Pricing({ onCta }: { onCta: () => void }) {
 }
 
 function PlanCard({
-  title, price, period, hint, onCta, ctaLabel, highlighted = false,
+  title, price, oldPrice, period, hint, onCta, ctaLabel, highlighted = false,
 }: {
-  title: string; price: string; period: string; hint: string;
+  title: string; price: string; oldPrice?: string; period: string; hint: string;
   onCta: () => void; ctaLabel: string; highlighted?: boolean;
 }) {
   return (
     <div className={`lp-plan ${highlighted ? "lp-plan--hl" : ""}`}>
       <div className="lp-plan__title">{title}</div>
+      {oldPrice && <div className="lp-plan__old-price">{oldPrice}</div>}
       <div className="lp-plan__price">{price}</div>
       <div className="lp-plan__period">{period}</div>
       <div className="lp-plan__hint">{hint}</div>
