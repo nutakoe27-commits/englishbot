@@ -3428,3 +3428,64 @@ button {
   font-size: 13px;
   color: var(--text-dim, rgba(255, 255, 255, 0.55));
 }
+
+/* ─── Desktop adaptation (>=768px): шире контейнеры, grid режимов 2x2 ─── */
+@media (min-width: 768px) {
+  .mode-selector {
+    max-width: 900px;
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+  .mode-selector__title {
+    font-size: 32px;
+  }
+  .mode-selector__subtitle {
+    font-size: 16px;
+  }
+  /* 2 колонки, gap чуть больше — карточки крупнее, легче клик мышкой */
+  .mode-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .mode-card {
+    padding: 22px 24px;
+    gap: 18px;
+  }
+  .mode-card__emoji {
+    font-size: 36px;
+  }
+  /* Sheet'ы (Account/Subscribe/Progress) — фиксированная ширина по центру */
+  .sheet {
+    max-width: 560px;
+    border-radius: 18px;
+    margin: 32px auto;
+    max-height: calc(100vh - 64px);
+  }
+  /* LoginScreen — шире карточка, удобнее формы и кнопки */
+  .login-card {
+    max-width: 520px;
+    padding: 36px 40px;
+  }
+  .login-title {
+    font-size: 28px;
+  }
+  /* Subscribe plans — 3 колонки на широком экране */
+  .sub-plans {
+    grid-template-columns: 1fr 1fr 1fr;
+    display: grid;
+  }
+}
+
+/* >=1200px — ещё чуть просторнее и больше hero */
+@media (min-width: 1200px) {
+  .mode-selector {
+    max-width: 1040px;
+  }
+  .mode-cards {
+    gap: 20px;
+  }
+  .mode-card {
+    padding: 28px 28px;
+  }
+}
