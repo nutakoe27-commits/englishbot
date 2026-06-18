@@ -8,6 +8,7 @@ import { ListeningScreen } from "./ListeningScreen";
 import { GrammarScreen } from "./GrammarScreen";
 import { SrsScreen } from "./SrsScreen";
 import { LoginScreen } from "./LoginScreen";
+import { LandingScreen } from "./LandingScreen";
 import {
   installFetchAuth,
   getToken,
@@ -87,6 +88,10 @@ function Root() {
   const [screen, setScreen] = useState<Mode | "selector">("selector");
   const [startParam] = useState<string>(() => readStartParam());
   const [auth, setAuth] = useState<AuthState>("loading");
+  // На вебе для не-залогиненных показываем сначала Landing, по клику
+  // CTA — LoginScreen. Внутри Telegram Mini App initData аутентифицирует
+  // юзера автоматически (см. ниже), Landing не появляется.
+  const [showLogin, setShowLogin] = useState<boolean>(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,7 +125,21 @@ function Root() {
     return <div className="boot-splash" aria-label="Загрузка" />;
   }
   if (auth === "login") {
-    return <LoginScreen onAuthed={() => setAuth("authed")} />;
+    // Если юзер уже кликнул CTA на лендинге — показываем форму. Иначе — лендинг.
+    // Особый случай: в URL есть ?payment_id= (возврат с ЮKassa) — это
+    // залогиненный юзер, который вернулся после оплаты; не показываем лендинг,
+    // сразу логин.
+    const hasPaymentReturn = typeof window !== "undefined"
+      && new URLSearchParams(window.location.search).has("payment_id");
+    if (showLogin || hasPaymentReturn) {
+      return <LoginScreen onAuthed={() => setAuth("authed")} />;
+    }
+    return (
+      <LandingScreen
+        onStartTrial={() => setShowLogin(true)}
+        onLogin={() => setShowLogin(true)}
+      />
+    );
   }
 
   const backToSelector = () => setScreen("selector");
@@ -128,7 +147,7 @@ function Root() {
   if (screen === "listening") return <ListeningScreen onExit={backToSelector} />;
   if (screen === "grammar") return <GrammarScreen onExit={backToSelector} />;
   if (screen === "srs") return <SrsScreen onExit={backToSelector} />;
-  return <ModeSelector onPick={setScreen} onLoggedOut={() => setAuth("login")} />;
+  return <ModeSelector onPick={setScreen} onLoggedOut={() => { setShowLogin(false); setAuth("login"); }} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
