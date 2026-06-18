@@ -3435,6 +3435,46 @@ button {
   color: var(--text-dim, rgba(255, 255, 255, 0.55));
 }
 
+/* ─── Desktop background: мягкое свечение по бокам вместо чёрных полос ── */
+@media (min-width: 768px) {
+  body {
+    background:
+      /* центральный фиолетовый ореол сверху */
+      radial-gradient(
+        ellipse 70% 60% at 50% 0%,
+        rgba(124, 92, 255, 0.18) 0%,
+        rgba(124, 92, 255, 0.05) 35%,
+        transparent 70%
+      ),
+      /* тёплый акцент снизу слева — добавляет глубины */
+      radial-gradient(
+        ellipse 50% 60% at 0% 100%,
+        rgba(161, 138, 255, 0.10) 0%,
+        transparent 60%
+      ),
+      /* основной тёмный градиент сверху-вниз */
+      linear-gradient(180deg, #0d1018 0%, var(--bg-0) 100%);
+    background-attachment: fixed;
+  }
+  /* Контейнер режима — добавим лёгкое свечение вокруг карточки,
+     чтобы она ощущалась «парящей», а не вырезанной из фона. */
+  .mode-selector {
+    position: relative;
+  }
+  .mode-selector::before {
+    content: "";
+    position: absolute;
+    inset: -40px;
+    background: radial-gradient(
+      ellipse at center,
+      rgba(124, 92, 255, 0.08) 0%,
+      transparent 70%
+    );
+    z-index: -1;
+    pointer-events: none;
+  }
+}
+
 /* ─── Desktop adaptation (>=768px): шире контейнеры, grid режимов 2x2 ─── */
 @media (min-width: 768px) {
   .mode-selector {
