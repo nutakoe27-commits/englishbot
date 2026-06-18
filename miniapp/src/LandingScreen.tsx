@@ -26,6 +26,11 @@ interface Props {
 
 export function LandingScreen({ onStartTrial, onLogin }: Props) {
   useEffect(() => {
+    // Глобально html/body/#root имеют overflow:hidden (для SPA-приложения с
+    // фиксированным viewport). На лендинге нужен обычный скролл документа —
+    // добавляем body-класс на время монтирования, убираем при размонтировании.
+    document.body.classList.add("lp-active");
+
     // Виртуальный pageview для отдельной страницы в Метрике.
     ymHit(window.location.origin + "/landing", "Лендинг — English Tutor");
     ymReachGoal("landing_view");
@@ -42,7 +47,10 @@ export function LandingScreen({ onStartTrial, onLogin }: Props) {
       }
     };
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      document.body.classList.remove("lp-active");
+    };
   }, []);
 
   const handleCta = (location: string) => {

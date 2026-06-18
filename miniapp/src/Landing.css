@@ -3,6 +3,16 @@
  * конфликтовать с App.css. Mobile-first, breakpoints: 768px и 1024px.
  */
 
+/* Перебиваем глобальный overflow:hidden (App.css строка 37). Класс
+ * добавляется/удаляется в LandingScreen useEffect. */
+body.lp-active,
+body.lp-active #root,
+html:has(body.lp-active) {
+  overflow: auto !important;
+  height: auto !important;
+  overscroll-behavior: auto !important;
+}
+
 .lp {
   --lp-bg: #0b0d12;
   --lp-bg-soft: #131720;
