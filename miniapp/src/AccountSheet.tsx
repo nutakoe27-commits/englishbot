@@ -67,7 +67,9 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe }: Props) {
     const r = extractYandexCallback();
     if (!r) return;
     if (r.error) {
-      setMsg("Не удалось привязать Яндекс. Попробуй ещё раз.");
+      setMsg(r.error === "identity_conflict"
+        ? "Этот Яндекс уже привязан к другому аккаунту, и у обоих есть свои способы входа. Сначала отвяжи лишний способ в одном из аккаунтов."
+        : "Не удалось привязать Яндекс. Попробуй ещё раз.");
       return;
     }
     if (r.jwt && r.mode === "link") {

@@ -204,6 +204,17 @@ async def _post_backend(path: str, payload: dict) -> tuple[int, dict]:
         return 0, {"detail": str(exc)}
 
 
+def _ru_providers(providers: list[str]) -> str:
+    """Перечисление провайдеров для сообщения юзеру."""
+    labels = {"native": "email с паролем", "yandex": "Яндекс ID", "telegram": "Telegram"}
+    parts = [labels.get(p, p) for p in providers]
+    if not parts:
+        return "способ входа"
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + " и " + parts[-1]
+
+
 async def _handle_auth_deeplink(message: Message, token: str) -> None:
     """Юзер пришёл по t.me/<bot>?start=<login|link|auth>_<token>.
 
@@ -220,6 +231,21 @@ async def _handle_auth_deeplink(message: Message, token: str) -> None:
         "username": message.from_user.username,
         "language_code": message.from_user.language_code,
     })
+    if code == 409:
+        detail = data.get("detail") if isinstance(data, dict) else None
+        if isinstance(detail, dict) and detail.get("error") == "identity_conflict":
+            providers = detail.get("providers") or []
+            await message.answer(
+                "⚠️ <b>Не могу объединить эти аккаунты.</b>\n\n"
+                "К каждому из них уже привязан свой "
+                + _ru_providers(providers) + ". Если оставлю как есть, у тебя "
+                "появится дублирующий способ входа.\n\n"
+                "Что сделать: войди на сайте в тот аккаунт, который тебе "
+                "больше не нужен, и отвяжи там лишний способ входа. После "
+                "этого снова жми «Привязать Telegram».",
+                parse_mode="HTML",
+            )
+            return
     if code != 200:
         await message.answer(
             "⚠️ Ссылка устарела или уже использована. Открой сайт ещё раз и нажми войти/привязать.",
