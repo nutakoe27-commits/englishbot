@@ -3635,3 +3635,16 @@ button {
   .ob-title { font-size: 26px; }
   .ob-body { font-size: 16px; }
 }
+
+/* ─── Публичная оферта на странице тарифов ──────────────────────────── */
+.sub-offer {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim, rgba(255, 255, 255, 0.5));
+  text-align: center;
+  margin-top: 8px;
+}
+.sub-offer a {
+  color: var(--accent-soft, #a18aff);
+  text-decoration: underline;
+}
