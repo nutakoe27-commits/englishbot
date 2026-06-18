@@ -312,7 +312,7 @@ function Pricing({ onCta }: { onCta: () => void }) {
             period="3 дня"
             hint="Попробовать без риска"
             onCta={onCta}
-            ctaLabel="Начать за 99 ₽"
+            ctaLabel="Начать бесплатно"
             highlighted
           />
           <PlanCard
@@ -321,7 +321,7 @@ function Pricing({ onCta }: { onCta: () => void }) {
             period="30 дней"
             hint="Самый популярный"
             onCta={onCta}
-            ctaLabel="Оформить"
+            ctaLabel="Начать бесплатно"
           />
           <PlanCard
             title="Годовой"
@@ -330,7 +330,7 @@ function Pricing({ onCta }: { onCta: () => void }) {
             period="365 дней"
             hint="Экономия 2 989 ₽ — это 50%"
             onCta={onCta}
-            ctaLabel="Оформить"
+            ctaLabel="Начать бесплатно"
           />
         </div>
         <p className="lp-offer-link">
