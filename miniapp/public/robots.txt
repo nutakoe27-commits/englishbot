@@ -1,0 +1,10 @@
+# robots.txt для englishbot.krichigindocs.ru
+# Разрешаем индексацию всего, кроме служебных страниц приложения и
+# webhook-эндпоинтов (которые и так на другом домене api-english.…).
+
+User-agent: *
+Allow: /
+Disallow: /screenshots/README.md
+
+# Указатель на sitemap для краулеров.
+Sitemap: https://englishbot.krichigindocs.ru/sitemap.xml
