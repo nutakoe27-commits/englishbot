@@ -27,11 +27,7 @@ html:has(body.lp-active) {
   --lp-accent-glow: var(--accent-ring);
 
   min-height: 100vh;
-  background:
-    radial-gradient(ellipse 80% 60% at 50% 0%, var(--accent-soft) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 60% at 0% 50%, var(--accent-soft) 0%, transparent 60%),
-    var(--bg);
-  background-attachment: fixed;
+  background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
   line-height: 1.55;
