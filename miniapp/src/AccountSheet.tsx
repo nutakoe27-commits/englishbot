@@ -20,6 +20,7 @@ import {
   startYandexFlow,
   type MeInfo,
 } from "./auth";
+import { ThemeToggle } from "./ThemeToggle";
 
 interface Props {
   onClose: () => void;
@@ -207,7 +208,10 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <header className="sheet__header">
           <h2 className="sheet__title">Аккаунт</h2>
-          <button className="sheet__close" onClick={onClose} aria-label="Закрыть">✕</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <ThemeToggle />
+            <button className="sheet__close" onClick={onClose} aria-label="Закрыть">✕</button>
+          </div>
         </header>
 
         <div className="sheet__content">

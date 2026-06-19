@@ -1,0 +1,81 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   English Tutor — Typography
+   Two families with character: Spectral (display serif) + Golos Text (UI).
+   Scale is modular, tuned for screens. Sizes in rem (root = 16px).
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* ── Families ────────────────────────────────────────────────────────── */
+  --font-display: "Spectral", Georgia, "Times New Roman", serif;
+  --font-ui:      "Golos Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono:    ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* ── Weights ─────────────────────────────────────────────────────────── */
+  --fw-regular:  400; /* @kind font */
+  --fw-medium:   500; /* @kind font */
+  --fw-semibold: 600; /* @kind font */
+  --fw-bold:     700; /* @kind font */
+
+  /* ── Type scale (font-size / line-height) ────────────────────────────── */
+  --fs-display-2xl: 3.75rem;  /* 60 — hero, serif */
+  --lh-display-2xl: 1.04; /* @kind font */
+  --fs-display-xl:  3rem;     /* 48 */
+  --lh-display-xl:  1.06; /* @kind font */
+  --fs-display-lg:  2.375rem; /* 38 */
+  --lh-display-lg:  1.1; /* @kind font */
+
+  --fs-h1: 1.875rem;  /* 30 */
+  --lh-h1: 1.15; /* @kind font */
+  --fs-h2: 1.5rem;    /* 24 */
+  --lh-h2: 1.2; /* @kind font */
+  --fs-h3: 1.25rem;   /* 20 */
+  --lh-h3: 1.3; /* @kind font */
+
+  --fs-body-lg: 1.125rem;  /* 18 */
+  --lh-body-lg: 1.6; /* @kind font */
+  --fs-body:    1rem;      /* 16 */
+  --lh-body:    1.6; /* @kind font */
+  --fs-body-sm: 0.875rem;  /* 14 */
+  --lh-body-sm: 1.5; /* @kind font */
+  --fs-caption: 0.8125rem; /* 13 */
+  --lh-caption: 1.45; /* @kind font */
+  --fs-micro:   0.6875rem; /* 11 — eyebrows, labels */
+  --lh-micro:   1.3; /* @kind font */
+
+  /* ── Letter-spacing ──────────────────────────────────────────────────── */
+  --ls-display: -0.02em; /* @kind font */
+  --ls-heading: -0.01em; /* @kind font */
+  --ls-body:    0;        /* @kind font */
+  --ls-label:   0.08em;  /* @kind font */
+
+  /* ── Semantic roles ──────────────────────────────────────────────────── */
+  --text-display: var(--fw-bold) var(--fs-display-xl)/var(--lh-display-xl) var(--font-display); /* @kind font */
+  --text-eyebrow-spacing: var(--ls-label); /* @kind font */
+}
+
+/* Base element defaults (consumers opt in via these or the .u-* helpers) */
+body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Helper classes (optional, handy for specimens & quick markup) ─────── */
+.u-display { font-family: var(--font-display); font-weight: var(--fw-bold);
+  font-size: var(--fs-display-xl); line-height: var(--lh-display-xl);
+  letter-spacing: var(--ls-display); }
+.u-h1 { font-family: var(--font-display); font-weight: var(--fw-semibold);
+  font-size: var(--fs-h1); line-height: var(--lh-h1); letter-spacing: var(--ls-heading); }
+.u-h2 { font-family: var(--font-ui); font-weight: var(--fw-semibold);
+  font-size: var(--fs-h2); line-height: var(--lh-h2); letter-spacing: var(--ls-heading); }
+.u-h3 { font-family: var(--font-ui); font-weight: var(--fw-semibold);
+  font-size: var(--fs-h3); line-height: var(--lh-h3); }
+.u-body { font-family: var(--font-ui); font-size: var(--fs-body); line-height: var(--lh-body); }
+.u-body-sm { font-family: var(--font-ui); font-size: var(--fs-body-sm); line-height: var(--lh-body-sm); }
+.u-eyebrow { font-family: var(--font-ui); font-weight: var(--fw-semibold);
+  font-size: var(--fs-micro); line-height: var(--lh-micro);
+  letter-spacing: var(--ls-label); text-transform: uppercase; }
+.u-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }

@@ -1,6 +1,12 @@
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import WebApp from "@twa-dev/sdk";
+// Design System: токены (palette, typography, spacing) + .et-* компоненты.
+// Импортируется ПЕРВЫМ, чтобы App.css и Landing.css могли использовать
+// var(--bg/--text/--accent/--space-*/--radius-*).
+import "./ds/styles.css";
+import { initTheme } from "./theme";
+initTheme();
 import App from "./App";
 import { BattleScreen } from "./BattleScreen";
 import { ModeSelector, type Mode } from "./ModeSelector";

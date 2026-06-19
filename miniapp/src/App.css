@@ -1,32 +1,27 @@
-/* ─── Дизайн-токены ─────────────────────────────────────────────── */
+/* ─── Дизайн-токены ───────────────────────────────────────────────
+ * После интеграции DS (ds/styles.css импортируется в main.tsx первым):
+ * значения локальных переменных мапятся на DS-токены, чтобы вся существующая
+ * разметка автоматически получила новую палитру (warm-neutrals + coral) и
+ * поддержку light/dark темы. Имена локальных переменных сохранены, чтобы
+ * не трогать 3500+ строк ниже. Локальные «акценты» (accent/record/speak)
+ * мапятся через коралл/изумруд из DS.
+ */
 :root {
-  --bg-0: #0b0d12;
-  --bg-1: #12151c;
-  --bg-2: #181c25;
-  --border: rgba(255, 255, 255, 0.06);
-  --border-strong: rgba(255, 255, 255, 0.1);
-  --text: #e8eaf0;
-  --text-dim: #8a91a0;
-  --text-faint: #545b6b;
+  --bg-0: var(--bg);
+  --bg-1: var(--surface);
+  --bg-2: var(--surface-2);
+  /* --border и --border-strong наследуются из DS как есть. */
+  /* --text и --text-dim — тоже из DS; --text-faint тоже. */
 
-  --accent: #7c5cff;          /* фиолетовый акцент */
-  --accent-soft: #a18aff;
-  --accent-glow: rgba(124, 92, 255, 0.35);
+  --accent-glow: var(--accent-ring);
+  --record: var(--record);
+  --record-glow: var(--accent-ring);
+  --speak-glow: var(--speak-soft);
 
-  --record: #ff5470;          /* алый для записи */
-  --record-glow: rgba(255, 84, 112, 0.4);
-
-  --speak: #33d9a6;           /* мятный для озвучки */
-  --speak-glow: rgba(51, 217, 166, 0.35);
-
-  --warn: #ffb13d;
-  --error: #ff6565;
-
-  --radius-lg: 22px;
-  --radius-md: 16px;
-  --radius-sm: 10px;
-
-  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* Радиусы и easing из DS. Старые имена → новые значения. */
+  --radius-lg: var(--radius-xl);
+  --radius-md: var(--radius-lg);
+  --radius-sm: var(--radius-md);
 }
 
 /* ─── Базовый сброс ──────────────────────────────────────────────── */
@@ -44,8 +39,9 @@ html, body, #root {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-  background: var(--bg-0);
+  /* Шрифт UI из DS (Golos Text, кириллица из коробки). */
+  font-family: var(--font-ui);
+  background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
