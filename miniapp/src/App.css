@@ -69,10 +69,7 @@ button {
   /* шапка / лог (занимает всё оставшееся) / футер с кнопкой */
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 16px;
-  background:
-    radial-gradient(1200px 600px at 50% -200px, var(--accent-soft), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
-    var(--bg-0);
+  background: var(--bg);
   overflow: hidden;
 }
 
@@ -90,14 +87,14 @@ button {
   height: 280px;
   top: -80px;
   left: -60px;
-  background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+  background: transparent;
 }
 .bg-orb--two {
   width: 240px;
   height: 240px;
   bottom: 80px;
   right: -80px;
-  background: radial-gradient(circle, var(--speak) 0%, transparent 70%);
+  background: transparent;
 }
 
 /* ─── Шапка ──────────────────────────────────────────────────────── */
@@ -155,7 +152,7 @@ button {
   flex-direction: column;
   gap: 10px;
   padding: 18px;
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   scroll-behavior: smooth;
@@ -257,7 +254,7 @@ button {
 
 .msg--user {
   align-self: flex-end;
-  background: linear-gradient(135deg, var(--accent-border), var(--accent-soft));
+  background: var(--accent-soft);
   border: 1px solid var(--accent-soft);
 }
 .msg--user .msg__role {
@@ -344,7 +341,7 @@ button {
   height: 140px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(135deg, #1d2130, #14171f);
+  background: var(--surface-2);
   color: var(--accent);
   cursor: pointer;
   display: grid;
@@ -357,7 +354,7 @@ button {
     background 220ms var(--ease),
     box-shadow 220ms var(--ease);
   box-shadow:
-    0 18px 40px -12px rgba(0, 0, 0, 0.7),
+    0 18px 40px -12px var(--shadow-lg),
     0 0 0 1px var(--border-strong) inset,
     0 30px 60px -20px var(--accent-glow);
 }
@@ -402,9 +399,9 @@ button {
 /* ── Вариант: recording — пульсирующий красный ── */
 .talk-button[data-variant="recording"] {
   color: var(--record);
-  background: linear-gradient(135deg, #2a1820, #1a1013);
+  background: var(--surface-2);
   box-shadow:
-    0 18px 40px -12px rgba(0, 0, 0, 0.7),
+    0 18px 40px -12px var(--shadow-lg),
     0 0 0 1px rgba(255, 84, 112, 0.3) inset,
     0 0 80px var(--record-glow);
 }
@@ -419,7 +416,7 @@ button {
    достаточно неподвижного индикатора + сменившегося цвета фона. ── */
 .talk-button[data-variant="speaking"] {
   color: var(--speak);
-  background: linear-gradient(135deg, #152520, #101814);
+  background: var(--surface-2);
 }
 .talk-button[data-variant="speaking"] .talk-button__ring {
   border-color: var(--speak);
@@ -444,9 +441,9 @@ button {
 .talk-button[data-variant="denied"],
 .talk-button[data-variant="error"] {
   color: var(--text-faint);
-  background: linear-gradient(135deg, #171a22, #10131a);
+  background: var(--surface-2);
   box-shadow:
-    0 18px 40px -12px rgba(0, 0, 0, 0.7),
+    0 18px 40px -12px var(--shadow-lg),
     0 0 0 1px var(--border-strong) inset;
 }
 .talk-button[data-variant="denied"] .talk-button__ring,
@@ -715,7 +712,7 @@ button {
   transform: scale(0.97);
 }
 .segmented__item.is-active {
-  background: linear-gradient(180deg, var(--accent-border), var(--accent-soft));
+  background: var(--accent-soft);
   color: var(--text);
   box-shadow: 0 2px 12px var(--accent-border),
     inset 0 0 0 1px rgba(161, 138, 255, 0.35);
@@ -762,7 +759,7 @@ button {
 }
 .role-chip.is-active {
   border-color: rgba(161, 138, 255, 0.55);
-  background: linear-gradient(180deg, var(--accent-border), var(--accent-soft));
+  background: var(--accent-soft);
   color: var(--text);
   box-shadow: 0 2px 14px var(--accent-border);
 }
@@ -1205,14 +1202,14 @@ button {
 .translate-popover {
   position: fixed;
   z-index: 60;
-  background: #1a1f36;
+  background: var(--surface-raise);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   padding: 10px 14px;
   min-width: 140px;
   font-size: 14px;
-  color: #fff;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
   animation: translate-popover-in 0.12s ease-out;
 }
 
@@ -1451,7 +1448,7 @@ button {
   padding: 12px;
   border-radius: 12px;
   border: none;
-  background: linear-gradient(135deg, #7c5cff, #a489ff);
+  background: var(--accent);
   color: #fff;
   font-size: 16px;
   font-weight: 600;
@@ -1532,7 +1529,7 @@ button {
   padding: 0 16px;
   border-radius: 10px;
   border: none;
-  background: linear-gradient(135deg, #7c5cff, #a489ff);
+  background: var(--accent);
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -1611,7 +1608,7 @@ button {
   padding: 12px;
   border-radius: 12px;
   border: none;
-  background: linear-gradient(135deg, #7c5cff, #a489ff);
+  background: var(--accent);
   color: #fff;
   font-size: 16px;
   font-weight: 600;
@@ -1626,7 +1623,7 @@ button {
   position: fixed;
   inset: 0;
   z-index: 70;
-  background: rgba(0, 0, 0, 0.55);
+  background: color-mix(in srgb, var(--ink-900) 55%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1646,7 +1643,7 @@ button {
   padding: 20px 18px 16px;
   max-width: 320px;
   width: 100%;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-lg);
   animation: confirm-slide-in 200ms cubic-bezier(0.22, 0.8, 0.32, 1);
 }
 
@@ -1776,7 +1773,7 @@ button {
   align-items: center;
   gap: 14px;
   padding: 14px 16px;
-  background: linear-gradient(135deg, rgba(255, 107, 53, 0.18), rgba(255, 177, 61, 0.10));
+  background: var(--warn-soft);
   border: 1px solid rgba(255, 177, 61, 0.35);
   border-radius: 14px;
 }
@@ -1926,7 +1923,7 @@ button {
   border: 1px solid var(--surface-2);
 }
 .achievement--earned {
-  background: linear-gradient(135deg, var(--accent-soft), rgba(51, 217, 166, 0.10));
+  background: var(--accent-soft);
   border-color: var(--accent-soft);
 }
 .achievement--locked {
@@ -1999,10 +1996,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  background:
-    radial-gradient(1200px 600px at 50% -200px, var(--accent-soft), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
-    var(--bg-0);
+  background: var(--bg);
   overflow: hidden;
 }
 .mode-selector__header {
@@ -2066,7 +2060,7 @@ button {
   padding: 14px 16px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
   color: var(--text);
   text-align: left;
   cursor: pointer;
@@ -2129,7 +2123,7 @@ button {
   padding: 12px 8px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
 }
 .ms-stat__value {
   font-size: 18px;
@@ -2155,10 +2149,7 @@ button {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
-  background:
-    radial-gradient(1200px 600px at 50% -200px, var(--accent-soft), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
-    var(--bg-0);
+  background: var(--bg);
   overflow: hidden;
 }
 .lst-main {
@@ -2277,7 +2268,7 @@ button {
   padding: 18px 20px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
   cursor: pointer;
 }
 .lst-toggle__main {
@@ -2404,7 +2395,7 @@ button {
   gap: 14px;
   padding: 18px;
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
   border: 1px solid var(--border-strong);
 }
 .lst-player audio {
@@ -2490,10 +2481,7 @@ button {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
-  background:
-    radial-gradient(1200px 600px at 50% -200px, var(--accent-soft), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
-    var(--bg-0);
+  background: var(--bg);
   overflow: hidden;
 }
 
@@ -2512,7 +2500,7 @@ button {
   padding: 18px 18px 20px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
   color: var(--text);
   text-align: left;
   cursor: pointer;
@@ -2674,13 +2662,13 @@ button {
   padding: 28px 16px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
 }
 .grm-summary__pct {
   font-size: 52px;
   font-weight: 800;
   letter-spacing: -1px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+  background: var(--accent);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -3016,7 +3004,7 @@ button {
   cursor: default;
 }
 .srs-btn--primary {
-  background: linear-gradient(135deg, #7c5cff, #a489ff);
+  background: var(--accent);
 }
 .srs-btn--secondary {
   background: var(--surface-2);
@@ -3028,12 +3016,12 @@ button {
   color: #d4caff;
 }
 .srs-btn--know {
-  background: linear-gradient(135deg, #2ecc71, #5ed99a);
+  background: var(--surface-2);
   color: #0c1a12;
   flex: 1;
 }
 .srs-btn--dont {
-  background: linear-gradient(135deg, #e74c5e, #ff7a8a);
+  background: var(--surface-2);
   color: #1a0c0e;
   flex: 1;
 }
@@ -3102,10 +3090,7 @@ button {
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background:
-    radial-gradient(1200px 600px at 50% -200px, var(--accent-soft), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
-    var(--bg-0, #0b0d12);
+  background: var(--bg);
   color: var(--text, #fff);
   overflow-y: auto;
 }
@@ -3234,7 +3219,7 @@ button {
   display: inline-block;
   margin-top: 6px;
   font-size: 13px;
-  color: var(--accent-soft, #a489ff);
+  color: var(--accent);
   text-decoration: none;
   background: none;
   border: none;
@@ -3446,7 +3431,7 @@ button {
 .ob-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: color-mix(in srgb, var(--ink-900) 55%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
