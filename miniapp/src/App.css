@@ -261,7 +261,7 @@ button {
   border: 1px solid rgba(124, 92, 255, 0.3);
 }
 .msg--user .msg__role {
-  color: var(--accent-soft);
+  color: var(--accent);
 }
 .msg--tutor {
   align-self: flex-start;
@@ -345,7 +345,7 @@ button {
   border-radius: 50%;
   border: none;
   background: linear-gradient(135deg, #1d2130, #14171f);
-  color: var(--accent-soft);
+  color: var(--accent);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -391,7 +391,7 @@ button {
 /* ── Вариант: idle / connected — готов к записи ── */
 .talk-button[data-variant="idle"],
 .talk-button[data-variant="connected"] {
-  color: var(--accent-soft);
+  color: var(--accent);
 }
 .talk-button[data-variant="idle"] .talk-button__ring,
 .talk-button[data-variant="connected"] .talk-button__ring {
@@ -734,7 +734,7 @@ button {
   line-height: 1.2;
 }
 .segmented__item.is-active .segmented__hint {
-  color: var(--accent-soft);
+  color: var(--accent);
 }
 
 /* ─── Роль — сетка карточек-чипов ─── */
@@ -980,7 +980,7 @@ button {
   transition: border-color 160ms var(--ease), background 160ms var(--ease);
 }
 .chat-composer:focus-within {
-  border-color: var(--accent-soft);
+  border-color: var(--accent);
   background: rgba(255, 255, 255, 0.06);
 }
 
@@ -1107,7 +1107,7 @@ button {
 .lock-screen__price-amount {
   font-size: 16px;
   font-weight: 600;
-  color: var(--accent-soft);
+  color: var(--accent);
   white-space: nowrap;
 }
 .lock-screen__price-period {
@@ -1147,7 +1147,7 @@ button {
   border: none;
   padding: 0;
   font: inherit;
-  color: var(--accent-soft);
+  color: var(--accent);
   font-weight: 600;
   cursor: pointer;
   text-decoration: underline;
@@ -2236,7 +2236,7 @@ button {
   color: var(--text-dim);
 }
 .lst-chip--level[data-active="true"] .lst-chip__sub {
-  color: var(--accent-soft);
+  color: var(--accent);
 }
 
 .lst-categories {
@@ -2859,7 +2859,7 @@ button {
 }
 .grm-theory__para strong,
 .grm-examples__en strong {
-  color: var(--accent-soft);
+  color: var(--accent);
   font-weight: 700;
 }
 
@@ -3643,4 +3643,38 @@ button {
 .sub-offer a {
   color: var(--accent-soft, #a18aff);
   text-decoration: underline;
+}
+
+/* ─── Desktop adaptation для экранов режимов (≥768px) ──────────────────
+ * До этого все 4 режима (Speaking/Listening/Grammar/SRS) были max-width:480px,
+ * на десктопе по бокам полосы. Расширяем контейнеры; внутренняя структура
+ * остаётся та же (grid / flex), просто шире рабочая зона. */
+@media (min-width: 768px) {
+  .tutor-app,
+  .lst-screen,
+  .grm-screen {
+    max-width: 720px;
+    padding-left: 28px;
+    padding-right: 28px;
+  }
+}
+@media (min-width: 1024px) {
+  .tutor-app,
+  .lst-screen,
+  .grm-screen {
+    max-width: 820px;
+  }
+}
+
+/* SrsScreen (fixed inset:0): внутренние блоки на десктопе по центру с
+ * комфортной шириной — карточки слов не должны растягиваться на весь экран. */
+@media (min-width: 768px) {
+  .srs-home-top,
+  .srs-review-top,
+  .srs-screen > * {
+    max-width: 720px;
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+  }
 }
