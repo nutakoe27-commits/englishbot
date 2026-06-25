@@ -3624,12 +3624,28 @@ button {
   height: 100dvh;
   display: flex;
   flex-direction: column;
-  background-color: var(--bg);
+  /* Копирую один-в-один .sub-screen__inner из components.css —
+   * popover-style cream card. */
+  background-color: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
 }
 
-/* Desktop: тот же solid cream что и на мобиле — никаких backdrop'ов,
- * никаких rounded card'ов. Весь viewport = одна cream-поверхность как
- * inside popover'a со статистикой. Никакого card-on-backdrop эффекта. */
+/* На desktop body = backdrop popover'a (точная формула из .sub-screen).
+ * Mobile: shell заполняет всё, body не виден. */
+@media (min-width: 768px) {
+  body {
+    background: color-mix(in srgb, var(--text) 45%, var(--bg-2));
+    background-image: none;
+  }
+  .app-shell {
+    margin: 24px auto;
+    height: auto;
+    min-height: calc(100dvh - 48px);
+    overflow: hidden;
+  }
+}
 .app-shell__body {
   flex: 1 1 auto;
   min-height: 0;
