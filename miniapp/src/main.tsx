@@ -15,6 +15,10 @@ import { GrammarScreen } from "./GrammarScreen";
 import { SrsScreen } from "./SrsScreen";
 import { LoginScreen } from "./LoginScreen";
 import { LandingScreen } from "./LandingScreen";
+import { BottomNav } from "./BottomNav";
+import { AccountSheet } from "./AccountSheet";
+import { ProgressScreen } from "./ProgressScreen";
+import type { TabKey } from "./tabs";
 import {
   extractYandexCallback,
   installFetchAuth,
@@ -155,11 +159,77 @@ function Root() {
   }
 
   const backToSelector = () => setScreen("selector");
+  // Тренировочные экраны рендерятся БЕЗ bottom-nav, чтобы не отвлекать
+  // от практики.
   if (screen === "speaking") return <App onExit={backToSelector} />;
   if (screen === "listening") return <ListeningScreen onExit={backToSelector} />;
   if (screen === "grammar") return <GrammarScreen onExit={backToSelector} />;
-  if (screen === "srs") return <SrsScreen onExit={backToSelector} />;
-  return <ModeSelector onPick={setScreen} onLoggedOut={() => { setShowLogin(false); setAuth("login"); }} />;
+
+  // Tab-shell: 4 главных таба (home / progress / words / profile) + BottomNav.
+  // Mode-card «Слова» на главной — тоже ведёт сюда (tab='words' = SrsScreen).
+  return (
+    <TabShell
+      initialTab={screen === "srs" ? "words" : "home"}
+      onOpenMode={(m) => setScreen(m)}
+      onLoggedOut={() => { setShowLogin(false); setAuth("login"); }}
+    />
+  );
+}
+
+function TabShell({
+  initialTab,
+  onOpenMode,
+  onLoggedOut,
+}: {
+  initialTab: TabKey;
+  onOpenMode: (m: Mode) => void;
+  onLoggedOut: () => void;
+}) {
+  const [tab, setTab] = useState<TabKey>(initialTab);
+
+  let body: React.ReactNode;
+  if (tab === "home") {
+    // ModeSelector рендерится как «домашний таб». Логика logout остаётся
+    // (хотя теперь работает и через таб «Профиль»).
+    body = (
+      <ModeSelector
+        onPick={(m) => {
+          if (m === "srs") { setTab("words"); return; }
+          onOpenMode(m);
+        }}
+        onLoggedOut={onLoggedOut}
+      />
+    );
+  } else if (tab === "progress") {
+    // ProgressScreen раньше была модалкой; теперь рендерится как таб, по
+    // «закрытию» возвращает на «home».
+    body = (
+      <ProgressScreen
+        apiBase={(import.meta.env.VITE_API_BASE as string) || "https://api-english.krichigindocs.ru"}
+        initData={WebApp.initData || ""}
+        onClose={() => setTab("home")}
+      />
+    );
+  } else if (tab === "words") {
+    body = <SrsScreen onExit={() => setTab("home")} />;
+  } else {
+    // tab === "profile"
+    body = (
+      <AccountSheet
+        embedded
+        onLoggedOut={onLoggedOut}
+        onOpenSubscribe={undefined /* подписка пока остаётся внутри AccountSheet flow */}
+        onOpenTutorial={undefined}
+      />
+    );
+  }
+
+  return (
+    <div className="app-shell">
+      <div className="app-shell__body">{body}</div>
+      <BottomNav active={tab} onChange={setTab} />
+    </div>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

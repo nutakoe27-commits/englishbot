@@ -23,10 +23,14 @@ import {
 import { ThemeToggle } from "./ThemeToggle";
 
 interface Props {
-  onClose: () => void;
   onLoggedOut: () => void;
+  /** Обязателен в sheet-режиме (default), не нужен в embedded (tab). */
+  onClose?: () => void;
   onOpenSubscribe?: () => void;
   onOpenTutorial?: () => void;
+  /** embedded=true → рендерится как fullscreen-tab без backdrop'a и без
+   *  sheet-обёртки. Используется в BottomNav-табе «Профиль». */
+  embedded?: boolean;
 }
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -39,7 +43,7 @@ const PROVIDER_LABEL: Record<string, string> = {
 // возобновляем poll, если юзер вернулся из Telegram.
 const PENDING_TG_KEY = "englishbot_tg_link_pending";
 
-export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTutorial }: Props) {
+export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTutorial, embedded = false }: Props) {
   const [me, setMe] = useState<MeInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string>("");
@@ -203,18 +207,29 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
     } finally { setTgBusy(false); }
   };
 
+  // Обёртка зависит от embedded: или fullscreen-tab (.profile-screen)
+  // или модалка (.sheet-backdrop + .sheet).
+  const wrapperClass = embedded ? "profile-screen" : "sheet-backdrop";
+  const innerClass = embedded ? "ps-inner" : "sheet";
+  const headerClass = embedded ? "ps-header" : "sheet__header";
+  const titleClass = embedded ? "ps-title" : "sheet__title";
+  const contentClass = embedded ? "ps-content" : "sheet__content";
+  const footerClass = embedded ? "ps-footer" : "sheet__footer";
+
   return (
-    <div className="sheet-backdrop" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <header className="sheet__header">
-          <h2 className="sheet__title">Аккаунт</h2>
+    <div className={wrapperClass} onClick={embedded ? undefined : onClose}>
+      <div className={innerClass} onClick={embedded ? undefined : (e) => e.stopPropagation()}>
+        <header className={headerClass}>
+          <h2 className={titleClass}>{embedded ? "Профиль" : "Аккаунт"}</h2>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <ThemeToggle />
-            <button className="sheet__close" onClick={onClose} aria-label="Закрыть">✕</button>
+            {!embedded && onClose && (
+              <button className="sheet__close" onClick={onClose} aria-label="Закрыть">✕</button>
+            )}
           </div>
         </header>
 
-        <div className="sheet__content">
+        <div className={contentClass}>
           {loading ? (
             <p className="acc-hint">Загрузка…</p>
           ) : (
@@ -383,7 +398,7 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
           )}
         </div>
 
-        <footer className="sheet__footer">
+        <footer className={footerClass}>
           {!inTelegram && (
             <button
               type="button"
@@ -393,9 +408,11 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
               Выйти
             </button>
           )}
-          <button type="button" className="btn btn--primary" onClick={onClose}>
-            Готово
-          </button>
+          {!embedded && onClose && (
+            <button type="button" className="btn btn--primary" onClick={onClose}>
+              Готово
+            </button>
+          )}
         </footer>
       </div>
     </div>

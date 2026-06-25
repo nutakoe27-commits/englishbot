@@ -3544,3 +3544,114 @@ button {
 /* Desktop-расширения для экранов режимов (Speaking/Listening/Grammar/SRS)
  * убраны — все экраны остаются мобильными max-width:480px и центрируются
  * на широком экране. По запросу юзера. */
+
+/* ─── App shell с bottom-nav (TabShell) ──────────────────────────────── */
+.app-shell {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.app-shell__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  /* Внутренние экраны (ModeSelector / SrsScreen / ProgressScreen /
+   * ProfileScreen) сами управляют своим скроллом и max-width. */
+}
+
+/* ─── BottomNav (4 таба внизу) ───────────────────────────────────────── */
+.bnav {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  /* Тень над nav-баром делает его «парящим» — не сливается с body. */
+  box-shadow: 0 -2px 12px -8px color-mix(in srgb, var(--ink-900) 30%, transparent);
+}
+.bnav__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: var(--space-2) var(--space-1);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--dur-base) var(--ease), background var(--dur-base) var(--ease);
+  -webkit-tap-highlight-color: transparent;
+  min-height: var(--tap-min);
+}
+.bnav__btn:hover { color: var(--text); }
+.bnav__btn.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.bnav__btn:active:not(.is-active) { background: var(--surface-2); }
+.bnav__icon { display: flex; align-items: center; justify-content: center; }
+.bnav__label {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.02em;
+}
+
+/* ─── ProfileScreen (AccountSheet в embedded-режиме как fullscreen tab) ─ */
+.profile-screen {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+.ps-inner {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.ps-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-5) var(--space-5) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.ps-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-h2);
+  letter-spacing: var(--ls-heading);
+}
+.ps-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.ps-footer {
+  flex-shrink: 0;
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  border-top: 1px solid var(--border);
+}
+.ps-footer .btn { flex: 1; }
