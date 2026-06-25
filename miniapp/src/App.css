@@ -41,7 +41,7 @@ html, body, #root {
 body {
   /* Шрифт UI из DS (Golos Text, кириллица из коробки). */
   font-family: var(--font-ui);
-  background: var(--bg);
+  background-color: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
@@ -69,7 +69,7 @@ button {
   /* шапка / лог (занимает всё оставшееся) / футер с кнопкой */
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 16px;
-  background: var(--bg);
+  background-color: var(--bg);
   overflow: hidden;
 }
 
@@ -1996,7 +1996,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  background: var(--bg);
+  background-color: var(--bg);
   overflow: hidden;
 }
 .mode-selector__header {
@@ -2158,7 +2158,7 @@ button {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
-  background: var(--bg);
+  background-color: var(--bg);
   overflow: hidden;
 }
 .lst-main {
@@ -2490,7 +2490,7 @@ button {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
-  background: var(--bg);
+  background-color: var(--bg);
   overflow: hidden;
 }
 
@@ -3099,7 +3099,7 @@ button {
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background: var(--bg);
+  background-color: var(--bg);
   color: var(--text, #fff);
   overflow-y: auto;
 }
@@ -3427,7 +3427,7 @@ button {
  * Юзер: «убрать градиент, чтобы страницы не отличались». */
 @media (min-width: 768px) {
   body {
-    background: var(--bg);
+    background-color: var(--bg);
   }
 }
 
@@ -3563,27 +3563,50 @@ button {
   height: 100dvh;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background-color: var(--bg);
 }
 .app-shell__body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
-/* Внутренние экраны (ModeSelector / SrsScreen / ProgressScreen /
- * ProfileScreen) сами имеют height:100dvh + max-width:480px из своих
- * стилей. Когда они внутри .app-shell-frame'a — эти ограничения дублируют
- * родителя и ломают flex. Сбрасываем. */
+/* Сбрасываем фиксированную высоту/ширину у внутренних экранов: они
+ * заложены под standalone-использование, а в .app-shell-frame'е дублируют
+ * родителя и ломают flex/scroll. */
 .app-shell__body > .tutor-app,
 .app-shell__body > .lst-screen,
 .app-shell__body > .grm-screen,
 .app-shell__body > .srs-screen,
 .app-shell__body > .mode-selector,
-.app-shell__body > .profile-screen {
-  height: 100%;
+.app-shell__body > .profile-screen,
+.app-shell__body > .prog-v2,
+.app-shell__body > .srs-v2,
+.app-shell__body > .wrd-v2 {
   max-height: none;
   max-width: none;
   margin: 0;
+}
+/* Tutor/Listening/Grammar — у них собственный внутренний скролл (диалог-
+ * лог, generated player и т.д.); занимают всю высоту контейнера. */
+.app-shell__body > .tutor-app,
+.app-shell__body > .lst-screen,
+.app-shell__body > .grm-screen {
+  height: 100%;
+}
+/* ModeSelector + Profile + новые v2-табы (Progress / SRS / Words):
+ * естественная высота по контенту, скролл наружный (.app-shell__body),
+ * нижний padding чтобы последний элемент не уходил под BottomNav. */
+.app-shell__body > .mode-selector,
+.app-shell__body > .profile-screen,
+.app-shell__body > .srs-screen,
+.app-shell__body > .prog-v2,
+.app-shell__body > .srs-v2,
+.app-shell__body > .wrd-v2 {
+  min-height: 100%;
+  height: auto;
+  padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
 }
 
 /* ─── BottomNav (v2: sliding sage pill, frosted bg, lucide icons) ──── */
@@ -3647,7 +3670,7 @@ button {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background-color: var(--bg);
   color: var(--text);
   overflow: hidden;
 }

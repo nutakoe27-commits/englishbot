@@ -71,12 +71,16 @@
  * субтильные но заметные. */
 body,
 .app-shell,
+.app-shell__body,
 .mode-selector,
 .lst-screen,
 .grm-screen,
 .srs-screen,
 .tutor-app,
 .profile-screen,
+.prog-v2,
+.srs-v2,
+.wrd-v2,
 .lp {
   background-color: var(--bg);
   background-image:
