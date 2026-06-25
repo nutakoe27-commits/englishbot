@@ -517,8 +517,13 @@
 .settings-popover__content {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 4px 0;
+  gap: 12px;
+  padding: 14px 14px 16px;
+  margin: 4px 0;
+  background: var(--surface-popup);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
 }
 .settings-popover__content .sheet-group { gap: 6px; }
 .settings-popover__content .sheet-group__title {
