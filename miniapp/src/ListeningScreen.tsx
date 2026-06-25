@@ -15,6 +15,7 @@ import { PodcastPlayer } from "./PodcastPlayer";
 import { Transcript } from "./Transcript";
 import { ProgressScreen } from "./ProgressScreen";
 import { WordsScreen } from "./WordsScreen";
+import { ModalScreen } from "./ModalScreen";
 import { LockScreen } from "./LockScreen";
 import { SubscribeScreen } from "./SubscribeScreen";
 import { IconButton } from "./ds-react/IconButton";
@@ -227,22 +228,22 @@ export function ListeningScreen({ onExit }: Props) {
       </main>
 
       {wordsOpen && (
-        <div className="modal-screen">
+        <ModalScreen>
           <WordsScreen
             apiBase={API_BASE}
             onClose={() => setWordsOpen(false)}
           />
-        </div>
+        </ModalScreen>
       )}
 
       {progressOpen && (
-        <div className="modal-screen">
+        <ModalScreen>
           <ProgressScreen
             apiBase={API_BASE}
             initData={WebApp.initData || ""}
             onClose={() => setProgressOpen(false)}
           />
-        </div>
+        </ModalScreen>
       )}
 
       {paywall && (

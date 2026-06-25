@@ -23,6 +23,7 @@ import { ExplainPopover } from "./ExplainPopover";
 import { SessionSummary } from "./SessionSummary";
 import { WordsScreen } from "./WordsScreen";
 import { ProgressScreen } from "./ProgressScreen";
+import { ModalScreen } from "./ModalScreen";
 import { wordDiff, diffLooksMeaningful, type DiffOp } from "./wordDiff";
 import { wsTokenParam } from "./auth";
 import {
@@ -1511,22 +1512,22 @@ export default function App({ onExit }: AppProps = {}) {
       )}
 
       {wordsOpen && lockState === null && (
-        <div className="modal-screen">
+        <ModalScreen>
           <WordsScreen
             apiBase={API_BASE}
             onClose={() => setWordsOpen(false)}
           />
-        </div>
+        </ModalScreen>
       )}
 
       {progressOpen && lockState === null && (
-        <div className="modal-screen">
+        <ModalScreen>
           <ProgressScreen
             apiBase={API_BASE}
             initData={WebApp.initData || ""}
             onClose={() => setProgressOpen(false)}
           />
-        </div>
+        </ModalScreen>
       )}
 
       {endConfirmOpen && (
