@@ -1296,10 +1296,10 @@ button {
   align-items: flex-start;
   padding: 6px 10px;
   margin: 4px 0 2px;
-  background: rgba(255, 215, 0, 0.12);
-  border: 1px solid rgba(255, 215, 0, 0.35);
+  background: var(--warn-tint);                /* solid butter cream */
+  border: 1px solid rgba(217, 184, 74, 0.45);
   border-radius: 8px;
-  color: #ffe28a;
+  color: var(--text);                          /* warm-dark, читабельно на cream */
   font-size: 14px;
   font-style: italic;
   line-height: 1.35;
@@ -1309,6 +1309,7 @@ button {
   line-height: 1.5;
   font-style: normal;
   flex-shrink: 0;
+  color: #8a6f1a;
 }
 
 /* Diff внутри correction-плашки. */
@@ -1317,22 +1318,22 @@ button {
   font-style: normal;
 }
 .msg__correction-diff del {
-  color: #ff9c9c;
+  color: var(--record);                        /* dusty rose вместо bright pink */
   text-decoration: line-through;
   text-decoration-thickness: 1.5px;
-  text-decoration-color: rgba(255, 156, 156, 0.7);
-  opacity: 0.85;
+  text-decoration-color: rgba(184, 92, 92, 0.7);
+  opacity: 0.95;
 }
 .msg__correction-diff ins {
-  color: #b8ffc4;
+  color: var(--accent-deep);                   /* mossy green вместо bright green */
   text-decoration: none;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 /* Кнопка «🤔 почему?» в плашке correction. */
 .msg__correction-why {
   appearance: none;
-  background: var(--border-strong);
+  background: var(--bg-2);
   border: 1px solid var(--border-strong);
   color: var(--text);
   border-radius: 999px;
@@ -1351,8 +1352,8 @@ button {
 }
 .msg__correction-why:hover,
 .msg__correction-why:active {
-  background: rgba(164, 137, 255, 0.25);
-  border-color: rgba(164, 137, 255, 0.55);
+  background: var(--accent-tint);
+  border-color: var(--border-accent);
 }
 
 /* ExplainPopover — переиспользует базовый translate-popover класс,
@@ -1367,27 +1368,29 @@ button {
 
 /* ─── Post-session summary overlay ──────────────────────────────────── */
 .summary-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(8, 10, 18, 0.92);
-  backdrop-filter: blur(6px);
-  z-index: 50;
+  /* SessionSummary рендерится внутри ModalScreen → .sub-screen уже фиксирует
+   * overlay. Здесь только flex-обёртка без position: fixed / backdrop'а. */
+  position: static;
+  background: transparent;
+  backdrop-filter: none;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
-  padding: 24px 16px;
-  overflow-y: auto;
+  align-items: stretch;
+  padding: 0;
+  overflow: visible;
+  width: 100%;
 }
 .summary-card {
   width: 100%;
   max-width: 460px;
-  background: var(--bg, #14182a);
-  border: 1px solid var(--border-strong, var(--border-strong));
+  background: #EFE7D6;
+  border: 1px solid var(--border-strong);
   border-radius: 16px;
   padding: 22px 20px 18px;
   display: flex;
   flex-direction: column;
   gap: 18px;
+  margin: 0 auto;
 }
 .summary-title {
   margin: 0;
@@ -1676,13 +1679,13 @@ button {
 }
 
 .confirm-card {
-  background: #1a1f36;
+  background: #EFE7D6;
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   padding: 20px 18px 16px;
   max-width: 320px;
   width: 100%;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-card);
   animation: confirm-slide-in 200ms cubic-bezier(0.22, 0.8, 0.32, 1);
 }
 
@@ -1694,14 +1697,14 @@ button {
 .confirm-title {
   margin: 0 0 6px;
   font-size: 16px;
-  font-weight: 600;
-  color: #fff;
+  font-weight: 700;
+  color: var(--text);
 }
 
 .confirm-hint {
   margin: 0 0 16px;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.45;
   color: var(--text-dim);
 }
 
@@ -1713,7 +1716,7 @@ button {
 
 .confirm-btn {
   appearance: none;
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 10px 16px;
   font-size: 13px;
   font-weight: 600;
@@ -1723,23 +1726,24 @@ button {
 }
 
 .confirm-btn--secondary {
-  background: var(--surface-2);
+  background: var(--bg-2);
   border: 1px solid var(--border-strong);
-  color: #fff;
+  color: var(--text);
 }
 .confirm-btn--secondary:hover,
 .confirm-btn--secondary:active {
-  background: var(--border-strong);
+  background: var(--accent-tint);
+  border-color: var(--border-accent);
 }
 
 .confirm-btn--danger {
-  background: rgba(220, 64, 64, 0.85);
-  border: 1px solid rgba(220, 64, 64, 0.5);
+  background: var(--record);
+  border: 1px solid var(--record);
   color: #fff;
 }
 .confirm-btn--danger:hover,
 .confirm-btn--danger:active {
-  background: rgba(220, 64, 64, 1);
+  filter: brightness(0.94);
 }
 
 /* ─── ProgressScreen (retention v1) ─────────────────────────────────── */
