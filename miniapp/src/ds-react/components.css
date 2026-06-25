@@ -440,16 +440,18 @@
 .sub-screen__inner {
   width: 100%;
   max-width: 460px;
-  /* Тighter padding чтобы больше контента помещалось */
-  padding: 14px 16px 20px;
+  padding: 16px 22px 28px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   box-sizing: border-box;
   background: var(--bg-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-card);
+  /* Был margin: auto 0 → если контент длиннее viewport, vertical-centering
+   * прятал верх/низ за scroll'a. Теперь sticks-to-top, .sub-screen overflow
+   * скроллит наружу — весь контент достижим. */
   margin: 0 auto;
   align-self: flex-start;
 }
@@ -1028,18 +1030,18 @@
 
 /* Medals grid */
 .prog-v2__medals {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 .prog-v2__medal {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
 }
 .prog-v2__medal-icon {
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
   border-radius: var(--radius-sm);
   display: grid;
   place-items: center;

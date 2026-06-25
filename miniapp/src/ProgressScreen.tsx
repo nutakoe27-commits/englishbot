@@ -129,15 +129,15 @@ export function ProgressScreen({ apiBase, initData, onClose }: Props) {
 
           {/* ── 3 big stats ─────────────────────────────────────────── */}
           <div className="prog-v2__row3">
-            <NoteCard padding="12px 12px">
+            <NoteCard padding="14px 14px">
               <div className="prog-v2__stat-val">{progress.total_minutes}</div>
               <div className="prog-v2__stat-label">Минут практики</div>
             </NoteCard>
-            <NoteCard padding="12px 12px">
+            <NoteCard padding="14px 14px">
               <div className="prog-v2__stat-val">{progress.total_sessions}</div>
               <div className="prog-v2__stat-label">Сессий</div>
             </NoteCard>
-            <NoteCard padding="12px 12px">
+            <NoteCard padding="14px 14px">
               <div className="prog-v2__stat-val">{progress.total_words}</div>
               <div className="prog-v2__stat-label">Слов</div>
             </NoteCard>
@@ -208,7 +208,7 @@ function MedalCard({ a }: { a: Achievement }) {
   // Подбираем lucide-иконку по metric (мягкая эвристика, fallback на 'award').
   const lucideIcon = _medalIcon(a.metric, a.icon);
   return (
-    <NoteCard padding="10px 12px" style={{ opacity: a.earned ? 1 : 0.62 }}>
+    <NoteCard padding="12px 14px" style={{ opacity: a.earned ? 1 : 0.62 }}>
       <div className="prog-v2__medal">
         <span className={`prog-v2__medal-icon ${a.earned ? "is-on" : ""}`}>
           <Icon name={lucideIcon} size={18} />
