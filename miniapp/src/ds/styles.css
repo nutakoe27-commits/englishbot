@@ -21,15 +21,14 @@
  * активный chip / icon-pad / answer-button это SOLID pastel плитки.
  * Перекрываем токены, чтобы все «кнопко-подобное» имело цвет. */
 :root {
-  /* App canvas — насыщенный wheat: cream-карточки выпрыгивают. */
-  --bg-0: #D4C49F;
-
-  /* Карточки — solid cream поверх canvas, без полупрозрачного gradient. */
+  /* App canvas — solid cream paper (как внутри popover'a со статистикой).
+   * Все экраны = одна «тетрадная страница», карточки/inner-блоки растут
+   * на той же текстуре. */
+  --bg-0: #FFFCF2;
   --bg-1: #FAF5E8;
   --bg-2: #FFFCF2;
 
-  /* Принудительно solid карточная заливка вместо top→bottom gradient
-   * (gradient путал глаз — казалось что карточка прозрачная). */
+  /* Карточная заливка — тот же solid cream, без gradient. */
   --grad-card: #FFFCF2;
 
   /* Active fills: solid pastels (а не rgba(...) tint'ы) */
