@@ -579,26 +579,33 @@ button {
 }
 
 /* ─── .modal-screen — обёртка для ProgressScreen/WordsScreen, когда они
- * открываются ПОВЕРХ Speaking/Listening/Grammar (а не как tab). Тёплый
- * затемнённый backdrop + grid фон. */
+ * открываются ПОВЕРХ Speaking/Listening/Grammar (а не как tab). Solid
+ * warm-wheat фон с grid'ом, полностью перекрывает экран под собой.
+ * !important чтобы перебить любые tutor-app-локальные правила. */
 .modal-screen {
-  position: fixed;
-  inset: 0;
-  z-index: 250;
-  background-color: var(--bg);
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 500 !important;
+  background-color: var(--bg) !important;
   background-image:
     linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.10)) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.10)) 1px, transparent 1px);
-  background-size: 24px 24px;
+    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.10)) 1px, transparent 1px) !important;
+  background-size: 24px 24px !important;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  animation: sheet-fade-in 180ms ease-out;
+  isolation: isolate;             /* собственный stacking-context */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 .modal-screen > * {
   width: 100%;
   max-width: 480px;
   margin: 0 auto;
-  min-height: 100%;
+  min-height: auto;
+  /* inner экран НЕ должен сам иметь свой fixed bg-grid (даблирует) */
+  background: transparent !important;
+  background-image: none !important;
 }
 
 @keyframes sheet-fade-in {
