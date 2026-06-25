@@ -14,6 +14,27 @@
 @import "./tokens/effects.css";
 @import "./tokens/base.css";
 
+/* ─── v2 contrast boost: solid pastels вместо прозрачных tint'ов ─────
+ * Базовые токены v2 дают slightly tinted активные состояния
+ * (rgba(…,0.10–0.18)) — на тёмном-кремовом фоне они выглядят почти как
+ * прозрачные. Реальный v2-дизайн (см. login-hq.png, home-full.png) —
+ * активный chip / icon-pad / answer-button это SOLID pastel плитки.
+ * Перекрываем токены, чтобы все «кнопко-подобное» имело цвет. */
+:root {
+  /* App canvas — чуть глубже wheat для большего контраста с cream-кардами */
+  --bg-0: #E4D5B7;
+
+  /* Active fills: solid pastels (а не rgba(...) tint'ы) */
+  --accent-tint:        #DCE3CC;   /* hover / passive sage fill */
+  --accent-tint-strong: #C8D2B8;   /* active / selected sage fill */
+  --speak-tint:         #D6E1CB;   /* speak success pastel */
+  --record-tint:        #E8C9C2;   /* dusty rose pastel */
+  --warn-tint:          #EFE0BA;   /* butter cream pastel */
+
+  /* Grid линии чуть заметнее (0.04 → 0.07) — фактура «тетрадки» видна. */
+  --grid-line: rgba(42, 38, 34, 0.07);
+}
+
 /* ─── Compat: старые имена → новые v2-токены ──────────────────────── */
 :root {
   /* surfaces */
@@ -84,7 +105,7 @@ body,
 .lp {
   background-color: var(--bg);
   background-image:
-    linear-gradient(to right, rgba(42, 38, 34, 0.04) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(42, 38, 34, 0.04) 1px, transparent 1px);
+    linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.07)) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.07)) 1px, transparent 1px);
   background-size: 24px 24px;
 }
