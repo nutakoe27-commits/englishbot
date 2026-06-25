@@ -461,54 +461,52 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 .settings-popover__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 4px 10px;
+  padding: 2px 2px 6px;
   border-bottom: 1px solid var(--border);
 }
 .settings-popover__content {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
   padding: 4px 0;
 }
-/* Тексты в группах: title — micro caps spacing, gap между title и контролами,
- * sheet-note (hint снизу секции) — читабельный line-height. */
-.settings-popover__content .sheet-group { gap: 10px; }
+.settings-popover__content .sheet-group { gap: 6px; }
 .settings-popover__content .sheet-group__title {
   margin: 0;
-  font-size: 11px;
+  font-size: 10.5px;
   letter-spacing: 0.10em;
   color: var(--text-dim);
   font-weight: 700;
   padding-left: 2px;
 }
 .settings-popover__content .sheet-note {
-  margin: 6px 2px 0;
-  font-size: 12.5px;
-  line-height: 1.5;
+  margin: 4px 2px 0;
+  font-size: 11.5px;
+  line-height: 1.4;
   color: var(--text-dim);
 }
 .settings-popover__content .sheet-input {
-  padding: 11px 14px;
-  font-size: 14.5px;
+  padding: 9px 12px;
+  font-size: 13.5px;
 }
 .settings-popover__footer {
   display: flex;
-  gap: 10px;
-  padding: 12px 0 4px;
+  gap: 8px;
+  padding: 8px 0 2px;
   border-top: 1px solid var(--border);
 }
 .settings-popover__footer .btn {
   flex: 1;
-  padding: 13px 18px;
-  font-size: 15px;
-  border-radius: 12px;
-  min-height: 48px;
+  padding: 8px 14px;
+  font-size: 13.5px;
+  border-radius: 10px;
+  min-height: 36px;
 }
 .sub-screen__top {
   display: flex;

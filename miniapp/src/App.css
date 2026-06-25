@@ -3636,11 +3636,10 @@ button {
  * Mobile: shell заполняет всё, body не виден. */
 @media (min-width: 768px) {
   body {
-    /* Литерально скопировано из .sub-screen (components.css:431). */
-    background: color-mix(in srgb, var(--text) 45%, transparent);
+    background-color: #EFE7D6;
     background-image:
-      linear-gradient(to right, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+      linear-gradient(to right, rgba(42, 38, 34, 0.06) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(42, 38, 34, 0.06) 1px, transparent 1px);
     background-size: 24px 24px;
   }
   .app-shell {
