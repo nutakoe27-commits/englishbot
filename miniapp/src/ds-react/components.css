@@ -1651,3 +1651,100 @@
   color: var(--accent-deep);
   font-weight: 600;
 }
+
+/* ─── Sheet (SettingsSheet / SubscribeReturn / AccountSheet popover) v2 ─ */
+.sheet {
+  background: var(--grad-card);
+  border: 1px solid var(--border-strong);
+  border-top: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-card);
+  font-family: var(--font-text);
+}
+.sheet__title {
+  font-family: var(--font-display);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.sheet__close {
+  background: var(--accent-tint);
+  border: 1px solid var(--border-accent);
+  color: var(--accent-deep);
+}
+.sheet__close:hover {
+  background: var(--accent-tint-strong);
+}
+.sheet__header {
+  border-bottom: 1px solid var(--border);
+}
+.sheet__footer {
+  border-top: 1px solid var(--border);
+}
+.sheet-group__title {
+  font-family: var(--font-text);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: var(--weight-bold);
+}
+
+/* Segmented (CEFR-level / length / role в SettingsSheet) — sage pill */
+.segmented {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.segmented__item {
+  font-family: var(--font-text);
+  border-radius: var(--radius-sm);
+}
+.segmented__item.is-active {
+  background: var(--accent-tint-strong);
+  color: var(--accent-deep);
+  box-shadow: none;
+}
+.segmented__item.is-active .segmented__hint {
+  color: var(--accent-deep);
+}
+.role-chip {
+  background: var(--bg-1);
+  border: 1px solid var(--border-strong);
+  font-family: var(--font-text);
+}
+.role-chip.is-active {
+  background: var(--accent-tint-strong);
+  color: var(--accent-deep);
+  border-color: var(--border-accent);
+}
+
+/* TranslatePopover + ExplainPopover — warm cream поверх solid */
+.translate-popover {
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-card);
+  font-family: var(--font-text);
+  border-radius: var(--radius-md);
+}
+.translate-popover__word {
+  font-family: var(--font-text);
+  letter-spacing: 0.14em;
+  font-weight: var(--weight-bold);
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+.translate-popover__primary {
+  font-family: var(--font-display);
+  color: var(--accent-deep);
+  font-weight: var(--weight-semibold);
+}
+.translate-popover__add {
+  background: var(--grad-primary);
+  color: var(--on-primary);
+  box-shadow: var(--glow-accent);
+  font-family: var(--font-text);
+  border-radius: var(--radius-md);
+}
+.translate-popover__add:hover {
+  background: var(--grad-primary-deep);
+}
