@@ -588,8 +588,8 @@ button {
   z-index: 500 !important;
   background-color: var(--bg) !important;
   background-image:
-    linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.10)) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.10)) 1px, transparent 1px) !important;
+    linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.05)) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.05)) 1px, transparent 1px) !important;
   background-size: 24px 24px !important;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -3658,8 +3658,8 @@ button {
   body {
     background-color: #EFE7D6;
     background-image:
-      linear-gradient(to right, rgba(42, 38, 34, 0.06) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(42, 38, 34, 0.06) 1px, transparent 1px);
+      linear-gradient(to right, rgba(42, 38, 34, 0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(42, 38, 34, 0.03) 1px, transparent 1px);
     background-size: 24px 24px;
   }
   .app-shell {

@@ -40,7 +40,7 @@
 
   /* Grid линии заметнее (0.04 → 0.10) — фактура «тетрадки» очевидная,
    * на канвасе явная, на solid карточках не видна (карточки её закрывают). */
-  --grid-line: rgba(42, 38, 34, 0.10);
+  --grid-line: rgba(42, 38, 34, 0.05);
 
   /* Карточные тени — заметнее, чтобы прямо «приподнимались» от канваса */
   --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.6),
@@ -118,7 +118,7 @@ body,
 .lp {
   background-color: var(--bg);
   background-image:
-    linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.07)) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.07)) 1px, transparent 1px);
+    linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.035)) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.035)) 1px, transparent 1px);
   background-size: 24px 24px;
 }
