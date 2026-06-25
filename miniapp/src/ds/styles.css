@@ -208,6 +208,12 @@ body,
   background-size: auto, auto;
   background-attachment: fixed;
 }
+/* На dark убираем illustrations с RichModeCard (cream-стилизованные
+ * PNG в правом углу выглядят неуместно на dark canvas). */
+[data-theme="dark"] .dsx-rich-mode__illust {
+  display: none;
+}
+
 [data-theme="dark"] .app-shell__body,
 [data-theme="dark"] .mode-selector,
 [data-theme="dark"] .lst-screen,
