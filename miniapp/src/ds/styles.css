@@ -64,3 +64,23 @@
   /* focus ring — формат box-shadow */
   --focus-ring: 0 0 0 3px var(--accent-glow);
 }
+
+/* ─── Notebook-paper фон (v2 signature) ─────────────────────────────
+ * Тонкая grid-сетка 24×24 поверх warm cream — даёт ощущение «тетради
+ * в клеточку», как задумано в DS. Линии полупрозрачные (4% от ink-900),
+ * субтильные но заметные. */
+body,
+.app-shell,
+.mode-selector,
+.lst-screen,
+.grm-screen,
+.srs-screen,
+.tutor-app,
+.profile-screen,
+.lp {
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(to right, rgba(42, 38, 34, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(42, 38, 34, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+}

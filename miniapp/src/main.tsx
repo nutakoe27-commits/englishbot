@@ -21,6 +21,8 @@ import { LandingScreen } from "./LandingScreen";
 import { BottomNav } from "./BottomNav";
 import { AccountSheet } from "./AccountSheet";
 import { ProgressScreen } from "./ProgressScreen";
+import { SubscribeScreen } from "./SubscribeScreen";
+import { OnboardingModal } from "./OnboardingModal";
 import type { TabKey } from "./tabs";
 import {
   extractYandexCallback,
@@ -189,6 +191,9 @@ function TabShell({
   onLoggedOut: () => void;
 }) {
   const [tab, setTab] = useState<TabKey>(initialTab);
+  // Subscribe/Onboarding модалки — рендерятся поверх любого таба.
+  const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
+  const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
 
   let body: React.ReactNode;
   if (tab === "home") {
@@ -221,8 +226,8 @@ function TabShell({
       <AccountSheet
         embedded
         onLoggedOut={onLoggedOut}
-        onOpenSubscribe={undefined /* подписка пока остаётся внутри AccountSheet flow */}
-        onOpenTutorial={undefined}
+        onOpenSubscribe={() => setSubscribeOpen(true)}
+        onOpenTutorial={() => setOnboardingManual(true)}
       />
     );
   }
@@ -231,6 +236,16 @@ function TabShell({
     <div className="app-shell">
       <div className="app-shell__body">{body}</div>
       <BottomNav active={tab} onChange={setTab} />
+      {subscribeOpen && (
+        <SubscribeScreen onClose={() => setSubscribeOpen(false)} />
+      )}
+      {onboardingManual && (
+        <OnboardingModal
+          open
+          markDoneOnFinish={false}
+          onClose={() => setOnboardingManual(false)}
+        />
+      )}
     </div>
   );
 }

@@ -6,7 +6,6 @@
 import WebApp from "@twa-dev/sdk";
 import { useEffect, useState } from "react";
 import { ProgressScreen } from "./ProgressScreen";
-import { AccountSheet } from "./AccountSheet";
 import { SubscribeScreen } from "./SubscribeScreen";
 import { OnboardingModal } from "./OnboardingModal";
 import { fetchMe } from "./auth";
@@ -14,7 +13,6 @@ import { RichModeCard } from "./ds-react/RichModeCard";
 import { StatTile } from "./ds-react/StatTile";
 import { TopBar } from "./ds-react/TopBar";
 import { LogoBox } from "./ds-react/LogoBox";
-import { IconButton } from "./ds-react/IconButton";
 import { SerifH } from "./ds-react/typography";
 
 export type Mode = "speaking" | "listening" | "grammar" | "srs";
@@ -40,7 +38,6 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
   const [userName, setUserName] = useState<string>("there");
   const [stats, setStats] = useState<MeStats | null>(null);
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
-  const [accountOpen, setAccountOpen] = useState<boolean>(false);
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
   // Онбординг. autoOpen — при первом заходе (помечаем done в БД).
   // manualOpen — юзер сам открыл через «Открыть гид» в Аккаунте (не помечаем).
@@ -105,13 +102,6 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
           <>
             <span className="ms-hello">Hi, {userName}</span>
             <LogoBox size={32} />
-            <IconButton
-              icon="user-round"
-              variant="surface"
-              size="md"
-              label="Аккаунт и настройки входа"
-              onClick={() => setAccountOpen(true)}
-            />
           </>
         }
       />
@@ -180,17 +170,7 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
         />
       )}
 
-      {accountOpen && (
-        <AccountSheet
-          onClose={() => setAccountOpen(false)}
-          onLoggedOut={() => {
-            setAccountOpen(false);
-            onLoggedOut?.();
-          }}
-          onOpenSubscribe={() => setSubscribeOpen(true)}
-          onOpenTutorial={() => { setAccountOpen(false); setOnboardingManual(true); }}
-        />
-      )}
+      {/* AccountSheet popover убран — профиль теперь живёт в bottom-tab. */}
 
       {subscribeOpen && (
         <SubscribeScreen
