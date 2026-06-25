@@ -164,27 +164,18 @@ export function WordsScreen({ apiBase, onClose }: Props) {
 
       <NoteCard padding={16}>
         <form className="wrd-v2__form" onSubmit={onSubmit}>
-          <div className="wrd-v2__row">
-            <input
-              type="text"
-              className="wrd-v2__input"
-              placeholder="Новое слово…"
-              value={draftWord}
-              onChange={(e) => setDraftWord(e.target.value)}
-              disabled={busy || atLimit}
-              maxLength={64}
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={busy || atLimit || !draftWord.trim()}
-            >
-              Добавить
-            </Button>
-          </div>
+          <input
+            type="text"
+            className="wrd-v2__input wrd-v2__input--full"
+            placeholder="Новое слово…"
+            value={draftWord}
+            onChange={(e) => setDraftWord(e.target.value)}
+            disabled={busy || atLimit}
+            maxLength={64}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+          />
           <input
             type="text"
             className="wrd-v2__input wrd-v2__input--full"
@@ -194,6 +185,14 @@ export function WordsScreen({ apiBase, onClose }: Props) {
             disabled={busy || atLimit}
             maxLength={255}
           />
+          <Button
+            type="submit"
+            variant="primary"
+            fullWidth
+            disabled={busy || atLimit || !draftWord.trim()}
+          >
+            Добавить
+          </Button>
         </form>
       </NoteCard>
 
