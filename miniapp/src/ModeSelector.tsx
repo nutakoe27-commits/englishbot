@@ -6,6 +6,7 @@
 import WebApp from "@twa-dev/sdk";
 import { useEffect, useState } from "react";
 import { ProgressScreen } from "./ProgressScreen";
+import { ModalScreen } from "./ModalScreen";
 import { SubscribeScreen } from "./SubscribeScreen";
 import { OnboardingModal } from "./OnboardingModal";
 import { fetchMe } from "./auth";
@@ -163,11 +164,13 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
       </main>
 
       {progressOpen && (
-        <ProgressScreen
-          apiBase={API_BASE}
-          initData={WebApp.initData || ""}
-          onClose={() => setProgressOpen(false)}
-        />
+        <ModalScreen>
+          <ProgressScreen
+            apiBase={API_BASE}
+            initData={WebApp.initData || ""}
+            onClose={() => setProgressOpen(false)}
+          />
+        </ModalScreen>
       )}
 
       {/* AccountSheet popover убран — профиль теперь живёт в bottom-tab. */}
