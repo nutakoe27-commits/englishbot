@@ -3661,10 +3661,11 @@ button {
   }
   /* BottomNav на desktop — fixed к низу viewport'a, шириной как колонка
    * (max-width: 480px центрировано). sticky внутри auto-height shell
-   * на десктопе работал нестабильно (то прилипал, то нет). fixed —
-   * гарантированно закреплён независимо от scroll'a/высоты shell. */
+   * на десктопе работал нестабильно. fixed + !important — гарантированно
+   * закреплён независимо от scroll'a (без !important регулярное правило
+   * .bnav { position: relative } ниже в файле перебивало через cascade). */
   .bnav {
-    position: fixed;
+    position: fixed !important;
     bottom: 0;
     left: 50%;
     transform: translateX(-50%);
@@ -3674,8 +3675,8 @@ button {
     border-left: 1px solid var(--border);
     border-right: 1px solid var(--border);
   }
-  /* На desktop в body нужен padding-bottom, чтобы последний контент не
-   * уезжал под fixed nav. На мобиле nav в потоке — padding не нужен. */
+  /* На desktop нужен padding-bottom, чтобы последний контент не уезжал
+   * под fixed nav. На мобиле nav в потоке — padding не нужен. */
   .app-shell {
     padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
   }
