@@ -461,7 +461,7 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 .settings-popover__header {
   display: flex;
@@ -473,12 +473,14 @@
 .settings-popover__content {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
+.settings-popover__content .sheet-group { gap: 8px; }
+.settings-popover__content .sheet-group__title { margin-bottom: 2px; }
 .settings-popover__footer {
   display: flex;
   gap: 10px;
-  padding-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid var(--border);
 }
 .settings-popover__footer .btn { flex: 1; }
