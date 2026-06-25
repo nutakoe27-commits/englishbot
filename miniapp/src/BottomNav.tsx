@@ -20,14 +20,19 @@ const TABS: { key: TabKey; icon: string; label: string }[] = [
 
 export function BottomNav({ active, onChange }: Props) {
   const idx = Math.max(0, TABS.findIndex((t) => t.key === active));
+  const PILL_INSET = 6;            // визуальный буфер по краям пилюли
   return (
     <nav className="bnav" aria-label="Основная навигация">
       <span
         className="bnav__pill"
         aria-hidden
         style={{
-          width: `calc((100% - 16px) / ${TABS.length})`,
-          transform: `translateX(${idx * 100}%)`,
+          // Сетка из 4 равных колонок без gap (см. .bnav grid-template).
+          // Пилюля = 25% ширины - 2*INSET, позиционируется через left.
+          // Это точнее, чем translateX от width, потому что 25% и left:0%
+          // считаются от ОДНОГО padding-box → нет рассинхрона на десктопе.
+          width: `calc(25% - ${PILL_INSET * 2}px)`,
+          left: `calc(${idx * 25}% + ${PILL_INSET}px)`,
         }}
       />
       {TABS.map((t) => (
