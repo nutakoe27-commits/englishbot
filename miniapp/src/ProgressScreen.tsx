@@ -17,6 +17,7 @@ import { NoteCard } from "./ds-react/NoteCard";
 import { SerifH } from "./ds-react/typography";
 import { Badge } from "./ds-react/Badge";
 import { Icon } from "./ds-react/Icon";
+import { IconButton } from "./ds-react/IconButton";
 import { useLucide } from "./lucide";
 
 interface Props {
@@ -52,7 +53,7 @@ interface Achievement {
   earned: boolean;
 }
 
-export function ProgressScreen({ apiBase, initData, onClose: _onClose }: Props) {
+export function ProgressScreen({ apiBase, initData, onClose }: Props) {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [achievements, setAchievements] = useState<Achievement[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +92,7 @@ export function ProgressScreen({ apiBase, initData, onClose: _onClose }: Props) 
     <div className="prog-v2">
       <header className="prog-v2__top">
         <SerifH as="h1" size={28}>Мой прогресс</SerifH>
+        <IconButton icon="x" size="md" label="Закрыть" onClick={onClose} />
       </header>
 
       {error && (
