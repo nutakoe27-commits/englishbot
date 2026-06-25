@@ -31,6 +31,10 @@ import {
   settingsToQuery,
   type TutorSettings,
 } from "./tutorSettings";
+import { IconButton as DSIconButton } from "./ds-react/IconButton";
+import { Icon as DSIcon } from "./ds-react/Icon";
+import { SerifH } from "./ds-react/typography";
+import { useLucide } from "./lucide";
 
 // ─── Типы ─────────────────────────────────────────────────────────────────────
 
@@ -1160,6 +1164,8 @@ export default function App({ onExit }: AppProps = {}) {
   // Режим текстового чата
   const isChatMode = settings.mode === "chat";
 
+  useLucide(`${appState}-${settingsOpen}-${progressOpen}-${wordsOpen}-${subscribeOpen}-${isChatMode}`);
+
   // Таймер дневного лимита (free-тариф) — показываем над вводом/кнопкой.
   const showTimer =
     !!limits && !limits.has_subscription && limits.remaining_seconds >= 0;
@@ -1180,69 +1186,24 @@ export default function App({ onExit }: AppProps = {}) {
       <div className="bg-orb bg-orb--one" aria-hidden />
       <div className="bg-orb bg-orb--two" aria-hidden />
 
-      {/* Шапка */}
-      <header className="tutor-header">
-        <div className="tutor-brand">
-          {onExit && (
-            <button
-              type="button"
-              className="icon-button tutor-back"
-              onClick={onExit}
-              aria-label="Назад к выбору режима"
-              title="Назад"
-            >
-              <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>←</span>
-            </button>
-          )}
-          <span className="tutor-brand__dot" aria-hidden />
-          <span className="tutor-brand__name">English Tutor</span>
+      {/* Шапка v2 */}
+      <header className="mode-v2-top">
+        {onExit && (
+          <button type="button" className="mode-v2-back" onClick={onExit} aria-label="Назад">
+            <DSIcon name="arrow-left" size={16} />
+            <span>Назад</span>
+          </button>
+        )}
+        <div className="mode-v2-title">
+          <span className="mode-v2-title__icon mode-v2-title__icon--record">
+            <DSIcon name="mic" size={16} />
+          </span>
+          <SerifH as="h1" size={22}>Разговор</SerifH>
         </div>
-        <div className="tutor-header__right">
-          {/* Таймер лимита перенесён к строке ввода / кнопке разговора, чтобы
-              не ломать шапку. Здесь — только иконки действий. */}
-          {/* Приветствие «Hi, name» в рабочей шапке не показываем — три
-              иконки действий важнее и иначе на узких экранах не помещаются
-              (приветствие есть на стартовом экране выбора режима). */}
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setProgressOpen(true)}
-            aria-label="Мой прогресс"
-            title="Мой прогресс"
-          >
-            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>📊</span>
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setWordsOpen(true)}
-            aria-label="Мои слова"
-            title="Мои слова"
-          >
-            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>📖</span>
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Settings"
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
-              <path
-                d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                fill="none"
-              />
-              <path
-                d="M19.4 13a7.7 7.7 0 0 0 0-2l2-1.5-2-3.4-2.3.9a7.6 7.6 0 0 0-1.7-1L15 3.5h-4l-.4 2.4a7.6 7.6 0 0 0-1.7 1l-2.3-.9-2 3.4L6.6 11a7.7 7.7 0 0 0 0 2l-2 1.5 2 3.4 2.3-.9a7.6 7.6 0 0 0 1.7 1l.4 2.4h4l.4-2.4a7.6 7.6 0 0 0 1.7-1l2.3.9 2-3.4-2-1.5Z"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                fill="none"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
+        <div className="mode-v2-actions">
+          <DSIconButton icon="chart-no-axes-column" size="sm" label="Мой прогресс" onClick={() => setProgressOpen(true)} />
+          <DSIconButton icon="book-marked" size="sm" label="Мои слова" onClick={() => setWordsOpen(true)} />
+          <DSIconButton icon="settings" size="sm" label="Settings" onClick={() => setSettingsOpen(true)} />
         </div>
       </header>
 

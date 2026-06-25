@@ -1535,3 +1535,111 @@
 :is(.grm-screen, .grm-screen *) .grm-prompt {
   font-family: var(--font-display);
 }
+
+/* ─── Speaking (App.tsx) v2 overrides ─────────────────────────────── */
+:is(.tutor-app, .tutor-app *) .tutor-log {
+  background: var(--grad-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 0 rgba(42, 38, 34, 0.04), 0 8px 24px -16px rgba(42, 38, 34, 0.18);
+  padding: 14px 14px;
+}
+:is(.tutor-app, .tutor-app *) .tutor-log__empty-title {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+  font-weight: 600;
+}
+:is(.tutor-app, .tutor-app *) .msg {
+  font-family: var(--font-text);
+}
+:is(.tutor-app, .tutor-app *) .msg__role {
+  font-family: var(--font-text);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 700;
+}
+:is(.tutor-app, .tutor-app *) .msg--user {
+  background: rgba(207, 217, 191, 0.45);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin: 6px 0;
+}
+:is(.tutor-app, .tutor-app *) .msg--assistant {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin: 6px 0;
+}
+:is(.tutor-app, .tutor-app *) .msg__text {
+  font-family: var(--font-text);
+  color: var(--text);
+  line-height: 1.55;
+}
+:is(.tutor-app, .tutor-app *) .msg__correction {
+  background: var(--warn-tint);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  margin-top: 6px;
+}
+:is(.tutor-app, .tutor-app *) .talk-button {
+  font-family: var(--font-text);
+}
+:is(.tutor-app, .tutor-app *) .talk-button[data-variant="idle"],
+:is(.tutor-app, .tutor-app *) .talk-button[data-variant="connected"] {
+  background: var(--grad-primary);
+  color: var(--on-primary);
+  box-shadow: var(--glow-accent);
+}
+:is(.tutor-app, .tutor-app *) .talk-button[data-variant="recording"] {
+  background: var(--record);
+  box-shadow: var(--glow-record);
+}
+:is(.tutor-app, .tutor-app *) .talk-button[data-variant="speaking"] {
+  background: var(--speak);
+  box-shadow: 0 0 0 6px rgba(108, 158, 168, 0.18), 0 16px 36px -18px rgba(108, 158, 168, 0.55);
+}
+:is(.tutor-app, .tutor-app *) .talk-button__label {
+  font-family: var(--font-text);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+:is(.tutor-app, .tutor-app *) .chat-composer {
+  background: var(--bg-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+}
+:is(.tutor-app, .tutor-app *) .chat-composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+:is(.tutor-app, .tutor-app *) .chat-composer__input {
+  font-family: var(--font-text);
+  color: var(--text);
+  background: transparent;
+}
+:is(.tutor-app, .tutor-app *) .chat-composer__input::placeholder {
+  color: var(--text-faint);
+}
+:is(.tutor-app, .tutor-app *) .chat-composer__send {
+  background: var(--grad-primary);
+  color: var(--on-primary);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--glow-accent);
+}
+:is(.tutor-app, .tutor-app *) .chat-composer__send:hover:not(:disabled) {
+  background: var(--grad-primary-deep);
+}
+:is(.tutor-app, .tutor-app *) .tutor-status {
+  font-family: var(--font-text);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+:is(.tutor-app, .tutor-app *) .link-button {
+  font-family: var(--font-text);
+  color: var(--accent-deep);
+  font-weight: 600;
+}
