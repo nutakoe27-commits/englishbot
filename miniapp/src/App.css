@@ -538,19 +538,17 @@ button {
   height: 36px;
   flex-shrink: 0;   /* иконки фиксированы — ужимается только имя юзера */
   padding: 0;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-accent);
   border-radius: 10px;
-  background: var(--surface-2);
-  color: var(--text-dim);
+  background: var(--accent-tint);              /* solid sage пастель */
+  color: var(--accent-deep);
   cursor: pointer;
   transition: color 160ms ease, background 160ms ease, border-color 160ms ease,
     transform 120ms ease;
   -webkit-tap-highlight-color: transparent;
 }
 .icon-button:hover {
-  color: var(--text);
-  background: var(--surface-2);
-  border-color: var(--border-strong);
+  background: var(--accent-tint-strong);
 }
 .icon-button:active {
   transform: scale(0.94);
