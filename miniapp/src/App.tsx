@@ -1504,11 +1504,13 @@ export default function App({ onExit }: AppProps = {}) {
       )}
 
       {summarySeconds !== null && lockState === null && (
-        <SessionSummary
-          apiBase={API_BASE}
-          sessionSeconds={summarySeconds}
-          onClose={dismissSummary}
-        />
+        <ModalScreen>
+          <SessionSummary
+            apiBase={API_BASE}
+            sessionSeconds={summarySeconds}
+            onClose={dismissSummary}
+          />
+        </ModalScreen>
       )}
 
       {wordsOpen && lockState === null && (
