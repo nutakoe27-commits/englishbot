@@ -449,8 +449,39 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-card);
-  margin: auto 0;
+  /* Был margin: auto 0 → если контент длиннее viewport, vertical-centering
+   * прятал верх/низ за scroll'a. Теперь sticks-to-top, .sub-screen overflow
+   * скроллит наружу — весь контент достижим. */
+  margin: 0 auto;
+  align-self: flex-start;
 }
+
+/* ─── SettingsPopover (бывший .sheet) — теперь как .sub-screen popover ── */
+.settings-popover {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.settings-popover__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-popover__content {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.settings-popover__footer {
+  display: flex;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.settings-popover__footer .btn { flex: 1; }
 .sub-screen__top {
   display: flex;
   align-items: center;

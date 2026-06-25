@@ -9,6 +9,9 @@ import {
   ROLE_PRESETS,
   type TutorSettings,
 } from "./tutorSettings";
+import { ModalScreen } from "./ModalScreen";
+import { IconButton } from "./ds-react/IconButton";
+import { SerifH } from "./ds-react/typography";
 
 interface Props {
   initial: TutorSettings;
@@ -40,39 +43,14 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
     draft.role !== "custom" || draft.roleCustom.trim().length > 0;
 
   return (
-    <div
-      className="sheet-backdrop"
-      onPointerDown={(e) => {
-        // клик ПО БЭКДРОПУ (не по карточке) — отмена
-        if (e.target === e.currentTarget) onCancel();
-      }}
-    >
-      <div
-        className="sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Tutor settings"
-      >
-        <header className="sheet__header">
-          <h2 className="sheet__title">Settings</h2>
-          <button
-            type="button"
-            className="sheet__close"
-            onClick={onCancel}
-            aria-label="Close"
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
-              <path
-                d="M6 6l12 12M18 6L6 18"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
+    <ModalScreen>
+      <div className="settings-popover" role="dialog" aria-modal="true" aria-label="Tutor settings">
+        <header className="settings-popover__header">
+          <SerifH as="h2" size={24}>Settings</SerifH>
+          <IconButton icon="x" size="md" label="Close" onClick={onCancel} />
         </header>
 
-        <div className="sheet__content">
+        <div className="settings-popover__content">
           {/* 1. Уровень */}
           <section className="sheet-group">
             <h3 className="sheet-group__title">Your English level</h3>
@@ -196,7 +174,7 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
           </section>
         </div>
 
-        <footer className="sheet__footer">
+        <footer className="settings-popover__footer">
           <button
             type="button"
             className="btn btn--ghost"
@@ -214,6 +192,6 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
           </button>
         </footer>
       </div>
-    </div>
+    </ModalScreen>
   );
 }
