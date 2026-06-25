@@ -1342,3 +1342,196 @@
   color: var(--record);
   border-color: rgba(184, 92, 92, 0.32);
 }
+
+/* ─── Mode top-bar v2 (Listening / Grammar header swap) ─────────────── */
+.mode-v2-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  font-family: var(--font-text);
+  color: var(--text);
+}
+.mode-v2-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-family: var(--font-text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  -webkit-tap-highlight-color: transparent;
+}
+.mode-v2-back:hover { background: var(--surface-hover); }
+.mode-v2-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.mode-v2-title__icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pastel-sage);
+  border: 1px solid var(--border-accent);
+  border-radius: 8px;
+  color: var(--accent-deep);
+  flex-shrink: 0;
+}
+.mode-v2-title__icon--speak { background: var(--speak-tint); border-color: rgba(108, 158, 168, 0.30); color: var(--speak); }
+.mode-v2-title__icon--warn  { background: var(--warn-tint);  border-color: rgba(217, 184, 74, 0.32); color: #8a6f1a; }
+.mode-v2-title__icon--record { background: var(--record-tint); border-color: rgba(184, 92, 92, 0.30); color: var(--record); }
+.mode-v2-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mode-v2-hello {
+  display: none;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-right: 4px;
+}
+@media (min-width: 420px) {
+  .mode-v2-hello { display: inline; }
+}
+
+/* ─── Listening/Grammar overrides — sage active chip, grad-primary CTA ─ */
+/* Эти правила переопределяют .lst-chip/.lst-category/.lst-primary-btn из
+ * App.css. Высокая специфичность через :where() невозможна; используем
+ * :is() + parent .lst-screen чтобы попасть в каскад после App.css. */
+:is(.lst-screen, .lst-screen *) .lst-section__title {
+  font-family: var(--font-text);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: var(--weight-bold);
+}
+:is(.lst-screen, .lst-screen *) .lst-chip {
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-card-top);
+  color: var(--text);
+  font-family: var(--font-text);
+  font-weight: 500;
+  transition: background var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease), transform var(--dur-fast) var(--ease);
+}
+:is(.lst-screen, .lst-screen *) .lst-chip[data-active="true"] {
+  background: var(--accent-tint-strong);
+  border-color: var(--border-accent);
+  color: var(--accent-deep);
+  box-shadow: var(--glow-accent);
+}
+:is(.lst-screen, .lst-screen *) .lst-chip--level[data-active="true"] .lst-chip__sub {
+  color: var(--accent-deep);
+}
+:is(.lst-screen, .lst-screen *) .lst-category {
+  background: var(--grad-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+:is(.lst-screen, .lst-screen *) .lst-category[data-active="true"] {
+  background: rgba(207, 217, 191, 0.45);
+  border-color: var(--border-accent);
+}
+:is(.lst-screen, .lst-screen *) .lst-toggle {
+  background: var(--grad-card);
+  border: 1px solid var(--border);
+}
+:is(.lst-screen, .lst-screen *) .lst-primary-btn {
+  background: var(--grad-primary);
+  color: var(--on-primary);
+  box-shadow: var(--glow-accent);
+  font-family: var(--font-text);
+}
+:is(.lst-screen, .lst-screen *) .lst-primary-btn:hover:not(:disabled) {
+  background: var(--grad-primary-deep);
+}
+:is(.lst-screen, .lst-screen *) .lst-secondary-btn {
+  background: var(--surface-card-top);
+  border-color: var(--border-strong);
+}
+
+/* GrammarScreen overrides — same lst-* + .grm-mode-card / .grm-primary-btn */
+:is(.grm-screen, .grm-screen *) .lst-section__title {
+  font-family: var(--font-text);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: var(--weight-bold);
+}
+:is(.grm-screen, .grm-screen *) .lst-chip {
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-card-top);
+  color: var(--text);
+}
+:is(.grm-screen, .grm-screen *) .lst-chip[data-active="true"] {
+  background: var(--accent-tint-strong);
+  border-color: var(--border-accent);
+  color: var(--accent-deep);
+  box-shadow: var(--glow-accent);
+}
+:is(.grm-screen, .grm-screen *) .grm-mode-card {
+  background: var(--grad-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-text);
+  box-shadow: 0 1px 0 rgba(42, 38, 34, 0.04), 0 8px 24px -16px rgba(42, 38, 34, 0.18);
+}
+:is(.grm-screen, .grm-screen *) .grm-mode-card:hover {
+  border-color: var(--border-accent);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+:is(.grm-screen, .grm-screen *) .grm-mode-card--weak {
+  background: rgba(207, 217, 191, 0.35);
+  border-color: var(--border-accent);
+}
+:is(.grm-screen, .grm-screen *) .grm-mode-card__title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+:is(.grm-screen, .grm-screen *) .grm-primary-btn {
+  background: var(--grad-primary);
+  color: var(--on-primary);
+  box-shadow: var(--glow-accent);
+  font-family: var(--font-text);
+  border-radius: var(--radius-md);
+}
+:is(.grm-screen, .grm-screen *) .grm-primary-btn:hover:not(:disabled) {
+  background: var(--grad-primary-deep);
+}
+:is(.grm-screen, .grm-screen *) .grm-choice {
+  background: var(--grad-card);
+  border-radius: var(--radius-md);
+  font-family: var(--font-text);
+}
+:is(.grm-screen, .grm-screen *) .grm-choice[data-state="right"] {
+  background: rgba(207, 217, 191, 0.45);
+  border-color: var(--border-accent);
+  color: var(--accent-deep);
+}
+:is(.grm-screen, .grm-screen *) .grm-choice[data-state="wrong"] {
+  background: var(--record-tint);
+  border-color: rgba(184, 92, 92, 0.32);
+  color: var(--record);
+}
+:is(.grm-screen, .grm-screen *) .grm-prompt {
+  font-family: var(--font-display);
+}
