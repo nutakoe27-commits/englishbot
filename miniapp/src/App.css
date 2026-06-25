@@ -3636,7 +3636,8 @@ button {
  * Mobile: shell заполняет всё, body не виден. */
 @media (min-width: 768px) {
   body {
-    background-color: color-mix(in srgb, var(--text) 45%, var(--bg-2));
+    /* Литерально скопировано из .sub-screen (components.css:431). */
+    background: color-mix(in srgb, var(--text) 45%, transparent);
     background-image:
       linear-gradient(to right, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
       linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
