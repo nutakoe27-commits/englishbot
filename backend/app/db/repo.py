@@ -1664,6 +1664,75 @@ class Repo:
         )
         return list(res.scalars().all())
 
+    async def list_payments(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        status: Optional[str] = None,
+        plan: Optional[str] = None,
+    ) -> tuple[Sequence[Payment], int]:
+        """Пагинированный список всех платежей с опциональными фильтрами."""
+        q = select(Payment).order_by(Payment.created_at.desc())
+        cq = select(func.count(Payment.id))
+        if status:
+            q = q.where(Payment.status == status)
+            cq = cq.where(Payment.status == status)
+        if plan:
+            q = q.where(Payment.plan == plan)
+            cq = cq.where(Payment.plan == plan)
+        q = q.limit(limit).offset(offset)
+        rows = list((await self.s.execute(q)).scalars().all())
+        total = int((await self.s.execute(cq)).scalar() or 0)
+        return rows, total
+
+    async def revenue_month_chart(self) -> dict:
+        """Сумма успешных платежей по дням ТЕКУЩЕГО календарного месяца
+        (1-е → текущий день). Возвращает {month, days_in_month, today_day, series}."""
+        today = msk_today()
+        # Первое число текущего месяца
+        first = today.replace(day=1)
+        # Последний день месяца (для отрисовки оси даже если не дошли)
+        if today.month == 12:
+            next_first = today.replace(year=today.year + 1, month=1, day=1)
+        else:
+            next_first = today.replace(month=today.month + 1, day=1)
+        days_in_month = (next_first - first).days
+        # Запрос: суммы по датам с первого числа
+        res = await self.s.execute(
+            select(
+                func.date(Payment.created_at),
+                func.coalesce(func.sum(Payment.amount_rub), 0),
+            )
+            .where(
+                Payment.status == "succeeded",
+                Payment.created_at >= datetime.combine(first, time.min),
+                Payment.created_at < datetime.combine(next_first, time.min),
+            )
+            .group_by(func.date(Payment.created_at))
+        )
+        by_date: dict[date, float] = {}
+        for d, v in res.all():
+            if isinstance(d, str):
+                d = date.fromisoformat(d)
+            by_date[d] = float(v or 0)
+        series = [
+            {
+                "date": (first + timedelta(days=i)).isoformat(),
+                "day": i + 1,
+                "value": by_date.get(first + timedelta(days=i), 0.0),
+            }
+            for i in range(days_in_month)
+        ]
+        total = sum(p["value"] for p in series)
+        return {
+            "month": first.strftime("%Y-%m"),
+            "days_in_month": days_in_month,
+            "today_day": today.day,
+            "total_rub": total,
+            "series": series,
+        }
+
     # ─── Timeseries для admin v2 dashboard ──────────────────────────────
     # Все *_series возвращают РОВНО `days` точек, включая дни с value=0.
     # Так фронту не нужно заполнять дырки самому.

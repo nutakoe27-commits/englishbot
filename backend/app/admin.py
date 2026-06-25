@@ -702,6 +702,58 @@ async def recent_payments(limit: int = Query(default=20, ge=1, le=100)) -> list[
         return out
 
 
+# ─── Полный список платежей (вкладка «Платежи» в admin) ──────────────
+@router.get("/payments", dependencies=[Depends(require_admin_token)])
+async def list_payments(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    status: Optional[str] = Query(default=None),
+    plan: Optional[str] = Query(default=None),
+) -> dict:
+    async with db_session() as s:
+        repo = Repo(s)
+        rows, total = await repo.list_payments(
+            limit=limit, offset=offset, status=status, plan=plan,
+        )
+        items: list[dict] = []
+        for p in rows:
+            tg_id: Optional[int] = None
+            username: Optional[str] = None
+            try:
+                u = await repo.get_user_by_id(p.user_id)
+                if u:
+                    tg_id = u.tg_id
+                    username = u.username
+            except Exception:
+                pass
+            items.append(
+                {
+                    "id": p.id,
+                    "user_id": p.user_id,
+                    "tg_id": tg_id,
+                    "username": username,
+                    "amount_rub": float(p.amount_rub or 0),
+                    "plan": p.plan,
+                    "status": p.status,
+                    "days_granted": p.days_granted,
+                    "granted_by_tg_id": p.granted_by_tg_id,
+                    "notes": p.notes,
+                    "created_at": p.created_at.isoformat(),
+                }
+            )
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+# График платежей за ТЕКУЩИЙ календарный месяц (1-е → конец).
+@router.get(
+    "/payments/month-chart", dependencies=[Depends(require_admin_token)]
+)
+async def payments_month_chart() -> dict:
+    async with db_session() as s:
+        repo = Repo(s)
+        return await repo.revenue_month_chart()
+
+
 # ─── Admin v2: charts/retention/sessions ─────────────────────────────────────
 # Для дашборда с графиками. Метрики тяжёлые (агрегаты по datetime/group by),
 # поэтому держим в памяти 60-сек TTL-кеш. На single-worker'е этого хватает;

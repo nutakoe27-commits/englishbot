@@ -13,6 +13,8 @@ import {
   type UserBrief,
   type UserDetail,
   type UserSession,
+  type PaymentItem,
+  type PaymentsMonthChart,
 } from "./api";
 import {
   ResponsiveContainer,
@@ -180,7 +182,7 @@ function Login({ onAuthed }: { onAuthed: () => void }) {
           placeholder="Токен из .env ADMIN_TOKEN"
           autoFocus
         />
-        {err && <div style={{ ...S.error, marginTop: 12 }}>{err}</div>}
+        {err && <div style={{ ...S.erroror, marginTop: 12 }}>{err}</div>}
         <button
           type="submit"
           disabled={busy || !token.trim()}
@@ -220,6 +222,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     );
   } else if (route === "/users") {
     view = <UsersList />;
+  } else if (route === "/payments") {
+    view = <PaymentsPage />;
   } else if (route === "/broadcast") {
     view = <BroadcastPage />;
   } else if (route === "/settings") {
@@ -279,6 +283,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
         >
           {navBtn("/dashboard", "Метрики")}
           {navBtn("/users", "Пользователи")}
+          {navBtn("/payments", "Платежи")}
           {navBtn("/broadcast", "Массовые")}
           {navBtn("/settings", "Настройки")}
         </nav>
@@ -558,7 +563,7 @@ function Dashboard() {
     load();
   }, []);
 
-  if (err) return <div style={S.error}>{err}</div>;
+  if (err) return <div style={S.erroror}>{err}</div>;
   if (!metrics) return <div style={S.muted}>Загружаем метрики…</div>;
 
   // Берём всё через num() — если backend вдруг вернёт null/undefined,
@@ -820,7 +825,7 @@ function UsersList() {
         </button>
       </form>
 
-      {err && <div style={S.error}>{err}</div>}
+      {err && <div style={S.erroror}>{err}</div>}
       {items && (
         <div style={S.card}>
           {items.length === 0 ? (
@@ -934,7 +939,7 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
     load();
   }, [id]);
 
-  if (err) return <div style={S.error}>{err}</div>;
+  if (err) return <div style={S.erroror}>{err}</div>;
   if (!u) return <div style={S.muted}>Загружаем…</div>;
 
   const withToast = async (fn: () => Promise<UserDetail>, success: string) => {
@@ -969,7 +974,7 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
       </div>
 
       {msg && <div style={{ ...S.success, marginTop: 12 }}>{msg}</div>}
-      {err && <div style={{ ...S.error, marginTop: 12 }}>{err}</div>}
+      {err && <div style={{ ...S.erroror, marginTop: 12 }}>{err}</div>}
 
       <div style={{ ...S.tabs, marginTop: 16 }}>
         <button
@@ -1155,7 +1160,7 @@ function SessionsTab({ userId }: { userId: number }) {
     };
   }, [userId]);
 
-  if (err) return <div style={S.error}>{err}</div>;
+  if (err) return <div style={S.erroror}>{err}</div>;
   if (sessions === null) return <div style={S.muted}>Загружаем…</div>;
   if (sessions.length === 0) {
     return (
@@ -1294,7 +1299,7 @@ function SendMessageCard({ user }: { user: UserDetail }) {
               {user.username ? ` · @${user.username}` : ""}
             </div>
             {ok && <div style={S.success}>{ok}</div>}
-            {err && <div style={S.error}>{err}</div>}
+            {err && <div style={S.erroror}>{err}</div>}
             <textarea
               style={{
                 ...S.input,
@@ -1420,7 +1425,7 @@ function GrantCard({
     <form onSubmit={submit} style={S.card}>
       <h3 style={S.h3}>Продлить / подарить подписку</h3>
       {ok && <div style={S.success}>{ok}</div>}
-      {err && <div style={S.error}>{err}</div>}
+      {err && <div style={S.erroror}>{err}</div>}
 
       <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
         {quick.map((d) => (
@@ -1530,7 +1535,7 @@ function ReminderCard({
   return (
     <div style={S.card}>
       <h3 style={S.h3}>Напоминание</h3>
-      {err && <div style={S.error}>{err}</div>}
+      {err && <div style={S.erroror}>{err}</div>}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
         <label style={{ fontSize: 14 }}>
           <input
@@ -1604,7 +1609,7 @@ function DeleteAccountCard({
         <b>Это безвозвратно.</b> Будут удалены: сам юзер, привязки входа,
         сессии, словарь, платежи, прогресс грамматики, медали — всё связанное.
       </p>
-      {err && <div style={S.error}>{err}</div>}
+      {err && <div style={S.erroror}>{err}</div>}
 
       <label style={{ display: "block", marginTop: 10, fontSize: 14 }}>
         <input
@@ -1651,6 +1656,237 @@ function DeleteAccountCard({
       >
         {busy ? "Удаляю…" : "Удалить аккаунт"}
       </button>
+    </div>
+  );
+}
+
+// ─── Payments ────────────────────────────────────────────────────────────────
+const PAYMENT_STATUSES = ["", "succeeded", "pending", "canceled", "refunded"];
+const PAYMENT_PLANS = ["", "trial3", "monthly", "yearly", "gift", "admin_grant", "manual_pay"];
+const PAYMENTS_PAGE = 50;
+
+const STATUS_LABEL: Record<string, string> = {
+  succeeded: "✅ оплачено",
+  pending: "⏳ ожидание",
+  canceled: "❌ отменено",
+  refunded: "↩ возврат",
+};
+const PLAN_LABEL: Record<string, string> = {
+  trial3: "3 дня",
+  monthly: "месяц",
+  yearly: "год",
+  gift: "подарок",
+  admin_grant: "админ-грант",
+  manual_pay: "ручная оплата",
+};
+
+function PaymentsPage() {
+  const isMobile = useIsMobile();
+  const [_, navigate] = useRoute();
+  const [chart, setChart] = useState<PaymentsMonthChart | null>(null);
+  const [chartErr, setChartErr] = useState<string | null>(null);
+  const [items, setItems] = useState<PaymentItem[] | null>(null);
+  const [total, setTotal] = useState<number>(0);
+  const [page, setPage] = useState<number>(0);
+  const [status, setStatus] = useState<string>("");
+  const [plan, setPlan] = useState<string>("");
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.paymentsMonthChart()
+      .then(setChart)
+      .catch((e) => setChartErr(e instanceof Error ? e.message : String(e)));
+  }, []);
+
+  useEffect(() => {
+    setItems(null);
+    api.listPayments({
+      limit: PAYMENTS_PAGE,
+      offset: page * PAYMENTS_PAGE,
+      status: status || undefined,
+      plan: plan || undefined,
+    })
+      .then((r) => {
+        setItems(r.items);
+        setTotal(r.total);
+      })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }, [page, status, plan]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAYMENTS_PAGE));
+  const monthLabel = chart?.month
+    ? new Date(chart.month + "-01").toLocaleDateString("ru-RU", { month: "long", year: "numeric" })
+    : "";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <h2 style={S.h2}>💳 Платежи</h2>
+
+      {/* Месячный график */}
+      <div style={S.card}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+          <h3 style={{ ...S.h3, textTransform: "capitalize" }}>
+            {monthLabel || "Текущий месяц"}
+          </h3>
+          {chart && (
+            <div style={{ color: colors.textMuted, fontSize: 14 }}>
+              Сумма за месяц:{" "}
+              <span style={{ color: colors.success, fontWeight: 600, fontSize: 16 }}>
+                {fmtRub(chart.total_rub)}
+              </span>
+              {"  ·  "}
+              день {chart.today_day} из {chart.days_in_month}
+            </div>
+          )}
+        </div>
+        {chartErr && <div style={S.error}>Ошибка: {chartErr}</div>}
+        {!chart && !chartErr && <div style={{ color: colors.textMuted }}>Загрузка…</div>}
+        {chart && (
+          <div style={{ width: "100%", height: isMobile ? 200 : 260 }}>
+            <ResponsiveContainer>
+              <BarChart data={chart.series}>
+                <CartesianGrid stroke={colors.border} strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="day"
+                  stroke={colors.textMuted}
+                  fontSize={11}
+                  interval={isMobile ? 3 : 1}
+                />
+                <YAxis stroke={colors.textMuted} fontSize={11} />
+                <Tooltip
+                  contentStyle={{
+                    background: colors.card,
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: 6,
+                  }}
+                  formatter={(v: number) => [fmtRub(v), "₽"]}
+                  labelFormatter={(d: number) => `День ${d}`}
+                />
+                <Bar dataKey="value" fill={colors.success} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* Фильтры */}
+      <div style={S.card}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 12, color: colors.textMuted }}>Статус</span>
+            <select
+              value={status}
+              onChange={(e) => { setPage(0); setStatus(e.target.value); }}
+              style={S.input}
+            >
+              {PAYMENT_STATUSES.map((s) => (
+                <option key={s} value={s}>{s ? STATUS_LABEL[s] || s : "— все —"}</option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 12, color: colors.textMuted }}>Тариф</span>
+            <select
+              value={plan}
+              onChange={(e) => { setPage(0); setPlan(e.target.value); }}
+              style={S.input}
+            >
+              {PAYMENT_PLANS.map((p) => (
+                <option key={p} value={p}>{p ? PLAN_LABEL[p] || p : "— все —"}</option>
+              ))}
+            </select>
+          </label>
+          <div style={{ marginLeft: "auto", color: colors.textMuted, fontSize: 13 }}>
+            Всего: <b style={{ color: colors.text }}>{total}</b>
+          </div>
+        </div>
+      </div>
+
+      {/* Таблица */}
+      <div style={S.card}>
+        {err && <div style={S.error}>Ошибка: {err}</div>}
+        {!items && !err && <div style={{ color: colors.textMuted }}>Загрузка…</div>}
+        {items && items.length === 0 && (
+          <div style={{ color: colors.textMuted }}>Нет платежей по заданным фильтрам.</div>
+        )}
+        {items && items.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table style={tableStyle(isMobile)}>
+              <thead>
+                <tr>
+                  <th style={S.th}>ID</th>
+                  <th style={S.th}>Дата (МСК)</th>
+                  <th style={S.th}>Юзер</th>
+                  <th style={S.th}>Тариф</th>
+                  <th style={S.th}>Сумма</th>
+                  <th style={S.th}>Статус</th>
+                  <th style={S.th}>Дней</th>
+                  <th style={S.th}>Заметка</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((p) => (
+                  <tr key={p.id}>
+                    <td style={S.td}>{p.id}</td>
+                    <td style={S.td}>{fmtDate(p.created_at)}</td>
+                    <td style={S.td}>
+                      <button
+                        onClick={() => navigate(`/user/${p.user_id}`)}
+                        style={{
+                          background: "transparent",
+                          border: 0,
+                          color: colors.primary,
+                          cursor: "pointer",
+                          padding: 0,
+                          font: "inherit",
+                          textAlign: "left",
+                        }}
+                      >
+                        {p.username ? `@${p.username}` : `#${p.user_id}`}
+                      </button>
+                      {p.tg_id && (
+                        <div style={{ fontSize: 11, color: colors.textMuted }}>tg {p.tg_id}</div>
+                      )}
+                    </td>
+                    <td style={S.td}>{PLAN_LABEL[p.plan] || p.plan}</td>
+                    <td style={{ ...S.td, color: colors.success, fontWeight: 600 }}>
+                      {fmtRub(p.amount_rub)}
+                    </td>
+                    <td style={S.td}>{STATUS_LABEL[p.status] || p.status}</td>
+                    <td style={S.td}>{p.days_granted}</td>
+                    <td style={{ ...S.td, color: colors.textMuted, fontSize: 12, maxWidth: 240 }}>
+                      {p.notes || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {items && total > PAYMENTS_PAGE && (
+          <div style={{ display: "flex", gap: 10, marginTop: 14, alignItems: "center" }}>
+            <button
+              style={S.btnSecondary}
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              ← Назад
+            </button>
+            <span style={{ color: colors.textMuted, fontSize: 13 }}>
+              Страница {page + 1} из {totalPages}
+            </span>
+            <button
+              style={S.btnSecondary}
+              disabled={page + 1 >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Вперёд →
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1708,7 +1944,7 @@ function SettingsPage() {
           WS-сессии не стартуют.
         </p>
         {ok && <div style={{ ...S.success, marginTop: 8 }}>{ok}</div>}
-        {err && <div style={{ ...S.error, marginTop: 8 }}>{err}</div>}
+        {err && <div style={{ ...S.erroror, marginTop: 8 }}>{err}</div>}
 
         <label
           style={{
@@ -1791,7 +2027,7 @@ function BulkExtendCard() {
         payments с типом admin_bulk для аудита.
       </p>
       {ok && <div style={{ ...S.success, marginBottom: 10 }}>{ok}</div>}
-      {err && <div style={{ ...S.error, marginBottom: 10 }}>{err}</div>}
+      {err && <div style={{ ...S.erroror, marginBottom: 10 }}>{err}</div>}
 
       <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
         {quick.map((d) => (
@@ -1990,7 +2226,7 @@ function BroadcastCard() {
         Telegram). Заблокировавшие бота помечаются автоматически.
       </p>
       {ok && <div style={{ ...S.success, marginBottom: 10 }}>{ok}</div>}
-      {err && <div style={{ ...S.error, marginBottom: 10 }}>{err}</div>}
+      {err && <div style={{ ...S.erroror, marginBottom: 10 }}>{err}</div>}
 
       <label style={S.label}>Текст сообщения (до 4000 символов, HTML)</label>
       <textarea
@@ -2089,7 +2325,7 @@ function BroadcastCard() {
           </div>
 
           {job.error && (
-            <div style={{ ...S.error, marginTop: 8 }}>Ошибка: {job.error}</div>
+            <div style={{ ...S.erroror, marginTop: 8 }}>Ошибка: {job.error}</div>
           )}
           {job.text_preview && (
             <div style={{ marginTop: 10, fontSize: 13 }}>

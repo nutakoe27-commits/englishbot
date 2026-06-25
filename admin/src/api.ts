@@ -253,4 +253,55 @@ export const api = {
       `/api/admin/users/${userId}/sessions?limit=${limit}`,
     ),
 
+  // ─── Payments admin tab ───────────────────────────────
+  listPayments: (params: {
+    limit?: number;
+    offset?: number;
+    status?: string;
+    plan?: string;
+  } = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit != null) q.set("limit", String(params.limit));
+    if (params.offset != null) q.set("offset", String(params.offset));
+    if (params.status) q.set("status", params.status);
+    if (params.plan) q.set("plan", params.plan);
+    const qs = q.toString();
+    return request<PaymentsListResponse>(
+      `/api/admin/payments${qs ? `?${qs}` : ""}`,
+    );
+  },
+  paymentsMonthChart: () =>
+    request<PaymentsMonthChart>(`/api/admin/payments/month-chart`),
 };
+
+export interface PaymentItem {
+  id: number;
+  user_id: number;
+  tg_id: number | null;
+  username: string | null;
+  amount_rub: number;
+  plan: string;
+  status: string;
+  days_granted: number;
+  granted_by_tg_id: number | null;
+  notes: string | null;
+  created_at: string;
+}
+export interface PaymentsListResponse {
+  items: PaymentItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+export interface PaymentsMonthChartPoint {
+  date: string;
+  day: number;
+  value: number;
+}
+export interface PaymentsMonthChart {
+  month: string;
+  days_in_month: number;
+  today_day: number;
+  total_rub: number;
+  series: PaymentsMonthChartPoint[];
+}
