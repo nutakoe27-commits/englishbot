@@ -116,9 +116,8 @@ body,
 .srs-v2,
 .wrd-v2,
 .lp {
+  /* SOLID cream — точно как inner card popover'a со статистикой.
+   * Никаких grid-pattern на canvas — popover внутри сетку не имеет. */
   background-color: var(--bg);
-  background-image:
-    linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.07)) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.07)) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-image: none;
 }

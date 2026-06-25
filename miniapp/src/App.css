@@ -3632,9 +3632,9 @@ button {
  * darker dim backdrop через body. */
 @media (min-width: 768px) {
   body {
-    /* Тот же warm-dim backdrop что у .sub-screen популярки со статистикой
-     * (color-mix var(--text) 45% + cream) — солидный pre-resolved цвет. */
-    background-color: #9F968A;
+    /* ТОЧНО тот же цвет что у .sub-screen backdrop popover'a (см.
+     * components.css .sub-screen background) — color-mix(text 45%, bg-2). */
+    background: color-mix(in srgb, var(--text) 45%, var(--bg-2));
     background-image: none;
   }
   .app-shell {
