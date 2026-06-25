@@ -2486,7 +2486,8 @@ button {
   padding: 18px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
-  background: var(--bg-1);
+  background: #EFE7D6;
+  box-shadow: var(--shadow-card);
   font-size: 15px;
   line-height: 1.7;
   color: var(--text);
