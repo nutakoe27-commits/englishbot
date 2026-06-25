@@ -10,14 +10,22 @@
  *   words  — оверлей-список «Мои слова» (переиспользуем WordsScreen).
  *   error  — фейл сети/сервера + retry.
  *
- * Леrner-логика на бэке (Leitner box). UI просто шлёт correct: true|false
+ * Leitner-логика на бэке (Leitner box). UI просто шлёт correct: true|false
  * и показывает результат. См. backend/app/srs.py.
+ *
+ * UI v2: notebook-paper тон, sage layers-плитка, Source Serif counters,
+ * lucide-иконки в кнопках.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WebApp from "@twa-dev/sdk";
 import "./App.css";
 import { WordsScreen } from "./WordsScreen";
+import { NoteCard } from "./ds-react/NoteCard";
+import { Button } from "./ds-react/Button";
+import { SerifH } from "./ds-react/typography";
+import { Icon } from "./ds-react/Icon";
+import { useLucide } from "./lucide";
 
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
@@ -70,7 +78,7 @@ function formatNextDue(iso: string | null): string {
   }
 }
 
-export function SrsScreen({ onExit }: Props) {
+export function SrsScreen({ onExit: _onExit }: Props) {
   const initData = useMemo(() => WebApp.initData || "", []);
 
   const [phase, setPhase] = useState<Phase>("home");
@@ -86,11 +94,10 @@ export function SrsScreen({ onExit }: Props) {
   const sessionIdRef = useRef<string | null>(null);
   const sessionStartRef = useRef<number>(0);
   const heartbeatRef = useRef<number | null>(null);
-  // Самая дальняя next_due, чтобы показать в summary («следующий повтор не
-  // раньше чем …»). Берём max — то есть карточки в высоких боксах сдвигают её.
   const latestNextDueRef = useRef<string | null>(null);
 
-  // ── Загрузка stats при входе на home ─────────────────────────────────
+  useLucide(`${phase}-${idx}-${revealed}`);
+
   const loadStats = useCallback(async () => {
     try {
       const r = await fetch(
@@ -109,7 +116,6 @@ export function SrsScreen({ onExit }: Props) {
     if (phase === "home") void loadStats();
   }, [phase, loadStats]);
 
-  // ── Heartbeat пока в review ──────────────────────────────────────────
   useEffect(() => {
     if (phase !== "review") return;
     if (!sessionIdRef.current) return;
@@ -123,9 +129,7 @@ export function SrsScreen({ onExit }: Props) {
             session_id: sessionIdRef.current,
           }),
         });
-      } catch {
-        /* silent */
-      }
+      } catch { /* silent */ }
     };
     heartbeatRef.current = window.setInterval(tick, HEARTBEAT_MS);
     return () => {
@@ -136,13 +140,30 @@ export function SrsScreen({ onExit }: Props) {
     };
   }, [phase, initData]);
 
-  // ── Старт review-сессии ──────────────────────────────────────────────
+  const finishSessionSilent = useCallback(async () => {
+    if (!sessionIdRef.current) return;
+    const elapsedSec = Math.max(0, Math.round((Date.now() - sessionStartRef.current) / 1000));
+    try {
+      await fetch(`${API_BASE}/api/srs/session/finish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          init_data: initData,
+          session_id: sessionIdRef.current,
+          reviewed: 0,
+          correct: 0,
+          duration_sec: elapsedSec,
+        }),
+      });
+    } catch { /* silent */ }
+    finally { sessionIdRef.current = null; }
+  }, [initData]);
+
   const startReview = useCallback(async () => {
     if (busy) return;
     setBusy(true);
     setErrorText(null);
     try {
-      // 1. Открываем сессию (для presence + DailyUsage).
       const r1 = await fetch(`${API_BASE}/api/srs/session/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -153,7 +174,6 @@ export function SrsScreen({ onExit }: Props) {
       sessionIdRef.current = d1.session_id;
       sessionStartRef.current = Date.now();
 
-      // 2. Берём карточки.
       const r2 = await fetch(
         `${API_BASE}/api/srs/session?init_data=${encodeURIComponent(initData)}&limit=20`,
       );
@@ -161,8 +181,6 @@ export function SrsScreen({ onExit }: Props) {
       const d2 = (await r2.json()) as { cards: Card[] };
       const list = Array.isArray(d2.cards) ? d2.cards : [];
       if (list.length === 0) {
-        // На бэке решили что due_count > 0, но между stats и session кто-то
-        // успел всё повторить (или race). Просто покажем home.
         await finishSessionSilent();
         await loadStats();
         setPhase("home");
@@ -180,35 +198,8 @@ export function SrsScreen({ onExit }: Props) {
     } finally {
       setBusy(false);
     }
-  }, [busy, initData, loadStats]);
+  }, [busy, initData, loadStats, finishSessionSilent]);
 
-  // ── Тихо закрыть сессию (на случай race / ручного выхода) ────────────
-  const finishSessionSilent = useCallback(async () => {
-    if (!sessionIdRef.current) return;
-    const elapsedSec = Math.max(
-      0,
-      Math.round((Date.now() - sessionStartRef.current) / 1000),
-    );
-    try {
-      await fetch(`${API_BASE}/api/srs/session/finish`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          init_data: initData,
-          session_id: sessionIdRef.current,
-          reviewed: 0,
-          correct: 0,
-          duration_sec: elapsedSec,
-        }),
-      });
-    } catch {
-      /* silent */
-    } finally {
-      sessionIdRef.current = null;
-    }
-  }, [initData]);
-
-  // ── Ответ на карточку ────────────────────────────────────────────────
   const answer = useCallback(
     async (correct: boolean) => {
       if (busy) return;
@@ -234,19 +225,13 @@ export function SrsScreen({ onExit }: Props) {
             }
           }
         }
-        // Не блокируем UX на сетевую ошибку — просто продолжаем (хуже того,
-        // юзер увидит ту же карточку завтра, если ответ не записался).
         if (correct) setCorrectCount((c) => c + 1);
 
         const isLast = idx >= cards.length - 1;
         if (isLast) {
-          // Финализируем сессию.
           const reviewedTotal = cards.length;
           const correctTotal = correctCount + (correct ? 1 : 0);
-          const elapsedSec = Math.max(
-            0,
-            Math.round((Date.now() - sessionStartRef.current) / 1000),
-          );
+          const elapsedSec = Math.max(0, Math.round((Date.now() - sessionStartRef.current) / 1000));
           try {
             await fetch(`${API_BASE}/api/srs/session/finish`, {
               method: "POST",
@@ -259,9 +244,7 @@ export function SrsScreen({ onExit }: Props) {
                 duration_sec: elapsedSec,
               }),
             });
-          } catch {
-            /* silent */
-          }
+          } catch { /* silent */ }
           sessionIdRef.current = null;
           setSummary({
             reviewed: reviewedTotal,
@@ -280,7 +263,6 @@ export function SrsScreen({ onExit }: Props) {
     [busy, cards, idx, correctCount, initData],
   );
 
-  // ── Кнопки навигации ─────────────────────────────────────────────────
   const onBackToHome = useCallback(async () => {
     setSummary(null);
     setCards([]);
@@ -307,34 +289,40 @@ export function SrsScreen({ onExit }: Props) {
 
   if (phase === "error") {
     return (
-      <div className="srs-screen">
-        <div className="srs-card">
-          <p className="srs-error">{errorText ?? "Что-то пошло не так."}</p>
-          <button className="srs-btn srs-btn--primary" onClick={() => setPhase("home")}>
-            Назад
-          </button>
-        </div>
+      <div className="srs-v2">
+        <header className="srs-v2__top">
+          <span className="srs-v2__brand">
+            <span className="srs-v2__brand-icon"><Icon name="layers" size={18} /></span>
+            <SerifH as="h1" size={26}>Слова</SerifH>
+          </span>
+        </header>
+        <NoteCard padding={20} tone="warn">
+          <p style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>{errorText ?? "Что-то пошло не так."}</p>
+        </NoteCard>
+        <Button variant="primary" fullWidth onClick={() => setPhase("home")}>Назад</Button>
       </div>
     );
   }
 
   if (phase === "summary" && summary) {
     return (
-      <div className="srs-screen">
-        <div className="srs-card srs-summary">
-          <h2 className="srs-summary__title">Готово</h2>
-          <div className="srs-summary__score">
-            {summary.correct} / {summary.reviewed}
+      <div className="srs-v2">
+        <header className="srs-v2__top">
+          <span className="srs-v2__brand">
+            <span className="srs-v2__brand-icon"><Icon name="layers" size={18} /></span>
+            <SerifH as="h1" size={26}>Слова</SerifH>
+          </span>
+        </header>
+        <NoteCard padding="22px 20px" tone="sage" style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: 10 }}>
+          <SerifH as="h2" size={24}>Готово</SerifH>
+          <div className="srs-v2__score">
+            {summary.correct} <span className="srs-v2__score-sep">/</span> {summary.reviewed}
           </div>
-          <p className="srs-summary__note">
-            Следующий повтор: {formatNextDue(summary.next_due_at)}
-          </p>
-          <div className="srs-summary__actions">
-            <button className="srs-btn srs-btn--primary" onClick={onBackToHome}>
-              К списку слов
-            </button>
-          </div>
-        </div>
+          <p className="srs-v2__note">Следующий повтор: {formatNextDue(summary.next_due_at)}</p>
+        </NoteCard>
+        <Button variant="primary" fullWidth icon="arrow-left" onClick={onBackToHome}>
+          К списку слов
+        </Button>
       </div>
     );
   }
@@ -342,58 +330,56 @@ export function SrsScreen({ onExit }: Props) {
   if (phase === "review") {
     const card = cards[idx];
     if (!card) return null;
-    const progress = `${idx + 1} / ${cards.length}`;
     return (
-      <div className="srs-screen">
-        <div className="srs-review-top">
+      <div className="srs-v2">
+        <header className="srs-v2__top">
           <button
             type="button"
-            className="srs-back"
+            className="srs-v2__back"
             onClick={async () => {
               await finishSessionSilent();
               await loadStats();
               setPhase("home");
             }}
           >
-            ← Выйти
+            <Icon name="arrow-left" size={16} /> <span>Выйти</span>
           </button>
-          <span className="srs-progress">{progress}</span>
-        </div>
-        <div className="srs-card srs-flip">
-          <div className="srs-flip__word">{card.word}</div>
-          {!revealed && (
+          <span className="srs-v2__progress">{idx + 1} / {cards.length}</span>
+        </header>
+
+        <NoteCard padding="32px 24px" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 18, minHeight: 220 }}>
+          <div className="srs-v2__flip-word">{card.word}</div>
+          {!revealed ? (
+            <Button variant="secondary" onClick={() => setRevealed(true)} disabled={busy}>
+              Показать перевод
+            </Button>
+          ) : (
+            <div className="srs-v2__flip-translation">
+              {card.translation || <em>перевод не задан</em>}
+            </div>
+          )}
+        </NoteCard>
+
+        {revealed && (
+          <div className="srs-v2__answer-row">
             <button
-              className="srs-btn srs-btn--reveal"
-              onClick={() => setRevealed(true)}
+              type="button"
+              className="srs-v2__ans srs-v2__ans--dont"
+              onClick={() => void answer(false)}
               disabled={busy}
             >
-              Показать перевод
+              <Icon name="x" size={18} /> <span>Не знаю</span>
             </button>
-          )}
-          {revealed && (
-            <>
-              <div className="srs-flip__translation">
-                {card.translation || <em>перевод не задан</em>}
-              </div>
-              <div className="srs-actions">
-                <button
-                  className="srs-btn srs-btn--dont"
-                  onClick={() => void answer(false)}
-                  disabled={busy}
-                >
-                  Не знаю
-                </button>
-                <button
-                  className="srs-btn srs-btn--know"
-                  onClick={() => void answer(true)}
-                  disabled={busy}
-                >
-                  Знаю
-                </button>
-              </div>
-            </>
-          )}
-        </div>
+            <button
+              type="button"
+              className="srs-v2__ans srs-v2__ans--know"
+              onClick={() => void answer(true)}
+              disabled={busy}
+            >
+              <Icon name="check" size={18} /> <span>Знаю</span>
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -403,46 +389,40 @@ export function SrsScreen({ onExit }: Props) {
   const totalCount = stats?.total_count ?? 0;
   const limitCount = stats?.limit ?? 3000;
   return (
-    <div className="srs-screen">
-      <div className="srs-home-top">
-        <button type="button" className="srs-back" onClick={onExit}>
-          ← Назад
-        </button>
-        <h1 className="srs-home__title">📚 Слова</h1>
-      </div>
-      <div className="srs-card srs-home">
-        <div className="srs-stat">
-          <div className="srs-stat__num">{dueCount}</div>
-          <div className="srs-stat__label">готово к повтору</div>
+    <div className="srs-v2">
+      <header className="srs-v2__top">
+        <span className="srs-v2__brand">
+          <span className="srs-v2__brand-icon"><Icon name="layers" size={18} /></span>
+          <SerifH as="h1" size={26}>Слова</SerifH>
+        </span>
+      </header>
+
+      <NoteCard padding="22px 22px">
+        <div className="srs-v2__big">{dueCount}</div>
+        <div className="srs-v2__sub">готово к повтору</div>
+      </NoteCard>
+
+      <NoteCard padding="22px 22px">
+        <div className="srs-v2__big">
+          {totalCount} <span className="srs-v2__big-faint">/ {limitCount}</span>
         </div>
-        <div className="srs-stat srs-stat--muted">
-          <div className="srs-stat__num">
-            {totalCount} <span className="srs-stat__limit">/ {limitCount}</span>
-          </div>
-          <div className="srs-stat__label">в словаре</div>
-        </div>
-        {dueCount > 0 ? (
-          <button
-            className="srs-btn srs-btn--primary"
-            onClick={() => void startReview()}
-            disabled={busy}
-          >
-            Начать повторение
-          </button>
-        ) : (
-          <p className="srs-empty">
-            {totalCount === 0
-              ? "Словарь пуст. Добавь слова через «Мои слова» или тапни на слово в разговоре/подкасте."
-              : "Сегодня всё повторено. Возвращайся завтра 👋"}
-          </p>
-        )}
-        <button
-          className="srs-btn srs-btn--secondary"
-          onClick={() => setPhase("words")}
-        >
-          Мои слова
-        </button>
-      </div>
+        <div className="srs-v2__sub">в словаре</div>
+      </NoteCard>
+
+      {dueCount > 0 ? (
+        <Button variant="primary" size="lg" fullWidth icon="play" onClick={() => void startReview()} disabled={busy}>
+          Начать повторение
+        </Button>
+      ) : (
+        <p className="srs-v2__empty">
+          {totalCount === 0
+            ? "Словарь пуст. Добавь слова через «Мои слова» или тапни на слово в разговоре/подкасте."
+            : "Сегодня всё повторено. Возвращайся завтра 👋"}
+        </p>
+      )}
+      <Button variant="ghost" size="lg" fullWidth icon="book-marked" onClick={() => setPhase("words")}>
+        Мои слова
+      </Button>
     </div>
   );
 }

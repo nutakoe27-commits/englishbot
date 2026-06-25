@@ -7,9 +7,18 @@
  * REST:
  *   GET /api/me/progress?init_data=…       → {streak, total_*, daily_usage}
  *   GET /api/me/achievements?init_data=…   → {achievements: [...]}
+ *
+ * UI v2: warm cream notebook tab — animated flame streak, NoteCard'ы,
+ * sage bars + butter-yellow медали.
  */
 
 import { useEffect, useState } from "react";
+import { NoteCard } from "./ds-react/NoteCard";
+import { SerifH } from "./ds-react/typography";
+import { Badge } from "./ds-react/Badge";
+import { Icon } from "./ds-react/Icon";
+import { IconButton } from "./ds-react/IconButton";
+import { useLucide } from "./lucide";
 
 interface Props {
   apiBase: string;
@@ -49,6 +58,8 @@ export function ProgressScreen({ apiBase, initData, onClose }: Props) {
   const [achievements, setAchievements] = useState<Achievement[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  useLucide(`${progress ? "p" : "no"}-${achievements?.length ?? 0}`);
+
   useEffect(() => {
     let cancelled = false;
     const enc = encodeURIComponent;
@@ -73,166 +84,178 @@ export function ProgressScreen({ apiBase, initData, onClose }: Props) {
     };
   }, [apiBase, initData]);
 
-  // Высоту бара считаем относительно максимума за период; если макс 0 —
-  // 0 во всех барах, рисуем плоскую серую полоску.
   const maxMinutes = progress
     ? Math.max(1, ...progress.daily_usage.map((d) => d.minutes))
     : 1;
 
   return (
-    <div className="progress-modal" onClick={onClose}>
-      <div className="progress-modal__sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="progress-modal__header">
-          <h2 className="progress-modal__title">Мой прогресс</h2>
-          <button
-            type="button"
-            className="progress-modal__close"
-            onClick={onClose}
-            aria-label="Закрыть"
-          >
-            ✕
-          </button>
-        </div>
+    <div className="prog-v2">
+      <header className="prog-v2__top">
+        <SerifH as="h1" size={28}>Мой прогресс</SerifH>
+        <IconButton icon="x" size="md" label="Закрыть" onClick={onClose} />
+      </header>
 
-        {error && (
-          <div className="progress-modal__error">Не удалось загрузить: {error}</div>
-        )}
+      {error && (
+        <NoteCard padding={16} tone="warn">
+          <p style={{ margin: 0, fontSize: 14, color: "var(--text)" }}>
+            Не удалось загрузить: {error}
+          </p>
+        </NoteCard>
+      )}
 
-        {!error && progress === null && (
-          <div className="progress-modal__loading">Загружаем…</div>
-        )}
+      {!error && progress === null && (
+        <p className="prog-v2__loading">Загружаем…</p>
+      )}
 
-        {progress && (
-          <>
-            <div className="progress-streak">
-              <div className="progress-streak__icon">🔥</div>
+      {progress && (
+        <>
+          {/* ── Streak hero ─────────────────────────────────────────── */}
+          <NoteCard padding="20px 22px">
+            <div className="prog-v2__streak">
+              <div className="prog-v2__flame" aria-hidden>
+                <Icon name="flame" size={36} />
+              </div>
               <div>
-                <div className="progress-streak__value">
+                <div className="prog-v2__streak-val">
                   {progress.streak.current}
-                  <span className="progress-streak__unit"> дн.</span>
+                  <span className="prog-v2__streak-unit"> дн.</span>
                 </div>
-                <div className="progress-streak__sub">
+                <div className="prog-v2__streak-sub">
                   Рекорд: {progress.streak.best}
                 </div>
               </div>
             </div>
+          </NoteCard>
 
-            <div className="progress-metrics">
-              <Metric label="Минут практики" value={progress.total_minutes} />
-              <Metric label="Сессий" value={progress.total_sessions} />
-              <Metric label="Слов" value={progress.total_words} />
+          {/* ── 3 big stats ─────────────────────────────────────────── */}
+          <div className="prog-v2__row3">
+            <NoteCard padding="14px 14px">
+              <div className="prog-v2__stat-val">{progress.total_minutes}</div>
+              <div className="prog-v2__stat-label">Минут практики</div>
+            </NoteCard>
+            <NoteCard padding="14px 14px">
+              <div className="prog-v2__stat-val">{progress.total_sessions}</div>
+              <div className="prog-v2__stat-label">Сессий</div>
+            </NoteCard>
+            <NoteCard padding="14px 14px">
+              <div className="prog-v2__stat-val">{progress.total_words}</div>
+              <div className="prog-v2__stat-label">Слов</div>
+            </NoteCard>
+          </div>
+
+          {/* ── By mode ─────────────────────────────────────────────── */}
+          {(progress.speaking_minutes !== undefined ||
+            progress.listening_minutes !== undefined ||
+            progress.grammar_minutes !== undefined) && (
+            <NoteCard padding={0}>
+              <ByModeRow icon="mic" label="Разговор" value={`${progress.speaking_minutes ?? 0} мин`} first />
+              <ByModeRow icon="headphones" label="Слушание" value={`${progress.listening_minutes ?? 0} мин`} />
+              <ByModeRow icon="book-open" label="Грамматика" value={`${progress.grammar_minutes ?? 0} мин`} />
+            </NoteCard>
+          )}
+
+          {/* ── 30-day bars ─────────────────────────────────────────── */}
+          <NoteCard padding="18px 16px">
+            <SerifH as="h3" size={20} style={{ marginBottom: 14 }}>Последние 30 дней</SerifH>
+            <div className="prog-v2__bars">
+              {progress.daily_usage.map((d) => {
+                const heightPct = Math.round((d.minutes / maxMinutes) * 100);
+                const tall = d.minutes >= maxMinutes * 0.55;
+                return (
+                  <div
+                    key={d.date}
+                    className={`prog-v2__bar ${tall ? "is-tall" : ""}`}
+                    title={`${d.date}: ${d.minutes} мин`}
+                    style={{ height: `${Math.max(6, heightPct)}%` }}
+                  />
+                );
+              })}
             </div>
+          </NoteCard>
 
-            {(progress.speaking_minutes !== undefined ||
-              progress.listening_minutes !== undefined ||
-              progress.grammar_minutes !== undefined) && (
-              <div className="progress-breakdown">
-                <div className="progress-breakdown__row">
-                  <span className="progress-breakdown__emoji" aria-hidden>🎙️</span>
-                  <span className="progress-breakdown__label">Разговор</span>
-                  <span className="progress-breakdown__value">
-                    {progress.speaking_minutes ?? 0} мин
-                  </span>
-                </div>
-                <div className="progress-breakdown__row">
-                  <span className="progress-breakdown__emoji" aria-hidden>🎧</span>
-                  <span className="progress-breakdown__label">Слушание</span>
-                  <span className="progress-breakdown__value">
-                    {progress.listening_minutes ?? 0} мин
-                  </span>
-                </div>
-                <div className="progress-breakdown__row">
-                  <span className="progress-breakdown__emoji" aria-hidden>📝</span>
-                  <span className="progress-breakdown__label">Грамматика</span>
-                  <span className="progress-breakdown__value">
-                    {progress.grammar_minutes ?? 0} мин
-                  </span>
-                </div>
+          {/* ── Medals ──────────────────────────────────────────────── */}
+          <div>
+            <SerifH as="h3" size={20} style={{ marginBottom: 10 }}>Медали</SerifH>
+            {achievements === null ? (
+              <p className="prog-v2__loading">Загружаем…</p>
+            ) : (
+              <div className="prog-v2__medals">
+                {achievements.map((a) => (
+                  <MedalCard key={a.key} a={a} />
+                ))}
               </div>
             )}
-
-            <div className="progress-card">
-              <h3 className="progress-card__title">Последние 30 дней</h3>
-              <div className="daily-bars">
-                {progress.daily_usage.map((d) => {
-                  const heightPct = Math.round((d.minutes / maxMinutes) * 100);
-                  return (
-                    <div
-                      key={d.date}
-                      className="daily-bars__bar"
-                      title={`${d.date}: ${d.minutes} мин`}
-                    >
-                      <div
-                        className="daily-bars__fill"
-                        style={{ height: `${Math.max(2, heightPct)}%` }}
-                        data-empty={d.minutes === 0 ? "1" : "0"}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="progress-card">
-              <h3 className="progress-card__title">Медали</h3>
-              {achievements === null ? (
-                <div className="progress-modal__loading">Загружаем…</div>
-              ) : (
-                <div className="achievements-grid">
-                  {achievements.map((a) => (
-                    <AchievementCard key={a.key} a={a} />
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function ByModeRow({ icon, label, value, first }: { icon: string; label: string; value: string; first?: boolean }) {
   return (
-    <div className="progress-metric">
-      <div className="progress-metric__value">{value}</div>
-      <div className="progress-metric__label">{label}</div>
+    <div className={`prog-v2__bymode ${first ? "" : "has-divider"}`}>
+      <Icon name={icon} size={16} />
+      <span className="prog-v2__bymode-label">{label}</span>
+      <span className="prog-v2__bymode-val">{value}</span>
     </div>
   );
 }
 
-function AchievementCard({ a }: { a: Achievement }) {
+function MedalCard({ a }: { a: Achievement }) {
   const progressPct =
     a.target > 0 ? Math.min(100, Math.round((a.current_value / a.target) * 100)) : 0;
+  // Подбираем lucide-иконку по metric (мягкая эвристика, fallback на 'award').
+  const lucideIcon = _medalIcon(a.metric, a.icon);
   return (
-    <div className={`achievement ${a.earned ? "achievement--earned" : "achievement--locked"}`}>
-      <div className="achievement__icon" aria-hidden>
-        {a.icon}
-      </div>
-      <div className="achievement__body">
-        <div className="achievement__title">{a.title_ru}</div>
-        <div className="achievement__desc">{a.description_ru}</div>
-        {!a.earned && (
-          <>
-            <div
-              className="achievement__bar"
-              role="progressbar"
-              aria-valuenow={progressPct}
-              aria-valuemin={0}
-              aria-valuemax={100}
-            >
-              <div
-                className="achievement__bar-fill"
-                style={{ width: `${progressPct}%` }}
-              />
+    <NoteCard padding="12px 14px" style={{ opacity: a.earned ? 1 : 0.62 }}>
+      <div className="prog-v2__medal">
+        <span className={`prog-v2__medal-icon ${a.earned ? "is-on" : ""}`}>
+          <Icon name={lucideIcon} size={18} />
+        </span>
+        <div className="prog-v2__medal-body">
+          <div className="prog-v2__medal-name">{a.title_ru}</div>
+          <div className="prog-v2__medal-desc">{a.description_ru}</div>
+          {!a.earned && (
+            <>
+              <div className="prog-v2__medal-bar" role="progressbar" aria-valuenow={progressPct} aria-valuemin={0} aria-valuemax={100}>
+                <div className="prog-v2__medal-bar-fill" style={{ width: `${progressPct}%` }} />
+              </div>
+              <div className="prog-v2__medal-pct">{a.current_value} / {a.target}</div>
+            </>
+          )}
+          {a.earned && (
+            <div style={{ marginTop: 6 }}>
+              <Badge tone="speak" icon="check">Получено</Badge>
             </div>
-            <div className="achievement__progress-text">
-              {a.current_value} / {a.target}
-            </div>
-          </>
-        )}
-        {a.earned && <div className="achievement__earned-badge">Получено ✓</div>}
+          )}
+        </div>
       </div>
-    </div>
+    </NoteCard>
   );
+}
+
+function _medalIcon(metric: string, fallbackEmoji: string): string {
+  switch (metric) {
+    case "speaking_sessions":
+    case "speaking_minutes":
+      return "mic";
+    case "listening_sessions":
+    case "listening_minutes":
+      return "headphones";
+    case "grammar_lessons":
+    case "grammar_minutes":
+      return "book-open";
+    case "srs_reviews":
+    case "vocab_words":
+      return "layers";
+    case "streak_days":
+      return "flame";
+    case "total_minutes":
+      return "clock";
+    default:
+      // Эмодзи из бэкенда (🔥/🎯/🏅) — если не сопоставили, всё равно
+      // рендерим award-иконку, иначе попадает «название» icon-name в lucide.
+      return fallbackEmoji && fallbackEmoji.length === 1 ? "award" : "award";
+  }
 }

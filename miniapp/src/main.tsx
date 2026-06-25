@@ -1,6 +1,15 @@
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import WebApp from "@twa-dev/sdk";
+// Design System: токены (palette, typography, spacing) + .et-* компоненты.
+// Импортируется ПЕРВЫМ, чтобы App.css и Landing.css могли использовать
+// var(--bg/--text/--accent/--space-*/--radius-*).
+import "./ds/styles.css";
+// Стили dsx-* компонентов (Button/Card/Chip/Switch/TopBar/etc), используются в
+// новых экранах фаз 1+ ребрендинга на v2 дизайн-систему.
+import "./ds-react/components.css";
+import { initTheme } from "./theme";
+initTheme();
 import App from "./App";
 import { BattleScreen } from "./BattleScreen";
 import { ModeSelector, type Mode } from "./ModeSelector";
@@ -9,6 +18,12 @@ import { GrammarScreen } from "./GrammarScreen";
 import { SrsScreen } from "./SrsScreen";
 import { LoginScreen } from "./LoginScreen";
 import { LandingScreen } from "./LandingScreen";
+import { BottomNav } from "./BottomNav";
+import { AccountSheet } from "./AccountSheet";
+import { ProgressScreen } from "./ProgressScreen";
+import { SubscribeScreen } from "./SubscribeScreen";
+import { OnboardingModal } from "./OnboardingModal";
+import type { TabKey } from "./tabs";
 import {
   extractYandexCallback,
   installFetchAuth,
@@ -86,7 +101,9 @@ type AuthState = "loading" | "authed" | "login";
 function Root() {
   // Хуки всегда первыми, до условных return — иначе React 18 в проде может
   // выкинуть «rendered fewer hooks than expected».
-  const [screen, setScreen] = useState<Mode | "selector">("selector");
+  // Стартовый экран определяется один раз по deep-link (battle / srs / mode).
+  // TabShell дальше владеет state'ом таба и mode'а.
+  const [screen] = useState<Mode | "selector">("selector");
   const [startParam] = useState<string>(() => readStartParam());
   const [auth, setAuth] = useState<AuthState>("loading");
   // На вебе для не-залогиненных показываем сначала Landing, по клику
@@ -148,12 +165,106 @@ function Root() {
     );
   }
 
-  const backToSelector = () => setScreen("selector");
-  if (screen === "speaking") return <App onExit={backToSelector} />;
-  if (screen === "listening") return <ListeningScreen onExit={backToSelector} />;
-  if (screen === "grammar") return <GrammarScreen onExit={backToSelector} />;
-  if (screen === "srs") return <SrsScreen onExit={backToSelector} />;
-  return <ModeSelector onPick={setScreen} onLoggedOut={() => { setShowLogin(false); setAuth("login"); }} />;
+  return (
+    <TabShell
+      initialTab={
+        screen === "srs"
+          ? "words"
+          : screen === "selector"
+            ? "home"
+            : undefined
+      }
+      initialMode={
+        screen === "speaking" || screen === "listening" || screen === "grammar"
+          ? screen
+          : null
+      }
+      onLoggedOut={() => { setShowLogin(false); setAuth("login"); }}
+    />
+  );
+}
+
+function TabShell({
+  initialTab,
+  initialMode,
+  onLoggedOut,
+}: {
+  initialTab?: TabKey;
+  initialMode?: Mode | null;
+  onLoggedOut: () => void;
+}) {
+  // mode != null → юзер в тренировочном экране (Speaking/Listening/Grammar).
+  // В этом случае ни один tab не подсвечен в BottomNav.
+  // Клик по любому tab → выходим из mode и переключаемся.
+  const [tab, setTab] = useState<TabKey>(initialTab ?? "home");
+  const [mode, setMode] = useState<Mode | null>(initialMode ?? null);
+  const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
+  const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
+
+  const switchTab = (next: TabKey) => {
+    setMode(null);
+    setTab(next);
+  };
+  const exitMode = () => setMode(null);
+
+  let body: React.ReactNode;
+  if (mode === "speaking") {
+    body = <App onExit={exitMode} />;
+  } else if (mode === "listening") {
+    body = <ListeningScreen onExit={exitMode} />;
+  } else if (mode === "grammar") {
+    body = <GrammarScreen onExit={exitMode} />;
+  } else if (tab === "home") {
+    body = (
+      <ModeSelector
+        onPick={(m) => {
+          if (m === "srs") { setTab("words"); return; }
+          setMode(m);
+        }}
+        onLoggedOut={onLoggedOut}
+      />
+    );
+  } else if (tab === "progress") {
+    body = (
+      <ProgressScreen
+        apiBase={(import.meta.env.VITE_API_BASE as string) || "https://api-english.krichigindocs.ru"}
+        initData={WebApp.initData || ""}
+        onClose={() => setTab("home")}
+      />
+    );
+  } else if (tab === "words") {
+    body = <SrsScreen onExit={() => setTab("home")} />;
+  } else {
+    body = (
+      <AccountSheet
+        embedded
+        onLoggedOut={onLoggedOut}
+        onOpenSubscribe={() => setSubscribeOpen(true)}
+        onOpenTutorial={() => setOnboardingManual(true)}
+      />
+    );
+  }
+
+  // В режиме тренировки ни один таб не активен — но нав видна и кликабельна.
+  // При клике exit'имся из mode и переключаемся.
+  const activeForNav: TabKey | undefined = mode ? undefined : tab;
+
+  return (
+    <div className="app-shell">
+      <div className="app-shell__body">{body}</div>
+      <BottomNav active={activeForNav as TabKey} onChange={switchTab} />
+      {subscribeOpen && (
+        <SubscribeScreen onClose={() => setSubscribeOpen(false)} />
+      )}
+      {onboardingManual && (
+        <OnboardingModal
+          open
+          markDoneOnFinish={false}
+          onClose={() => setOnboardingManual(false)}
+        />
+      )}
+    </div>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

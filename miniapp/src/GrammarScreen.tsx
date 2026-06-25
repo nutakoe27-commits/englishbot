@@ -23,6 +23,7 @@ import "./App.css";
 import { GrammarExercise, type Exercise } from "./GrammarExercise";
 import { ProgressScreen } from "./ProgressScreen";
 import { WordsScreen } from "./WordsScreen";
+import { ModalScreen } from "./ModalScreen";
 import { LockScreen } from "./LockScreen";
 import { SubscribeScreen } from "./SubscribeScreen";
 import {
@@ -31,6 +32,10 @@ import {
   type GrammarSettings,
 } from "./grammarSettings";
 import { loadSettings as loadTutorSettings } from "./tutorSettings";
+import { IconButton } from "./ds-react/IconButton";
+import { SerifH } from "./ds-react/typography";
+import { Icon } from "./ds-react/Icon";
+import { useLucide } from "./lucide";
 
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
@@ -178,6 +183,7 @@ export function GrammarScreen({ onExit }: Props) {
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
   const inTelegram = !!WebApp.initData;
   const abortRef = useRef<AbortController | null>(null);
+  useLucide(`${progressOpen}-${wordsOpen}-${paywall}`);
 
   // Learn-трек
   const [topicLevels, setTopicLevels] = useState<Record<string, TopicInfo[]> | null>(null);
@@ -540,40 +546,21 @@ export function GrammarScreen({ onExit }: Props) {
       <div className="bg-orb bg-orb--one" aria-hidden />
       <div className="bg-orb bg-orb--two" aria-hidden />
 
-      <header className="tutor-header">
-        <div className="tutor-brand">
-          <button
-            type="button"
-            className="icon-button tutor-back"
-            onClick={handleBack}
-            aria-label="Назад"
-            title="Назад"
-          >
-            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>←</span>
-          </button>
-          <span className="tutor-brand__dot" aria-hidden />
-          <span className="tutor-brand__name">Грамматика</span>
+      <header className="mode-v2-top">
+        <button type="button" className="mode-v2-back" onClick={handleBack} aria-label="Назад">
+          <Icon name="arrow-left" size={16} />
+          <span>Назад</span>
+        </button>
+        <div className="mode-v2-title">
+          <span className="mode-v2-title__icon mode-v2-title__icon--warn">
+            <Icon name="book-open" size={16} />
+          </span>
+          <SerifH as="h1" size={22}>Грамматика</SerifH>
         </div>
-        <div className="tutor-header__right">
-          <p className="tutor-hello">Hi, {userName}</p>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setProgressOpen(true)}
-            aria-label="Мой прогресс"
-            title="Мой прогресс"
-          >
-            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>📊</span>
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setWordsOpen(true)}
-            aria-label="Мои слова"
-            title="Мои слова"
-          >
-            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>📖</span>
-          </button>
+        <div className="mode-v2-actions">
+          <span className="mode-v2-hello">Hi, {userName}</span>
+          <IconButton icon="chart-no-axes-column" size="sm" label="Мой прогресс" onClick={() => setProgressOpen(true)} />
+          <IconButton icon="book-marked" size="sm" label="Мои слова" onClick={() => setWordsOpen(true)} />
         </div>
       </header>
 
@@ -875,14 +862,18 @@ export function GrammarScreen({ onExit }: Props) {
       </main>
 
       {wordsOpen && (
-        <WordsScreen apiBase={API_BASE} onClose={() => setWordsOpen(false)} />
+        <ModalScreen>
+          <WordsScreen apiBase={API_BASE} onClose={() => setWordsOpen(false)} />
+        </ModalScreen>
       )}
       {progressOpen && (
-        <ProgressScreen
-          apiBase={API_BASE}
-          initData={WebApp.initData || ""}
-          onClose={() => setProgressOpen(false)}
-        />
+        <ModalScreen>
+          <ProgressScreen
+            apiBase={API_BASE}
+            initData={WebApp.initData || ""}
+            onClose={() => setProgressOpen(false)}
+          />
+        </ModalScreen>
       )}
 
       {paywall && (
@@ -891,7 +882,7 @@ export function GrammarScreen({ onExit }: Props) {
           botUsername={BOT_USERNAME}
           message="Бесплатные уроки грамматики на сегодня закончились. С подпиской — без лимитов."
           onDismiss={() => setPaywall(false)}
-          onOpenSubscribe={inTelegram ? undefined : () => setSubscribeOpen(true)}
+          onOpenSubscribe={() => setSubscribeOpen(true)}
         />
       )}
 

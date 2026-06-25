@@ -1,32 +1,27 @@
-/* ─── Дизайн-токены ─────────────────────────────────────────────── */
+/* ─── Дизайн-токены ───────────────────────────────────────────────
+ * После интеграции DS (ds/styles.css импортируется в main.tsx первым):
+ * значения локальных переменных мапятся на DS-токены, чтобы вся существующая
+ * разметка автоматически получила новую палитру (warm-neutrals + coral) и
+ * поддержку light/dark темы. Имена локальных переменных сохранены, чтобы
+ * не трогать 3500+ строк ниже. Локальные «акценты» (accent/record/speak)
+ * мапятся через коралл/изумруд из DS.
+ */
 :root {
-  --bg-0: #0b0d12;
-  --bg-1: #12151c;
-  --bg-2: #181c25;
-  --border: rgba(255, 255, 255, 0.06);
-  --border-strong: rgba(255, 255, 255, 0.1);
-  --text: #e8eaf0;
-  --text-dim: #8a91a0;
-  --text-faint: #545b6b;
+  --bg-0: var(--bg);
+  --bg-1: var(--surface);
+  --bg-2: var(--surface-2);
+  /* --border и --border-strong наследуются из DS как есть. */
+  /* --text и --text-dim — тоже из DS; --text-faint тоже. */
 
-  --accent: #7c5cff;          /* фиолетовый акцент */
-  --accent-soft: #a18aff;
-  --accent-glow: rgba(124, 92, 255, 0.35);
+  --accent-glow: var(--accent-ring);
+  --record: var(--record);
+  --record-glow: var(--accent-ring);
+  --speak-glow: var(--speak-soft);
 
-  --record: #ff5470;          /* алый для записи */
-  --record-glow: rgba(255, 84, 112, 0.4);
-
-  --speak: #33d9a6;           /* мятный для озвучки */
-  --speak-glow: rgba(51, 217, 166, 0.35);
-
-  --warn: #ffb13d;
-  --error: #ff6565;
-
-  --radius-lg: 22px;
-  --radius-md: 16px;
-  --radius-sm: 10px;
-
-  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* Радиусы и easing из DS. Старые имена → новые значения. */
+  --radius-lg: var(--radius-xl);
+  --radius-md: var(--radius-lg);
+  --radius-sm: var(--radius-md);
 }
 
 /* ─── Базовый сброс ──────────────────────────────────────────────── */
@@ -39,13 +34,22 @@ html, body, #root {
   padding: 0;
   height: 100%;
   overscroll-behavior: none;
-  /* Блокируем скролл всей страницы — внутри скроллится только лог диалога */
+  /* Блокируем скролл всей страницы — внутри скроллится только лог диалога.
+   * На desktop (≥768px, ниже в @media) отпускаем — там скроллит окно. */
   overflow: hidden;
+}
+@media (min-width: 768px) {
+  html, body, #root {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-  background: var(--bg-0);
+  /* Шрифт UI из DS (Golos Text, кириллица из коробки). */
+  font-family: var(--font-ui);
+  background-color: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
@@ -73,10 +77,7 @@ button {
   /* шапка / лог (занимает всё оставшееся) / футер с кнопкой */
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 16px;
-  background:
-    radial-gradient(1200px 600px at 50% -200px, rgba(124, 92, 255, 0.15), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
-    var(--bg-0);
+  background-color: var(--bg);
   overflow: hidden;
 }
 
@@ -94,14 +95,14 @@ button {
   height: 280px;
   top: -80px;
   left: -60px;
-  background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+  background: transparent;
 }
 .bg-orb--two {
   width: 240px;
   height: 240px;
   bottom: 80px;
   right: -80px;
-  background: radial-gradient(circle, var(--speak) 0%, transparent 70%);
+  background: transparent;
 }
 
 /* ─── Шапка ──────────────────────────────────────────────────────── */
@@ -159,7 +160,7 @@ button {
   flex-direction: column;
   gap: 10px;
   padding: 18px;
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   scroll-behavior: smooth;
@@ -238,8 +239,8 @@ button {
 /* Replay-кнопка ▶ рядом с лейблом "Tutor". */
 .msg__replay {
   appearance: none;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
   color: var(--text);
   border-radius: 999px;
   width: 20px;
@@ -261,15 +262,15 @@ button {
 
 .msg--user {
   align-self: flex-end;
-  background: linear-gradient(135deg, rgba(124, 92, 255, 0.22), rgba(124, 92, 255, 0.1));
-  border: 1px solid rgba(124, 92, 255, 0.3);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-soft);
 }
 .msg--user .msg__role {
-  color: var(--accent-soft);
+  color: var(--accent);
 }
 .msg--tutor {
   align-self: flex-start;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-2);
   border: 1px solid var(--border-strong);
 }
 .msg--tutor .msg__role {
@@ -348,8 +349,8 @@ button {
   height: 140px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(135deg, #1d2130, #14171f);
-  color: var(--accent-soft);
+  background: var(--surface-2);
+  color: var(--accent);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -361,7 +362,7 @@ button {
     background 220ms var(--ease),
     box-shadow 220ms var(--ease);
   box-shadow:
-    0 18px 40px -12px rgba(0, 0, 0, 0.7),
+    0 18px 40px -12px var(--shadow-lg),
     0 0 0 1px var(--border-strong) inset,
     0 30px 60px -20px var(--accent-glow);
 }
@@ -395,7 +396,7 @@ button {
 /* ── Вариант: idle / connected — готов к записи ── */
 .talk-button[data-variant="idle"],
 .talk-button[data-variant="connected"] {
-  color: var(--accent-soft);
+  color: var(--accent);
 }
 .talk-button[data-variant="idle"] .talk-button__ring,
 .talk-button[data-variant="connected"] .talk-button__ring {
@@ -406,9 +407,9 @@ button {
 /* ── Вариант: recording — пульсирующий красный ── */
 .talk-button[data-variant="recording"] {
   color: var(--record);
-  background: linear-gradient(135deg, #2a1820, #1a1013);
+  background: var(--surface-2);
   box-shadow:
-    0 18px 40px -12px rgba(0, 0, 0, 0.7),
+    0 18px 40px -12px var(--shadow-lg),
     0 0 0 1px rgba(255, 84, 112, 0.3) inset,
     0 0 80px var(--record-glow);
 }
@@ -423,7 +424,7 @@ button {
    достаточно неподвижного индикатора + сменившегося цвета фона. ── */
 .talk-button[data-variant="speaking"] {
   color: var(--speak);
-  background: linear-gradient(135deg, #152520, #101814);
+  background: var(--surface-2);
 }
 .talk-button[data-variant="speaking"] .talk-button__ring {
   border-color: var(--speak);
@@ -448,9 +449,9 @@ button {
 .talk-button[data-variant="denied"],
 .talk-button[data-variant="error"] {
   color: var(--text-faint);
-  background: linear-gradient(135deg, #171a22, #10131a);
+  background: var(--surface-2);
   box-shadow:
-    0 18px 40px -12px rgba(0, 0, 0, 0.7),
+    0 18px 40px -12px var(--shadow-lg),
     0 0 0 1px var(--border-strong) inset;
 }
 .talk-button[data-variant="denied"] .talk-button__ring,
@@ -504,7 +505,7 @@ button {
 .link-button:active {
   color: var(--text);
   border-color: var(--accent);
-  background: rgba(124, 92, 255, 0.08);
+  background: var(--accent-soft);
 }
 
 /* ─── Маленькие экраны ────────────────────────────────────────── */
@@ -545,19 +546,17 @@ button {
   height: 36px;
   flex-shrink: 0;   /* иконки фиксированы — ужимается только имя юзера */
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-accent);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-dim);
+  background: var(--accent-tint);              /* solid sage пастель */
+  color: var(--accent-deep);
   cursor: pointer;
   transition: color 160ms ease, background 160ms ease, border-color 160ms ease,
     transform 120ms ease;
   -webkit-tap-highlight-color: transparent;
 }
 .icon-button:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.14);
+  background: var(--accent-tint-strong);
 }
 .icon-button:active {
   transform: scale(0.94);
@@ -569,14 +568,44 @@ button {
 .sheet-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 100;
-  background: rgba(6, 8, 14, 0.62);
+  z-index: 300;                  /* выше BottomNav (z-index 100), иначе нав перебивает футер шита */
+  background: color-mix(in srgb, var(--ink-900) 55%, transparent);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: flex-end;
   justify-content: center;
   animation: sheet-fade-in 180ms ease-out;
+}
+
+/* ─── .modal-screen — обёртка для ProgressScreen/WordsScreen, когда они
+ * открываются ПОВЕРХ Speaking/Listening/Grammar (а не как tab). Solid
+ * warm-wheat фон с grid'ом, полностью перекрывает экран под собой.
+ * !important чтобы перебить любые tutor-app-локальные правила. */
+.modal-screen {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 500 !important;
+  background-color: var(--bg) !important;
+  background-image:
+    linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.05)) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.05)) 1px, transparent 1px) !important;
+  background-size: 24px 24px !important;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  isolation: isolate;             /* собственный stacking-context */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.modal-screen > * {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: auto;
+  /* inner экран НЕ должен сам иметь свой fixed bg-grid (даблирует) */
+  background: transparent !important;
+  background-image: none !important;
 }
 
 @keyframes sheet-fade-in {
@@ -590,15 +619,12 @@ button {
   max-height: 86dvh;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(
-    180deg,
-    rgba(24, 26, 36, 0.98) 0%,
-    rgba(17, 19, 27, 0.98) 100%
-  );
+  background: var(--surface);
+  color: var(--text);
   border-top-left-radius: 22px;
   border-top-right-radius: 22px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 -20px 60px rgba(0, 0, 0, 0.55);
+  border-top: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-xl);
   animation: sheet-slide-up 260ms cubic-bezier(0.22, 0.8, 0.32, 1);
   overflow: hidden;
 }
@@ -614,7 +640,7 @@ button {
   align-items: center;
   justify-content: space-between;
   padding: 18px 20px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--surface-2);
 }
 .sheet__header::before {
   content: "";
@@ -625,7 +651,7 @@ button {
   width: 40px;
   height: 4px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--border-strong);
 }
 .sheet__title {
   margin: 0;
@@ -651,7 +677,7 @@ button {
 }
 .sheet__close:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
 }
 
 .sheet__content {
@@ -666,7 +692,7 @@ button {
 }
 .sheet__content::-webkit-scrollbar { width: 6px; }
 .sheet__content::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--border-strong);
   border-radius: 3px;
 }
 
@@ -675,7 +701,7 @@ button {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   padding: 12px 20px calc(14px + env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--surface-2);
 }
 
 /* ─── Группы настроек ─── */
@@ -699,89 +725,91 @@ button {
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
   gap: 6px;
-  padding: 4px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 0;                                /* убрал внутренний padding — items сами с border */
+  border-radius: 0;
+  background: transparent;
+  border: 0;
 }
 .segmented__item {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 10px 6px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
+  padding: 8px 6px;
+  border: 1px solid var(--border-strong);    /* как у role-chip — явная обводка inactive */
+  border-radius: 10px;
+  background: var(--bg-2);
   color: var(--text-dim);
   cursor: pointer;
-  transition: background 160ms ease, color 160ms ease, transform 120ms ease;
+  transition: background 160ms ease, color 160ms ease, transform 120ms ease,
+    border-color 160ms ease;
   -webkit-tap-highlight-color: transparent;
+  min-height: 40px;
 }
 .segmented__item:active {
   transform: scale(0.97);
 }
 .segmented__item.is-active {
-  background: linear-gradient(180deg, rgba(124, 92, 255, 0.28), rgba(124, 92, 255, 0.16));
-  color: var(--text);
-  box-shadow: 0 2px 12px rgba(124, 92, 255, 0.28),
-    inset 0 0 0 1px rgba(161, 138, 255, 0.35);
+  background: var(--accent-tint-strong);
+  color: var(--accent-deep);
+  border-color: var(--border-accent);
+  box-shadow: none;
 }
 .segmented__label {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.1px;
 }
 .segmented__hint {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-faint);
   line-height: 1.2;
 }
 .segmented__item.is-active .segmented__hint {
-  color: var(--accent-soft);
+  color: var(--accent-deep);
 }
 
 /* ─── Роль — сетка карточек-чипов ─── */
 .role-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
 }
 .role-chip {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 12px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-dim);
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-2);
+  color: var(--text);
   cursor: pointer;
   transition: border-color 160ms ease, background 160ms ease, color 160ms ease,
     transform 120ms ease;
   -webkit-tap-highlight-color: transparent;
-  min-height: 72px;
+  min-height: 40px;
 }
 .role-chip:active {
   transform: scale(0.96);
 }
 .role-chip.is-active {
-  border-color: rgba(161, 138, 255, 0.55);
-  background: linear-gradient(180deg, rgba(124, 92, 255, 0.22), rgba(124, 92, 255, 0.10));
-  color: var(--text);
-  box-shadow: 0 2px 14px rgba(124, 92, 255, 0.22);
+  border-color: var(--border-accent);
+  background: var(--accent-tint-strong);   /* solid sage */
+  color: var(--accent-deep);
 }
 .role-chip__emoji {
   font-size: 22px;
   line-height: 1;
+  flex-shrink: 0;
 }
 .role-chip__label {
-  font-size: 11px;
-  font-weight: 500;
-  text-align: center;
-  line-height: 1.2;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  line-height: 1.25;
 }
 
 @media (max-width: 380px) {
@@ -792,9 +820,9 @@ button {
   margin-top: 4px;
   width: 100%;
   padding: 12px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-2);
   color: var(--text);
   font-size: 14px;
   font-family: inherit;
@@ -805,8 +833,8 @@ button {
   color: var(--text-faint);
 }
 .sheet-input:focus {
-  border-color: rgba(161, 138, 255, 0.55);
-  background: rgba(124, 92, 255, 0.08);
+  border-color: var(--border-accent);
+  background: var(--accent-soft);
 }
 
 /* ─── Switch-row (toggle корректировок) ─── */
@@ -815,28 +843,28 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 .switch-row__text {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
 }
 .switch-row__title {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13.5px;
+  font-weight: 600;
   color: var(--text);
 }
 .switch-row__hint {
-  font-size: 12px;
-  color: var(--text-faint);
+  font-size: 11.5px;
+  color: var(--text-dim);
   line-height: 1.35;
 }
 .switch-row__input {
@@ -852,7 +880,7 @@ button {
   width: 44px;
   height: 26px;
   border-radius: 13px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--border-strong);
   transition: background 180ms ease;
 }
 .switch::after {
@@ -900,19 +928,19 @@ button {
 .btn--primary {
   background: var(--accent);
   color: #fff;
-  box-shadow: 0 4px 20px rgba(124, 92, 255, 0.35);
+  box-shadow: 0 4px 20px var(--accent-border);
 }
 .btn--primary:hover:not(:disabled) {
   background: var(--accent-soft);
 }
 
 .btn--ghost {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-2);
   color: var(--text);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-strong);
 }
 .btn--ghost:hover {
-  background: rgba(255, 255, 255, 0.09);
+  background: var(--border-strong);
 }
 
 .sheet-note {
@@ -977,15 +1005,15 @@ button {
   width: 100%;
   max-width: 640px;
   justify-self: center;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
   border-radius: 22px;
   padding: 8px 8px 8px 14px;
   transition: border-color 160ms var(--ease), background 160ms var(--ease);
 }
 .chat-composer:focus-within {
-  border-color: var(--accent-soft);
-  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--accent);
+  background: var(--surface-2);
 }
 
 .chat-composer__input {
@@ -1031,7 +1059,7 @@ button {
   transform: scale(0.95);
 }
 .chat-composer__send:disabled {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--border-strong);
   color: var(--text-faint);
   cursor: not-allowed;
 }
@@ -1043,14 +1071,14 @@ button {
 .lock-screen {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 250;       /* выше BottomNav (100) и .modal-screen (250 — одного уровня ок) */
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(11, 13, 18, 0.88);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: color-mix(in srgb, var(--text) 45%, transparent);  /* warm dim, не пиксельно-чёрный */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   opacity: 0;
   transition: opacity 240ms var(--ease);
 }
@@ -1061,14 +1089,15 @@ button {
 .lock-screen__card {
   max-width: 420px;
   width: 100%;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
   border-radius: 20px;
   padding: 28px 24px;
   text-align: center;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  box-shadow: var(--shadow-card);
 }
 
 .lock-screen__icon {
@@ -1099,8 +1128,8 @@ button {
 .lock-screen__price {
   flex: 1 1 0;
   min-width: 0;
-  background: rgba(124, 92, 255, 0.1);
-  border: 1px solid rgba(124, 92, 255, 0.3);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-soft);
   border-radius: 12px;
   padding: 12px 6px;
   display: flex;
@@ -1111,7 +1140,7 @@ button {
 .lock-screen__price-amount {
   font-size: 16px;
   font-weight: 600;
-  color: var(--accent-soft);
+  color: var(--accent);
   white-space: nowrap;
 }
 .lock-screen__price-period {
@@ -1151,7 +1180,7 @@ button {
   border: none;
   padding: 0;
   font: inherit;
-  color: var(--accent-soft);
+  color: var(--accent);
   font-weight: 600;
   cursor: pointer;
   text-decoration: underline;
@@ -1175,8 +1204,8 @@ button {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
   font-size: 12px;
   color: var(--text-dim);
@@ -1198,7 +1227,7 @@ button {
 
 .tap-word {
   cursor: pointer;
-  border-bottom: 1px dotted rgba(255, 255, 255, 0.25);
+  border-bottom: 1px dotted var(--border-strong);
   transition: color 0.15s, border-bottom-color 0.15s;
   -webkit-tap-highlight-color: transparent;
 }
@@ -1212,14 +1241,14 @@ button {
 .translate-popover {
   position: fixed;
   z-index: 60;
-  background: #1a1f36;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: var(--surface-raise);
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
   padding: 10px 14px;
   min-width: 140px;
   font-size: 14px;
-  color: #fff;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
   animation: translate-popover-in 0.12s ease-out;
 }
 
@@ -1238,26 +1267,26 @@ button {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-dim);
   margin-bottom: 4px;
 }
 
 .translate-popover__primary {
   font-weight: 600;
-  color: #d4caff;
+  color: var(--accent);
   font-size: 15px;
 }
 
 .translate-popover__alt {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text);
   margin-top: 4px;
 }
 
 .translate-popover__loading,
 .translate-popover__error {
   font-style: italic;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-dim);
 }
 
 /* ─── Correction (мини-подсветка над репликой тьютора) ──────────────── */
@@ -1267,10 +1296,10 @@ button {
   align-items: flex-start;
   padding: 6px 10px;
   margin: 4px 0 2px;
-  background: rgba(255, 215, 0, 0.12);
-  border: 1px solid rgba(255, 215, 0, 0.35);
+  background: var(--warn-tint);                /* solid butter cream */
+  border: 1px solid rgba(217, 184, 74, 0.45);
   border-radius: 8px;
-  color: #ffe28a;
+  color: var(--text);                          /* warm-dark, читабельно на cream */
   font-size: 14px;
   font-style: italic;
   line-height: 1.35;
@@ -1280,6 +1309,7 @@ button {
   line-height: 1.5;
   font-style: normal;
   flex-shrink: 0;
+  color: #8a6f1a;
 }
 
 /* Diff внутри correction-плашки. */
@@ -1288,23 +1318,23 @@ button {
   font-style: normal;
 }
 .msg__correction-diff del {
-  color: #ff9c9c;
+  color: var(--record);                        /* dusty rose вместо bright pink */
   text-decoration: line-through;
   text-decoration-thickness: 1.5px;
-  text-decoration-color: rgba(255, 156, 156, 0.7);
-  opacity: 0.85;
+  text-decoration-color: rgba(184, 92, 92, 0.7);
+  opacity: 0.95;
 }
 .msg__correction-diff ins {
-  color: #b8ffc4;
+  color: var(--accent-deep);                   /* mossy green вместо bright green */
   text-decoration: none;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 /* Кнопка «🤔 почему?» в плашке correction. */
 .msg__correction-why {
   appearance: none;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
   color: var(--text);
   border-radius: 999px;
   width: 24px;
@@ -1322,8 +1352,8 @@ button {
 }
 .msg__correction-why:hover,
 .msg__correction-why:active {
-  background: rgba(164, 137, 255, 0.25);
-  border-color: rgba(164, 137, 255, 0.55);
+  background: var(--accent-tint);
+  border-color: var(--border-accent);
 }
 
 /* ExplainPopover — переиспользует базовый translate-popover класс,
@@ -1338,27 +1368,29 @@ button {
 
 /* ─── Post-session summary overlay ──────────────────────────────────── */
 .summary-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(8, 10, 18, 0.92);
-  backdrop-filter: blur(6px);
-  z-index: 50;
+  /* SessionSummary рендерится внутри ModalScreen → .sub-screen уже фиксирует
+   * overlay. Здесь только flex-обёртка без position: fixed / backdrop'а. */
+  position: static;
+  background: transparent;
+  backdrop-filter: none;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
-  padding: 24px 16px;
-  overflow-y: auto;
+  align-items: stretch;
+  padding: 0;
+  overflow: visible;
+  width: 100%;
 }
 .summary-card {
   width: 100%;
   max-width: 460px;
-  background: var(--bg, #14182a);
-  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+  background: var(--surface-popup);
+  border: 1px solid var(--border-strong);
   border-radius: 16px;
   padding: 22px 20px 18px;
   display: flex;
   flex-direction: column;
   gap: 18px;
+  margin: 0 auto;
 }
 .summary-title {
   margin: 0;
@@ -1384,13 +1416,13 @@ button {
 }
 .summary-stat__label {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
 }
 .summary-section-title {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--text);
   text-transform: none;
 }
 .summary-chips {
@@ -1399,16 +1431,17 @@ button {
   gap: 6px;
 }
 .summary-chip {
-  background: rgba(124, 92, 255, 0.14);
-  border: 1px solid rgba(124, 92, 255, 0.32);
+  background: var(--accent-tint-strong);
+  border: 1px solid var(--border-accent);
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 13px;
-  color: #d4caff;
+  font-weight: 600;
+  color: var(--accent-deep);
 }
 .summary-hint {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-dim);
   font-style: italic;
 }
 .summary-mistakes {
@@ -1420,15 +1453,15 @@ button {
   gap: 10px;
 }
 .summary-mistakes li {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
 }
 .summary-example {
   display: flex;
@@ -1438,18 +1471,23 @@ button {
   font-size: 13px;
 }
 .summary-example__bad {
-  color: #ff8e8e;
+  color: var(--record);              /* dusty rose solid */
   text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: rgba(184, 92, 92, 0.7);
+  font-weight: 600;
 }
 .summary-example__arrow {
-  opacity: 0.5;
+  opacity: 0.6;
+  color: var(--text-dim);
 }
 .summary-example__good {
-  color: #8ee29a;
+  color: var(--accent-deep);         /* mossy green deep */
+  font-weight: 700;
 }
 .summary-empty {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   text-align: center;
   margin: 0;
 }
@@ -1458,7 +1496,7 @@ button {
   padding: 12px;
   border-radius: 12px;
   border: none;
-  background: linear-gradient(135deg, #7c5cff, #a489ff);
+  background: var(--accent);
   color: #fff;
   font-size: 16px;
   font-weight: 600;
@@ -1485,7 +1523,7 @@ button {
   width: 100%;
   max-width: 460px;
   background: var(--bg, #14182a);
-  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--border-strong, var(--border-strong));
   border-radius: 16px;
   padding: 22px 20px 18px;
   display: flex;
@@ -1506,13 +1544,13 @@ button {
 }
 .words-counter {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
 .words-hint {
   margin: 0;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--text-dim);
   line-height: 1.4;
 }
 .words-input-row {
@@ -1521,8 +1559,8 @@ button {
 }
 .words-input {
   flex: 1;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
   padding: 10px 12px;
   font-size: 15px;
@@ -1530,7 +1568,7 @@ button {
   outline: none;
 }
 .words-input:focus {
-  border-color: rgba(124, 92, 255, 0.55);
+  border-color: var(--accent-ring);
 }
 .words-input:disabled {
   opacity: 0.5;
@@ -1539,7 +1577,7 @@ button {
   padding: 0 16px;
   border-radius: 10px;
   border: none;
-  background: linear-gradient(135deg, #7c5cff, #a489ff);
+  background: var(--accent);
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -1570,7 +1608,7 @@ button {
   width: 100%;
   text-align: center;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-faint);
   font-style: italic;
   padding: 20px 0;
 }
@@ -1579,8 +1617,8 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  background: rgba(124, 92, 255, 0.14);
-  border: 1px solid rgba(124, 92, 255, 0.32);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
   border-radius: 10px;
   padding: 8px 8px 8px 12px;
   font-size: 14px;
@@ -1593,7 +1631,7 @@ button {
 .words-chip__remove {
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--text-dim);
   font-size: 14px;
   cursor: pointer;
   width: 22px;
@@ -1618,7 +1656,7 @@ button {
   padding: 12px;
   border-radius: 12px;
   border: none;
-  background: linear-gradient(135deg, #7c5cff, #a489ff);
+  background: var(--accent);
   color: #fff;
   font-size: 16px;
   font-weight: 600;
@@ -1633,7 +1671,7 @@ button {
   position: fixed;
   inset: 0;
   z-index: 70;
-  background: rgba(0, 0, 0, 0.55);
+  background: color-mix(in srgb, var(--ink-900) 55%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1647,13 +1685,13 @@ button {
 }
 
 .confirm-card {
-  background: #1a1f36;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: var(--surface-popup);
+  border: 1px solid var(--border-strong);
   border-radius: 14px;
   padding: 20px 18px 16px;
   max-width: 320px;
   width: 100%;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-card);
   animation: confirm-slide-in 200ms cubic-bezier(0.22, 0.8, 0.32, 1);
 }
 
@@ -1665,15 +1703,15 @@ button {
 .confirm-title {
   margin: 0 0 6px;
   font-size: 16px;
-  font-weight: 600;
-  color: #fff;
+  font-weight: 700;
+  color: var(--text);
 }
 
 .confirm-hint {
   margin: 0 0 16px;
   font-size: 13px;
-  line-height: 1.4;
-  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.45;
+  color: var(--text-dim);
 }
 
 .confirm-actions {
@@ -1684,7 +1722,7 @@ button {
 
 .confirm-btn {
   appearance: none;
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 10px 16px;
   font-size: 13px;
   font-weight: 600;
@@ -1694,23 +1732,25 @@ button {
 }
 
 .confirm-btn--secondary {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: #fff;
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
 }
 .confirm-btn--secondary:hover,
 .confirm-btn--secondary:active {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--accent-tint);
+  border-color: var(--border-accent);
 }
 
 .confirm-btn--danger {
-  background: rgba(220, 64, 64, 0.85);
-  border: 1px solid rgba(220, 64, 64, 0.5);
-  color: #fff;
+  background: var(--record);
+  border: 2px solid var(--text);             /* чёрная (warm-dark) обводка */
+  color: var(--text);                        /* чёрный (warm-dark) текст */
+  font-weight: 700;
 }
 .confirm-btn--danger:hover,
 .confirm-btn--danger:active {
-  background: rgba(220, 64, 64, 1);
+  filter: brightness(0.94);
 }
 
 /* ─── ProgressScreen (retention v1) ─────────────────────────────────── */
@@ -1729,7 +1769,7 @@ button {
 }
 .progress-modal__sheet {
   background: var(--bg-1);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-strong);
   border-radius: 16px;
   max-width: 560px;
   width: 100%;
@@ -1753,8 +1793,8 @@ button {
 }
 .progress-modal__close {
   appearance: none;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
   color: var(--text);
   border-radius: 999px;
   width: 30px;
@@ -1769,7 +1809,7 @@ button {
 .progress-modal__loading,
 .progress-modal__error {
   padding: 12px;
-  color: var(--text-muted, rgba(255, 255, 255, 0.6));
+  color: var(--text-muted, var(--border-strong));
   font-size: 14px;
   text-align: center;
 }
@@ -1783,8 +1823,8 @@ button {
   align-items: center;
   gap: 14px;
   padding: 14px 16px;
-  background: linear-gradient(135deg, rgba(255, 107, 53, 0.18), rgba(255, 177, 61, 0.10));
-  border: 1px solid rgba(255, 177, 61, 0.35);
+  background: color-mix(in srgb, var(--warn) 18%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
   border-radius: 14px;
 }
 .progress-streak__icon {
@@ -1794,17 +1834,17 @@ button {
 .progress-streak__value {
   font-size: 28px;
   font-weight: 800;
-  color: #ffe28a;
+  color: var(--warn);
   line-height: 1;
 }
 .progress-streak__unit {
   font-size: 14px;
   font-weight: 600;
-  color: rgba(255, 226, 138, 0.7);
+  color: var(--text-dim);
 }
 .progress-streak__sub {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   margin-top: 4px;
 }
 
@@ -1815,8 +1855,8 @@ button {
   gap: 10px;
 }
 .progress-metric {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
   border-radius: 12px;
   padding: 12px 10px;
   text-align: center;
@@ -1828,7 +1868,7 @@ button {
 }
 .progress-metric__label {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   margin-top: 2px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
@@ -1841,8 +1881,8 @@ button {
   gap: 6px;
   margin-top: 10px;
   padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
+  border: 1px solid var(--surface-2);
   border-radius: 12px;
 }
 .progress-breakdown__row {
@@ -1852,7 +1892,7 @@ button {
   padding: 4px 2px;
 }
 .progress-breakdown__row + .progress-breakdown__row {
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--surface-2);
   padding-top: 8px;
   margin-top: 2px;
 }
@@ -1865,7 +1905,7 @@ button {
 .progress-breakdown__label {
   flex: 1;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
 }
 .progress-breakdown__value {
   font-size: 14px;
@@ -1875,8 +1915,8 @@ button {
 
 /* Универсальная карточка для подсекций */
 .progress-card {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--surface-2);
+  border: 1px solid var(--surface-2);
   border-radius: 12px;
   padding: 14px;
 }
@@ -1910,7 +1950,7 @@ button {
   min-height: 2px;
 }
 .daily-bars__fill[data-empty="1"] {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--border-strong);
 }
 
 /* Сетка медалей */
@@ -1929,12 +1969,12 @@ button {
   gap: 12px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--surface-2);
+  border: 1px solid var(--surface-2);
 }
 .achievement--earned {
-  background: linear-gradient(135deg, rgba(124, 92, 255, 0.18), rgba(51, 217, 166, 0.10));
-  border-color: rgba(124, 92, 255, 0.4);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
 }
 .achievement--locked {
   opacity: 0.7;
@@ -1959,13 +1999,13 @@ button {
 }
 .achievement__desc {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   margin-top: 2px;
 }
 .achievement__bar {
   margin-top: 6px;
   height: 4px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--border-strong);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -1978,13 +2018,13 @@ button {
 .achievement__progress-text {
   margin-top: 4px;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-dim);
 }
 .achievement__earned-badge {
   margin-top: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #8aff9d;
+  color: var(--success);
 }
 
 /* ─── Mode selector / Listening screen ──────────────────────────── */
@@ -2006,10 +2046,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  background:
-    radial-gradient(1200px 600px at 50% -200px, rgba(124, 92, 255, 0.15), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
-    var(--bg-0);
+  background-color: var(--bg);
   overflow: hidden;
 }
 .mode-selector__header {
@@ -2055,15 +2092,24 @@ button {
   line-height: 1.2;
 }
 .mode-selector__subtitle {
-  margin: 0;
+  margin: 0 0 var(--space-5);
   color: var(--text-dim);
-  font-size: 14px;
-  line-height: 1.4;
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+.ms-hello {
+  font-family: var(--font-text);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mode-cards {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .mode-card {
   display: flex;
@@ -2073,7 +2119,7 @@ button {
   padding: 14px 16px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
   color: var(--text);
   text-align: left;
   cursor: pointer;
@@ -2136,7 +2182,7 @@ button {
   padding: 12px 8px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
 }
 .ms-stat__value {
   font-size: 18px;
@@ -2162,10 +2208,7 @@ button {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
-  background:
-    radial-gradient(1200px 600px at 50% -200px, rgba(124, 92, 255, 0.15), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
-    var(--bg-0);
+  background-color: var(--bg);
   overflow: hidden;
 }
 .lst-main {
@@ -2187,11 +2230,17 @@ button {
 }
 .lst-section__title {
   margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-faint);
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent-deep);
+  background: var(--accent-tint-strong);
+  border: 1px solid var(--border-accent);
+  border-radius: 999px;
   text-transform: uppercase;
-  letter-spacing: 0.8px;
+  letter-spacing: 0.10em;
 }
 
 .lst-chips {
@@ -2215,7 +2264,7 @@ button {
 }
 .lst-chip[data-active="true"] {
   border-color: var(--accent);
-  background: rgba(124, 92, 255, 0.18);
+  background: var(--accent-soft);
   color: var(--text);
 }
 
@@ -2240,7 +2289,7 @@ button {
   color: var(--text-dim);
 }
 .lst-chip--level[data-active="true"] .lst-chip__sub {
-  color: var(--accent-soft);
+  color: var(--accent);
 }
 
 .lst-categories {
@@ -2268,7 +2317,7 @@ button {
 }
 .lst-category[data-active="true"] {
   border-color: var(--accent);
-  background: rgba(124, 92, 255, 0.14);
+  background: var(--accent-soft);
 }
 .lst-category__emoji {
   font-size: 20px;
@@ -2284,7 +2333,7 @@ button {
   padding: 18px 20px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
   cursor: pointer;
 }
 .lst-toggle__main {
@@ -2411,7 +2460,7 @@ button {
   gap: 14px;
   padding: 18px;
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
   border: 1px solid var(--border-strong);
 }
 .lst-player audio {
@@ -2437,7 +2486,8 @@ button {
   padding: 18px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
-  background: var(--bg-1);
+  background: var(--surface-popup);
+  box-shadow: var(--shadow-card);
   font-size: 15px;
   line-height: 1.7;
   color: var(--text);
@@ -2450,7 +2500,7 @@ button {
   padding: 0 1px;
 }
 .lst-transcript__word:active {
-  background: rgba(124, 92, 255, 0.25);
+  background: var(--accent-border);
 }
 
 /* Error */
@@ -2497,10 +2547,7 @@ button {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
-  background:
-    radial-gradient(1200px 600px at 50% -200px, rgba(124, 92, 255, 0.15), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
-    var(--bg-0);
+  background-color: var(--bg);
   overflow: hidden;
 }
 
@@ -2519,7 +2566,7 @@ button {
   padding: 18px 18px 20px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
   color: var(--text);
   text-align: left;
   cursor: pointer;
@@ -2530,7 +2577,7 @@ button {
 .grm-mode-card__emoji { font-size: 26px; line-height: 1; }
 .grm-mode-card__title { font-size: 16px; font-weight: 600; }
 .grm-mode-card__hint { font-size: 12.5px; line-height: 1.45; color: var(--text-dim); }
-.grm-mode-card--weak { border-color: rgba(124, 92, 255, 0.45); }
+.grm-mode-card--weak { border-color: var(--accent-border); }
 
 /* ── Exercise ── */
 .grm-exercise {
@@ -2595,7 +2642,7 @@ button {
 .grm-choice:disabled { cursor: default; }
 .grm-choice[data-state="picked"] {
   border-color: var(--accent);
-  background: rgba(124, 92, 255, 0.16);
+  background: var(--accent-soft);
 }
 .grm-choice[data-state="right"] {
   border-color: #2ea043;
@@ -2681,13 +2728,13 @@ button {
   padding: 28px 16px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--surface-2);
 }
 .grm-summary__pct {
   font-size: 52px;
   font-weight: 800;
   letter-spacing: -1px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+  background: var(--accent);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -2734,20 +2781,31 @@ button {
   gap: 12px;
   padding: 14px 16px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-1);
+  border-radius: 12px;                              /* было пилюлей — теперь карточкой */
+  background: var(--bg-2);                          /* solid cream, не сливается */
   color: var(--text);
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.15s, transform 0.1s, opacity 0.15s;
+  box-shadow: 0 1px 3px rgba(60, 50, 30, 0.06);
+  transition: border-color 0.15s, transform 0.1s, opacity 0.15s, box-shadow 0.15s;
 }
 .grm-topic-row:active:not(:disabled) { transform: scale(0.98); }
-.grm-topic-row[data-status="available"] { border-color: rgba(124, 92, 255, 0.45); }
-.grm-topic-row[data-status="available"]:hover { border-color: var(--accent); }
-.grm-topic-row[data-status="done"] { opacity: 0.85; }
+.grm-topic-row[data-status="available"] {
+  border-color: var(--border-accent);
+}
+.grm-topic-row[data-status="available"]:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 12px rgba(60, 50, 30, 0.10);
+}
+.grm-topic-row[data-status="done"] {
+  background: var(--accent-tint);
+  border-color: var(--border-accent);
+  opacity: 1;
+}
 .grm-topic-row[data-status="locked"] {
-  opacity: 0.45;
+  opacity: 0.7;                                     /* было 0.45 — карточка читаема */
   cursor: not-allowed;
+  background: var(--bg-1);
 }
 .grm-topic-row__icon { font-size: 18px; line-height: 1; flex-shrink: 0; }
 .grm-topic-row__body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -2768,10 +2826,19 @@ button {
   line-height: 1.3;
 }
 .grm-theory__body {
-  padding: 18px;
+  padding: 20px 22px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-1);
+  border-radius: 14px;
+  background: var(--bg-2);
+  box-shadow: 0 1px 3px rgba(60, 50, 30, 0.06), 0 8px 20px -12px rgba(60, 50, 30, 0.16);
+}
+.grm-theory__title {
+  padding: 12px 16px;
+  background: var(--accent-tint);
+  border: 1px solid var(--border-accent);
+  border-radius: 12px;
+  color: var(--accent-deep);
+  margin: 4px 0 0;
 }
 .grm-theory__para {
   margin: 0 0 4px;
@@ -2830,18 +2897,16 @@ button {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   overflow: hidden;
+  background: var(--bg-2);                        /* base cream */
 }
 .grm-examples__row {
   display: grid;
-  /* minmax(0,1fr) вместо 1fr — иначе колонки не ужимаются ниже своего
-     контента и длинные примеры распирают таблицу шире экрана (grid blowout),
-     из-за чего .grm-screen{overflow:hidden} срезает весь правый край теории. */
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
   padding: 9px 12px;
 }
 .grm-examples__row:nth-child(odd) {
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--bg-3);                        /* solid alt cream (#F2EBD8), не translucent dark */
 }
 .grm-examples__row + .grm-examples__row {
   border-top: 1px solid var(--border);
@@ -2863,7 +2928,7 @@ button {
 }
 .grm-theory__para strong,
 .grm-examples__en strong {
-  color: var(--accent-soft);
+  color: var(--accent);
   font-weight: 700;
 }
 
@@ -2873,16 +2938,16 @@ button {
   width: 100%;
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid rgba(124, 92, 255, 0.35);
-  background: rgba(124, 92, 255, 0.18);
-  color: #d4caff;
+  border: none;
+  background: var(--accent);
+  color: var(--text-on-accent);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   text-align: center;
 }
 .translate-popover__add:hover {
-  background: rgba(124, 92, 255, 0.28);
+  background: var(--accent-hover);
 }
 .translate-popover__add:disabled {
   opacity: 0.7;
@@ -2911,7 +2976,7 @@ button {
 }
 .words-chip__translation {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   font-weight: 400;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2948,20 +3013,20 @@ button {
 .srs-back {
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-dim);
   font-size: 14px;
   padding: 8px 4px;
   cursor: pointer;
 }
 .srs-progress {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
 
 .srs-card {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
   border-radius: 18px;
   padding: 22px 18px;
   display: flex;
@@ -2981,20 +3046,20 @@ button {
 }
 .srs-stat__limit {
   font-size: 18px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-faint);
   font-weight: 500;
 }
 .srs-stat__label {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
 }
 .srs-stat--muted .srs-stat__num {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
 }
 .srs-empty {
   margin: 0;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-dim);
   line-height: 1.45;
   font-style: italic;
 }
@@ -3023,24 +3088,24 @@ button {
   cursor: default;
 }
 .srs-btn--primary {
-  background: linear-gradient(135deg, #7c5cff, #a489ff);
+  background: var(--accent);
 }
 .srs-btn--secondary {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
 }
 .srs-btn--reveal {
-  background: rgba(124, 92, 255, 0.18);
-  border: 1px solid rgba(124, 92, 255, 0.35);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
   color: #d4caff;
 }
 .srs-btn--know {
-  background: linear-gradient(135deg, #2ecc71, #5ed99a);
+  background: var(--surface-2);
   color: #0c1a12;
   flex: 1;
 }
 .srs-btn--dont {
-  background: linear-gradient(135deg, #e74c5e, #ff7a8a);
+  background: var(--surface-2);
   color: #1a0c0e;
   flex: 1;
 }
@@ -3084,7 +3149,7 @@ button {
 .srs-summary__note {
   margin: 0;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-dim);
 }
 .srs-summary__actions {
   width: 100%;
@@ -3109,10 +3174,7 @@ button {
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background:
-    radial-gradient(1200px 600px at 50% -200px, rgba(124, 92, 255, 0.18), transparent 60%),
-    radial-gradient(800px 400px at 100% 100%, rgba(51, 217, 166, 0.08), transparent 60%),
-    var(--bg-0, #0b0d12);
+  background-color: var(--bg);
   color: var(--text, #fff);
   overflow-y: auto;
 }
@@ -3125,9 +3187,9 @@ button {
   gap: 14px;
   text-align: center;
   padding: 28px 22px;
-  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--border-strong, var(--border-strong));
   border-radius: 20px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-2);
 }
 .login-brand {
   display: inline-flex;
@@ -3137,7 +3199,7 @@ button {
 .login-brand__name {
   font-weight: 600;
   font-size: 15px;
-  color: var(--text-dim, rgba(255, 255, 255, 0.7));
+  color: var(--text-dim, var(--border-strong));
 }
 .login-title {
   margin: 4px 0 0;
@@ -3149,7 +3211,7 @@ button {
   margin: 0;
   font-size: 14px;
   line-height: 1.5;
-  color: var(--text-dim, rgba(255, 255, 255, 0.65));
+  color: var(--text-dim, var(--border-strong));
 }
 .login-buttons {
   display: flex;
@@ -3167,7 +3229,7 @@ button {
 .login-hint {
   margin: 0;
   font-size: 13px;
-  color: var(--text-faint, rgba(255, 255, 255, 0.5));
+  color: var(--text-faint, var(--border-strong));
 }
 .login-error {
   margin: 0;
@@ -3195,9 +3257,10 @@ button {
 /* ─── AccountSheet (привязки входа) ──────────────────────────────────── */
 .acc-lead {
   margin: 0 0 14px;
-  font-size: 13.5px;
-  line-height: 1.5;
-  color: var(--text-dim, rgba(255, 255, 255, 0.65));
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);                /* основной чёрный — был text-dim, сливался */
+  font-weight: 500;
 }
 .acc-list {
   display: flex;
@@ -3210,24 +3273,24 @@ button {
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
-  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--border-strong, var(--border-strong));
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-2);
 }
 .acc-row__name { font-weight: 600; font-size: 14px; }
 .acc-row__on {
   font-size: 12.5px;
-  color: #7ee0a3;
+  color: var(--success);
   max-width: 60%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.acc-row__off { font-size: 12.5px; color: var(--text-faint, rgba(255,255,255,0.45)); }
+.acc-row__off { font-size: 12.5px; color: var(--text-faint, var(--border-strong)); }
 .acc-link-block { margin-bottom: 14px; }
 .acc-link-title {
   font-size: 13px;
-  color: var(--text-dim, rgba(255, 255, 255, 0.65));
+  color: var(--text-dim, var(--border-strong));
   margin-bottom: 8px;
 }
 .acc-tgbtn { display: flex; justify-content: center; min-height: 40px; }
@@ -3236,12 +3299,12 @@ button {
   font-size: 13px;
   color: var(--accent-soft, #a489ff);
 }
-.acc-hint { font-size: 13px; color: var(--text-faint, rgba(255,255,255,0.5)); }
+.acc-hint { font-size: 13px; color: var(--text-faint, var(--border-strong)); }
 .acc-channel {
   display: inline-block;
   margin-top: 6px;
   font-size: 13px;
-  color: var(--accent-soft, #a489ff);
+  color: var(--accent);
   text-decoration: none;
   background: none;
   border: none;
@@ -3272,8 +3335,8 @@ button {
   margin: 0 auto 8px;
   padding: 5px 12px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
   font-size: 12.5px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
@@ -3294,14 +3357,14 @@ button {
   margin: 4px 0 4px;
   padding: 4px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+  background: var(--surface-2);
+  border: 1px solid var(--border);
 }
 .login-tab {
   appearance: none;
   border: none;
   background: transparent;
-  color: var(--text-dim, rgba(255, 255, 255, 0.65));
+  color: var(--text-dim);
   padding: 8px 10px;
   border-radius: 8px;
   font-size: 14px;
@@ -3309,8 +3372,8 @@ button {
   cursor: pointer;
 }
 .login-tab.is-active {
-  background: rgba(124, 92, 255, 0.18);
-  color: var(--text, #fff);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .login-form {
   display: flex;
@@ -3322,21 +3385,27 @@ button {
   width: 100%;
   padding: 12px 14px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text, #fff);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);                /* инсет-cream, контрастно на bg-2 карте */
+  color: var(--text);
   font-size: 15px;
   outline: none;
   box-sizing: border-box;
+  -webkit-text-fill-color: var(--text);       /* iOS Safari иначе делает текст серым */
 }
-.login-input:focus { border-color: rgba(124, 92, 255, 0.55); }
+.login-input::placeholder { color: var(--text-faint); }
+.login-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  background: #fff;
+}
 .login-submit { padding: 12px 16px; }
 .login-divider {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  color: var(--text-faint, rgba(255, 255, 255, 0.4));
+  color: var(--text-faint, var(--border-strong));
   font-size: 12px;
   margin: 4px 0;
 }
@@ -3345,7 +3414,7 @@ button {
   content: "";
   flex: 1;
   height: 1px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--border-strong);
 }
 
 /* ─── AccountSheet: форма «Задать пароль» ────────────────────────────── */
@@ -3373,7 +3442,7 @@ button {
   margin: 0;
   font-size: 13.5px;
   line-height: 1.5;
-  color: var(--text-dim, rgba(255, 255, 255, 0.65));
+  color: var(--text-dim, var(--border-strong));
   text-align: center;
 }
 .login-tg-btn {
@@ -3408,15 +3477,15 @@ button {
   gap: 6px;
   padding: 16px 18px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1.5px solid rgba(255, 255, 255, 0.10);
+  background: var(--surface-2);
+  border: 1.5px solid var(--border-strong);
   color: inherit;
   cursor: pointer;
   text-align: left;
   transition: background 0.15s, border-color 0.15s, transform 0.05s;
 }
 .sub-plan:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--surface-2);
   border-color: rgba(255, 204, 0, 0.55);
 }
 .sub-plan:active:not(:disabled) { transform: scale(0.99); }
@@ -3424,7 +3493,7 @@ button {
 .sub-plan__title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-dim, rgba(255, 255, 255, 0.75));
+  color: var(--text-dim, var(--border-strong));
 }
 .sub-plan__price {
   font-size: 24px;
@@ -3432,115 +3501,27 @@ button {
 }
 .sub-plan__days {
   font-size: 13px;
-  color: var(--text-dim, rgba(255, 255, 255, 0.55));
+  color: var(--text-dim, var(--border-strong));
 }
 
-/* ─── Desktop background: мягкое свечение по бокам вместо чёрных полос ── */
+/* ─── Desktop background (≥768px): плоский фон из DS, без градиентов.
+ * Юзер: «убрать градиент, чтобы страницы не отличались». */
 @media (min-width: 768px) {
   body {
-    background:
-      /* центральный фиолетовый ореол сверху */
-      radial-gradient(
-        ellipse 70% 60% at 50% 0%,
-        rgba(124, 92, 255, 0.18) 0%,
-        rgba(124, 92, 255, 0.05) 35%,
-        transparent 70%
-      ),
-      /* тёплый акцент снизу слева — добавляет глубины */
-      radial-gradient(
-        ellipse 50% 60% at 0% 100%,
-        rgba(161, 138, 255, 0.10) 0%,
-        transparent 60%
-      ),
-      /* основной тёмный градиент сверху-вниз */
-      linear-gradient(180deg, #0d1018 0%, var(--bg-0) 100%);
-    background-attachment: fixed;
-  }
-  /* Контейнер режима — добавим лёгкое свечение вокруг карточки,
-     чтобы она ощущалась «парящей», а не вырезанной из фона. */
-  .mode-selector {
-    position: relative;
-  }
-  .mode-selector::before {
-    content: "";
-    position: absolute;
-    inset: -40px;
-    background: radial-gradient(
-      ellipse at center,
-      rgba(124, 92, 255, 0.08) 0%,
-      transparent 70%
-    );
-    z-index: -1;
-    pointer-events: none;
+    background-color: var(--bg);
   }
 }
 
-/* ─── Desktop adaptation (>=768px): шире контейнеры, grid режимов 2x2 ─── */
-@media (min-width: 768px) {
-  .mode-selector {
-    max-width: 900px;
-    padding-left: 24px;
-    padding-right: 24px;
-  }
-  .mode-selector__title {
-    font-size: 32px;
-  }
-  .mode-selector__subtitle {
-    font-size: 16px;
-  }
-  /* 2 колонки, gap чуть больше — карточки крупнее, легче клик мышкой */
-  .mode-cards {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-  }
-  .mode-card {
-    padding: 22px 24px;
-    gap: 18px;
-  }
-  .mode-card__emoji {
-    font-size: 36px;
-  }
-  /* Sheet'ы (Account/Subscribe/Progress) — фиксированная ширина по центру */
-  .sheet {
-    max-width: 560px;
-    border-radius: 18px;
-    margin: 32px auto;
-    max-height: calc(100vh - 64px);
-  }
-  /* LoginScreen — шире карточка, удобнее формы и кнопки */
-  .login-card {
-    max-width: 520px;
-    padding: 36px 40px;
-  }
-  .login-title {
-    font-size: 28px;
-  }
-  /* Subscribe plans — 3 колонки на широком экране */
-  .sub-plans {
-    grid-template-columns: 1fr 1fr 1fr;
-    display: grid;
-  }
-}
-
-/* >=1200px — ещё чуть просторнее и больше hero */
-@media (min-width: 1200px) {
-  .mode-selector {
-    max-width: 1040px;
-  }
-  .mode-cards {
-    gap: 20px;
-  }
-  .mode-card {
-    padding: 28px 28px;
-  }
-}
+/* Desktop-расширения (mode-selector 900px, grid 2x2, sheets 560px, login-card
+ * 520px, sub-plans 3 колонки и т.д.) убраны — юзер: «верни мобильную версию на
+ * десктопе, посмотрим как будет выглядеть». Все экраны центрируются по
+ * мобильной max-width: 480px. */
 
 /* ─── Онбординг-модалка (PR-10) ─────────────────────────────────────── */
 .ob-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: color-mix(in srgb, var(--ink-900) 55%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3556,15 +3537,16 @@ button {
   position: relative;
   width: 100%;
   max-width: 480px;
-  background: var(--bg-1, #131720);
-  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
   border-radius: 18px;
   padding: 28px 24px 20px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 14px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-xl);
 }
 .ob-skip {
   position: absolute;
@@ -3574,14 +3556,14 @@ button {
   height: 32px;
   border-radius: 50%;
   border: none;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
   color: inherit;
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
   transition: background 0.15s;
 }
-.ob-skip:hover { background: rgba(255, 255, 255, 0.12); }
+.ob-skip:hover { background: var(--border-strong); }
 .ob-emoji {
   font-size: 48px;
   text-align: center;
@@ -3597,7 +3579,7 @@ button {
   font-size: 15px;
   line-height: 1.55;
   text-align: center;
-  color: var(--text, rgba(255, 255, 255, 0.85));
+  color: var(--text, var(--border-strong));
   min-height: 110px;
 }
 .ob-body a { color: var(--accent, #4ea1ff); text-decoration: none; }
@@ -3613,7 +3595,7 @@ button {
   height: 8px;
   border-radius: 50%;
   border: none;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--border-strong);
   cursor: pointer;
   padding: 0;
   transition: background 0.15s, transform 0.15s;
@@ -3640,7 +3622,7 @@ button {
 .sub-offer {
   font-size: 12px;
   line-height: 1.45;
-  color: var(--text-dim, rgba(255, 255, 255, 0.5));
+  color: var(--text-dim, var(--border-strong));
   text-align: center;
   margin-top: 8px;
 }
@@ -3648,3 +3630,263 @@ button {
   color: var(--accent-soft, #a18aff);
   text-decoration: underline;
 }
+
+/* Desktop-расширения для экранов режимов (Speaking/Listening/Grammar/SRS)
+ * убраны — все экраны остаются мобильными max-width:480px и центрируются
+ * на широком экране. По запросу юзера. */
+
+/* ─── App shell с bottom-nav (TabShell) ──────────────────────────────── */
+.app-shell {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  /* Копирую один-в-один .sub-screen__inner из components.css —
+   * popover-style cream card. */
+  background-color: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+}
+
+/* На desktop body = backdrop popover'a (точная формула из .sub-screen).
+ * Mobile: shell заполняет всё, body не виден. */
+@media (min-width: 768px) {
+  body {
+    background-color: var(--surface-popup);
+    background-image:
+      linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.03)) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.03)) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .app-shell {
+    margin: 24px auto;
+    height: auto;
+    min-height: calc(100dvh - 48px);
+    overflow: hidden;
+  }
+}
+.app-shell__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+/* Сбрасываем фиксированную высоту/ширину у внутренних экранов: они
+ * заложены под standalone-использование, а в .app-shell-frame'е дублируют
+ * родителя и ломают flex/scroll. */
+.app-shell__body > .tutor-app,
+.app-shell__body > .lst-screen,
+.app-shell__body > .grm-screen,
+.app-shell__body > .srs-screen,
+.app-shell__body > .mode-selector,
+.app-shell__body > .profile-screen,
+.app-shell__body > .prog-v2,
+.app-shell__body > .srs-v2,
+.app-shell__body > .wrd-v2 {
+  max-height: none;
+  max-width: none;
+  margin: 0;
+}
+/* Tutor/Listening/Grammar — у них собственный внутренний скролл (диалог-
+ * лог, generated player и т.д.); занимают всю высоту контейнера. */
+.app-shell__body > .tutor-app,
+.app-shell__body > .lst-screen,
+.app-shell__body > .grm-screen {
+  height: 100%;
+}
+/* ModeSelector + Profile + новые v2-табы (Progress / SRS / Words):
+ * естественная высота по контенту, скролл наружный (.app-shell__body),
+ * нижний padding чтобы последний элемент не уходил под BottomNav. */
+.app-shell__body > .mode-selector,
+.app-shell__body > .profile-screen,
+.app-shell__body > .srs-screen,
+.app-shell__body > .prog-v2,
+.app-shell__body > .srs-v2,
+.app-shell__body > .wrd-v2 {
+  min-height: 100%;
+  height: auto;
+  padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Desktop (≥768px): отпускаем ВСЕ inner-scroll контейнеры. Shell растёт
+ * по контенту, скроллит окно, BottomNav становится sticky внизу
+ * viewport'a. Мобиле — без изменений (внутренний скролл колонки).
+ * ВАЖНО: этот блок должен быть ПОСЛЕ всех правил .app-shell__body /
+ * .app-shell__body > * выше, иначе они перебивают через cascade. */
+@media (min-width: 768px) {
+  .app-shell {
+    height: auto !important;
+    min-height: 100dvh;
+  }
+  .app-shell__body {
+    overflow: visible !important;
+  }
+  /* Сбрасываем фиксированную height: 100dvh и собственный overflow:
+   * hidden у внутренних экранов — пусть растут по контенту, скроллит
+   * окно. */
+  .app-shell__body > .tutor-app,
+  .app-shell__body > .lst-screen,
+  .app-shell__body > .grm-screen,
+  .app-shell__body > .srs-screen,
+  .app-shell__body > .mode-selector,
+  .app-shell__body > .profile-screen,
+  .app-shell__body > .prog-v2,
+  .app-shell__body > .srs-v2,
+  .app-shell__body > .wrd-v2 {
+    height: auto !important;
+    min-height: 0;
+    overflow: visible !important;
+  }
+  /* Внутри .mode-selector / .lst-screen / .grm-screen есть своя
+   * scroll-зона (__main / log) — на desktop тоже отпускаем. */
+  .mode-selector__main,
+  .lst-main {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  /* .tutor-log (диалог-лог в Speaking) НЕ отпускаем — иначе при многих
+   * сообщениях он растягивает .tutor-app и ломает sticky talk-button.
+   * Жёсткий max-height + внутренний scroll. */
+  .tutor-log {
+    max-height: calc(100dvh - 280px);
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+  }
+  /* BottomNav на desktop — fixed к низу viewport'a, шириной как колонка
+   * (max-width: 480px центрировано). sticky внутри auto-height shell
+   * на десктопе работал нестабильно. fixed + !important — гарантированно
+   * закреплён независимо от scroll'a (без !important регулярное правило
+   * .bnav { position: relative } ниже в файле перебивало через cascade). */
+  .bnav {
+    position: fixed !important;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 480px;
+    z-index: 100;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+  /* На desktop нужен padding-bottom, чтобы последний контент не уезжал
+   * под fixed nav. На мобиле nav в потоке — padding не нужен. */
+  .app-shell {
+    padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* ─── BottomNav (v2: sliding sage pill, frosted bg, lucide icons) ──── */
+.bnav {
+  position: relative;
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  /* Падинг только TOP/BOTTOM — горизонтальный 0, чтобы пилюля и кнопки
+   * считались от одного 100% (см. формулу в BottomNav.tsx). */
+  padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px));
+  background: var(--nav-bg);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
+}
+/* Sliding indicator — sage pill behind active tab */
+.bnav__pill {
+  position: absolute;
+  top: 6px;
+  height: 48px;
+  /* width + left управляются inline-стилями (BottomNav.tsx):
+   *   width: calc(25% - 12px)
+   *   left:  calc(idx * 25% + 6px)
+   * Обе считаются от padding-box .bnav → 100% совпадает у обоих. */
+  border-radius: 14px;
+  background: var(--pastel-sage);
+  border: 1px solid rgba(108, 128, 90, 0.30);
+  pointer-events: none;
+  transition: left 420ms var(--ease-spring), width 420ms var(--ease-spring);
+}
+.bnav__btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: color 260ms var(--ease);
+  -webkit-tap-highlight-color: transparent;
+  z-index: 1;
+}
+.bnav__btn:hover:not(.is-active) { color: var(--text-dim); }
+.bnav__btn.is-active { color: var(--accent-deep); }
+.bnav__icon { display: inline-flex; align-items: center; justify-content: center; }
+.bnav__btn.is-active .bnav__icon { animation: bnavBob 600ms var(--ease); }
+.bnav__label {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-text);
+}
+.bnav__btn.is-active .bnav__label { font-weight: 700; }
+@keyframes bnavBob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+
+/* ─── ProfileScreen (AccountSheet в embedded-режиме как fullscreen tab) ─ */
+.profile-screen {
+  width: 100%;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+  /* background и grid — из ds/styles.css */
+  /* Никаких height:100% + overflow:hidden — иначе ломается скролл и на
+   * мобиле, и на десктопе. Контейнер просто растёт по контенту,
+   * scroll'ит .app-shell__body (mobile) или окно (desktop). */
+}
+.ps-inner {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+}
+.ps-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-5) var(--space-5) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.ps-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-h2);
+  letter-spacing: var(--ls-heading);
+}
+.ps-content {
+  /* Естественная высота — скроллит родитель (.app-shell__body или окно) */
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.ps-footer {
+  flex-shrink: 0;
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  border-top: 1px solid var(--border);
+}
+.ps-footer .btn { flex: 1; }

@@ -4,6 +4,9 @@
  * Основной вход: Яндекс ID (OAuth 2.0, миграция 0023). Email/пароль —
  * вторичный вариант. Telegram как способ входа на сайте УБРАН (юр.
  * ограничения РФ); привязка Telegram-аккаунта остаётся в Аккаунте.
+ *
+ * UI v2: warm cream surface, Source Serif heading, sage CTA для Яндекс,
+ * lucide-иконки.
  */
 
 import { useEffect, useState } from "react";
@@ -13,6 +16,11 @@ import {
   registerNative,
   startYandexFlow,
 } from "./auth";
+import { Button } from "./ds-react/Button";
+import { LogoBox } from "./ds-react/LogoBox";
+import { SerifH } from "./ds-react/typography";
+import { Icon } from "./ds-react/Icon";
+import { useLucide } from "./lucide";
 
 interface Props {
   onAuthed: () => void;
@@ -28,7 +36,8 @@ export function LoginScreen({ onAuthed }: Props) {
   const [password, setPassword] = useState<string>("");
   const [firstName, setFirstName] = useState<string>("");
 
-  // ── Обработать возврат с Яндекс OAuth ──────────────────────────────────
+  useLucide(`${tab}-${busy}-${!!error}`);
+
   useEffect(() => {
     const r = extractYandexCallback();
     if (!r) return;
@@ -73,51 +82,58 @@ export function LoginScreen({ onAuthed }: Props) {
   };
 
   return (
-    <div className="login-screen">
-      <div className="login-card">
-        <div className="login-brand">
-          <span className="tutor-brand__dot" aria-hidden />
-          <span className="login-brand__name">English Tutor</span>
+    <div className="login-v2">
+      <div className="login-v2__card">
+        <div className="login-v2__brand">
+          <LogoBox size={44} />
+          <div className="login-v2__brand-text">
+            <span className="login-v2__brand-name">English Tutor</span>
+            <span className="login-v2__brand-tag">AI-репетитор</span>
+          </div>
         </div>
-        <h1 className="login-title">Вход в English Tutor</h1>
-        <p className="login-subtitle">
+
+        <SerifH as="h1" size={28} className="login-v2__title">
+          Вход в English Tutor
+        </SerifH>
+        <p className="login-v2__subtitle">
           Говори, слушай, учи грамматику и слова с AI-репетитором. Войди, чтобы
           сохранять прогресс на любом устройстве.
         </p>
 
         <button
           type="button"
-          className="btn btn--primary login-yandex-btn"
+          className="login-v2__yandex"
           onClick={startYandex}
           disabled={busy}
         >
-          🟡 Войти через Яндекс ID
+          <span className="login-v2__yandex-mark" aria-hidden>Я</span>
+          <span>Войти через Яндекс ID</span>
         </button>
-        <p className="login-hint">Быстрый вход через аккаунт Яндекса.</p>
+        <p className="login-v2__hint">Быстрый вход через аккаунт Яндекса.</p>
 
-        <div className="login-divider"><span>или войти по email</span></div>
+        <div className="login-v2__divider"><span>или войти по email</span></div>
 
-        <div className="login-tabs" role="tablist">
+        <div className="login-v2__tabs" role="tablist">
           <button
             type="button"
             role="tab"
             aria-selected={tab === "login"}
-            className={`login-tab ${tab === "login" ? "is-active" : ""}`}
+            className={`login-v2__tab ${tab === "login" ? "is-active" : ""}`}
             onClick={() => { setTab("login"); setError(""); }}
           >Вход</button>
           <button
             type="button"
             role="tab"
             aria-selected={tab === "register"}
-            className={`login-tab ${tab === "register" ? "is-active" : ""}`}
+            className={`login-v2__tab ${tab === "register" ? "is-active" : ""}`}
             onClick={() => { setTab("register"); setError(""); }}
           >Регистрация</button>
         </div>
 
-        <form className="login-form" onSubmit={submit}>
+        <form className="login-v2__form" onSubmit={submit}>
           {tab === "register" && (
             <input
-              className="login-input"
+              className="login-v2__input"
               type="text"
               placeholder="Имя (необязательно)"
               value={firstName}
@@ -127,7 +143,7 @@ export function LoginScreen({ onAuthed }: Props) {
             />
           )}
           <input
-            className="login-input"
+            className="login-v2__input"
             type="email"
             placeholder="Email"
             value={email}
@@ -138,7 +154,7 @@ export function LoginScreen({ onAuthed }: Props) {
             maxLength={255}
           />
           <input
-            className="login-input"
+            className="login-v2__input"
             type="password"
             placeholder={tab === "register" ? "Пароль (от 8 символов)" : "Пароль"}
             value={password}
@@ -148,24 +164,20 @@ export function LoginScreen({ onAuthed }: Props) {
             minLength={8}
             maxLength={128}
           />
-          <button
-            type="submit"
-            className="btn btn--ghost login-submit"
-            disabled={busy}
-          >
+          <Button type="submit" variant="secondary" fullWidth disabled={busy}>
             {busy ? "…" : tab === "login" ? "Войти" : "Зарегистрироваться"}
-          </button>
+          </Button>
         </form>
 
-        {error && <p className="login-error">{error}</p>}
+        {error && <p className="login-v2__error">{error}</p>}
 
         <a
-          className="login-channel"
+          className="login-v2__channel"
           href="https://t.me/kmo_ai"
           target="_blank"
           rel="noreferrer"
         >
-          📣 Новости проекта — @kmo_ai
+          <Icon name="megaphone" size={14} /> Новости проекта — @kmo_ai
         </a>
       </div>
     </div>

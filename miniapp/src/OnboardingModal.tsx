@@ -7,18 +7,22 @@
  *
  * Может открываться и повторно — через кнопку «Открыть гид» в Аккаунте.
  * В этом случае флаг в БД не меняется.
+ *
+ * UI v2: warm cream NoteCard, sage icon-плитка вместо эмодзи, Source Serif
+ * заголовок.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { completeTutorial } from "./auth";
 import { ymReachGoal } from "./metrika";
+import { Button } from "./ds-react/Button";
+import { IconButton } from "./ds-react/IconButton";
+import { Icon } from "./ds-react/Icon";
+import { SerifH } from "./ds-react/typography";
+import { useLucide } from "./lucide";
 
 interface Props {
-  /** true — показать (первый заход). Когда юзер закроет, родитель сам
-   *  поставит false. */
   open: boolean;
-  /** true — это автоматический показ при первом заходе (помечаем done в БД).
-   *  false — юзер открыл сам из меню Аккаунт, флаг в БД не трогаем. */
   markDoneOnFinish: boolean;
   onClose: () => void;
 }
@@ -26,12 +30,14 @@ interface Props {
 interface Step {
   title: string;
   body: string | React.ReactNode;
-  emoji: string;
+  icon: string;        // lucide-имя
+  tone: "sage" | "speak" | "accent" | "warn";
 }
 
 const STEPS: Step[] = [
   {
-    emoji: "👋",
+    icon: "hand",
+    tone: "sage",
     title: "Добро пожаловать в English Tutor",
     body: (
       <>
@@ -41,7 +47,8 @@ const STEPS: Step[] = [
     ),
   },
   {
-    emoji: "🎙️",
+    icon: "mic",
+    tone: "speak",
     title: "Четыре режима — один прогресс",
     body: (
       <>
@@ -54,7 +61,8 @@ const STEPS: Step[] = [
     ),
   },
   {
-    emoji: "👤",
+    icon: "user-round",
+    tone: "accent",
     title: "Профиль и способы входа",
     body: (
       <>
@@ -66,7 +74,8 @@ const STEPS: Step[] = [
     ),
   },
   {
-    emoji: "💛",
+    icon: "heart",
+    tone: "warn",
     title: "Подписка и бесплатный лимит",
     body: (
       <>
@@ -84,6 +93,8 @@ const STEPS: Step[] = [
 
 export function OnboardingModal({ open, markDoneOnFinish, onClose }: Props) {
   const [step, setStep] = useState(0);
+
+  useLucide(`${open}-${step}`);
 
   useEffect(() => {
     if (!open) return;
@@ -105,22 +116,19 @@ export function OnboardingModal({ open, markDoneOnFinish, onClose }: Props) {
   const current = STEPS[step];
 
   return (
-    <div className="ob-backdrop" onClick={() => void finish("skipped")}>
-      <div className="ob-card" onClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          className="ob-skip"
-          onClick={() => void finish("skipped")}
-          aria-label="Пропустить"
-        >
-          ✕
-        </button>
+    <div className="ob-v2" onClick={() => void finish("skipped")}>
+      <div className="ob-v2__card" onClick={(e) => e.stopPropagation()}>
+        <div className="ob-v2__top">
+          <IconButton icon="x" variant="surface" size="sm" label="Пропустить" onClick={() => void finish("skipped")} />
+        </div>
 
-        <div className="ob-emoji" aria-hidden>{current.emoji}</div>
-        <h2 className="ob-title">{current.title}</h2>
-        <div className="ob-body">{current.body}</div>
+        <div className={`ob-v2__icon ob-v2__icon--${current.tone}`} aria-hidden>
+          <Icon name={current.icon} size={28} />
+        </div>
+        <SerifH as="h2" size={24} className="ob-v2__title">{current.title}</SerifH>
+        <div className="ob-v2__body">{current.body}</div>
 
-        <div className="ob-dots" role="tablist" aria-label="Шаги">
+        <div className="ob-v2__dots" role="tablist" aria-label="Шаги">
           {STEPS.map((_, i) => (
             <button
               key={i}
@@ -128,37 +136,29 @@ export function OnboardingModal({ open, markDoneOnFinish, onClose }: Props) {
               role="tab"
               aria-selected={i === step}
               aria-label={`Шаг ${i + 1}`}
-              className={`ob-dot ${i === step ? "is-active" : ""}`}
+              className={`ob-v2__dot ${i === step ? "is-active" : ""}`}
               onClick={() => setStep(i)}
             />
           ))}
         </div>
 
-        <div className="ob-nav">
-          <button
-            type="button"
-            className="btn btn--ghost"
+        <div className="ob-v2__nav">
+          <Button
+            variant="ghost"
+            fullWidth
             onClick={() => setStep((s) => Math.max(0, s - 1))}
             disabled={step === 0}
           >
             Назад
-          </button>
+          </Button>
           {isLast ? (
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => void finish("completed")}
-            >
+            <Button variant="primary" fullWidth onClick={() => void finish("completed")}>
               Понятно, начнём
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
-            >
+            <Button variant="primary" fullWidth onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}>
               Дальше
-            </button>
+            </Button>
           )}
         </div>
       </div>

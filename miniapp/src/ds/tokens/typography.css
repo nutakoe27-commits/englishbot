@@ -1,0 +1,42 @@
+/* ============================================================
+   English Tutor — Typography
+   Display: Source Serif 4 — literary serif, slight contrast,
+   old-style numerals; gives the "notebook + premium book" feel.
+   Text/UI: Inter — clean, friendly, highly legible at small sizes.
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700;8..60,800&family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --font-display: 'Source Serif 4', 'Source Serif Pro', Georgia, serif;
+  --font-text: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+
+  /* --- Type scale (mobile-first, px) --- */
+  --text-display: 34px;   /* hero screen question */
+  --text-h1: 28px;        /* screen titles */
+  --text-h2: 22px;        /* section / sheet titles */
+  --text-h3: 18px;        /* card titles */
+  --text-body-lg: 16px;   /* reading text (grammar/listening) */
+  --text-base: 15px;      /* default UI */
+  --text-sm: 14px;        /* secondary */
+  --text-xs: 13px;        /* captions */
+  --text-2xs: 11px;       /* eyebrow / overline labels */
+
+  /* --- Weights --- */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-extrabold: 800;
+
+  /* --- Line heights --- */
+  --leading-tight: 1.18;
+  --leading-snug: 1.32;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* --- Letter spacing --- */
+  --tracking-tight: -0.02em;
+  --tracking-normal: -0.005em;
+  --tracking-wide: 0.10em;     /* overline labels (uppercased) */
+}

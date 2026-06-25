@@ -1,0 +1,82 @@
+/* ============================================================
+   English Tutor — Color tokens
+   Warm "notebook on grid paper" palette: cream surfaces, deep
+   mossy green primary, butter-yellow highlighter accent, dusty
+   rose for record, pencil-grey hairlines.
+   ============================================================ */
+:root {
+  /* --- Base surfaces (warm wheat / cream) --- */
+  --bg-0: #EFE7D6;     /* app canvas — warm wheat */
+  --bg-1: #FAF5E8;     /* raised surface / card base */
+  --bg-2: #FFFCF2;     /* elevated surface / card top */
+  --bg-3: #F2EBD8;     /* hover / pressed surface */
+  --bg-inset: #E8DFCB; /* wells, inputs, track grooves */
+
+  /* --- Hairlines & borders (warm-dark at low alpha — pencil) --- */
+  --border: rgba(42, 38, 34, 0.10);
+  --border-strong: rgba(42, 38, 34, 0.22);
+  --border-accent: rgba(92, 112, 80, 0.32);
+
+  /* --- Text (warm-dark, never pure black) --- */
+  --text: #2A2622;        /* primary */
+  --text-dim: #6B5F50;    /* secondary / labels */
+  --text-faint: #968A75;  /* tertiary / disabled */
+  --text-on-accent: #FAF5E8;
+
+  /* --- Primary: mossy green --- */
+  --accent: #5C7050;
+  --accent-soft: #7C8F6E;
+  --accent-deep: #485840;
+  --accent-glow: rgba(92, 112, 80, 0.22);
+  --accent-tint: rgba(92, 112, 80, 0.10);     /* fill for selected chips/cards */
+  --accent-tint-strong: rgba(92, 112, 80, 0.18);
+
+  /* --- Speak / success: softer sage (illustration tone) --- */
+  --speak: #6B8A5C;
+  --speak-soft: #9EB48F;
+  --speak-glow: rgba(107, 138, 92, 0.22);
+  --speak-tint: rgba(107, 138, 92, 0.10);
+
+  /* --- Record / danger: dusty rose --- */
+  --record: #B85C5C;
+  --record-soft: #C77B7B;
+  --record-glow: rgba(184, 92, 92, 0.28);
+  --record-tint: rgba(184, 92, 92, 0.10);
+
+  /* --- Warn / streak: butter yellow (highlighter marker) --- */
+  --warn: #D9B84A;
+  --warn-soft: #E8D77E;
+  --warn-tint: rgba(217, 184, 74, 0.20);
+
+  /* --- Error --- */
+  --error: #C44848;
+  --error-tint: rgba(196, 72, 72, 0.10);
+
+  /* --- Illustration pastels (referenced from cards/illos) --- */
+  --pastel-rose:  #E8C9C2;
+  --pastel-sky:   #C8D5E0;
+  --pastel-sage:  #C8D2B8;
+  --pastel-cream: #EFE0BA;
+
+  /* --- Highlighter marker (butter pill used as accent bar) --- */
+  --marker: #E8D77E;
+  --marker-soft: #F0E2A6;
+
+  /* --- Semantic aliases (use these in components) --- */
+  --surface-app: var(--bg-0);
+  --surface-card: var(--bg-1);
+  --surface-card-top: var(--bg-2);
+  --surface-hover: var(--bg-3);
+  --surface-inset: var(--bg-inset);
+
+  --text-heading: var(--text);
+  --text-body: var(--text);
+  --text-label: var(--text-dim);
+  --text-muted: var(--text-faint);
+
+  --primary: var(--accent);
+  --primary-hover: var(--accent-deep);
+  --on-primary: var(--text-on-accent);
+
+  --focus-ring: var(--accent-soft);
+}

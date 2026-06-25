@@ -1,0 +1,231 @@
+/* ─────────────────────────────────────────────────────────────────────
+   English Tutor — Design System v2 entry point.
+   Imports tokens + базовые правила + compat-слой.
+
+   Compat-слой ниже мапит старые имена переменных (--bg, --surface,
+   --accent-soft, --accent-hover, --shadow-lg, --radius-full и т.д.)
+   на новые v2-токены. Это нужно, чтобы App.css и Landing.css
+   продолжили работать без массового переписывания.
+   ──────────────────────────────────────────────────────────────────── */
+
+@import "./tokens/colors.css";
+@import "./tokens/typography.css";
+@import "./tokens/spacing.css";
+@import "./tokens/effects.css";
+@import "./tokens/base.css";
+
+/* ─── v2 contrast boost: solid pastels вместо прозрачных tint'ов ─────
+ * Базовые токены v2 дают slightly tinted активные состояния
+ * (rgba(…,0.10–0.18)) — на тёмном-кремовом фоне они выглядят почти как
+ * прозрачные. Реальный v2-дизайн (см. login-hq.png, home-full.png) —
+ * активный chip / icon-pad / answer-button это SOLID pastel плитки.
+ * Перекрываем токены, чтобы все «кнопко-подобное» имело цвет. */
+:root {
+  /* App canvas — solid cream paper (как внутри popover'a со статистикой).
+   * Все экраны = одна «тетрадная страница», карточки/inner-блоки растут
+   * на той же текстуре. */
+  --bg-0: #FFFCF2;
+  --bg-1: #FAF5E8;
+  --bg-2: #FFFCF2;
+
+  /* Карточная заливка — тот же solid cream, без gradient. */
+  --grad-card: #FFFCF2;
+
+  /* Active fills: solid pastels (а не rgba(...) tint'ы) */
+  --accent-tint:        #DCE3CC;   /* hover / passive sage fill */
+  --accent-tint-strong: #C8D2B8;   /* active / selected sage fill */
+  --speak-tint:         #D6E1CB;   /* speak success pastel */
+  --record-tint:        #E8C9C2;   /* dusty rose pastel */
+  --warn-tint:          #EFE0BA;   /* butter cream pastel */
+
+  /* Grid линии заметнее (0.04 → 0.10) — фактура «тетрадки» очевидная,
+   * на канвасе явная, на solid карточках не видна (карточки её закрывают). */
+  --grid-line: rgba(42, 38, 34, 0.05);
+
+  /* Карточные тени — заметнее, чтобы прямо «приподнимались» от канваса */
+  --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.6),
+                 0 2px 6px rgba(60, 50, 30, 0.10),
+                 0 14px 28px -14px rgba(60, 50, 30, 0.28);
+
+  /* Popover-surface (используется в confirm-card / summary-card /
+   * listening transcript / settings fullscreen mobile bg) */
+  --surface-popup: #EFE7D6;
+
+  /* BottomNav frosted background */
+  --nav-bg: rgba(250, 245, 232, 0.85);
+}
+
+/* ─── Dark theme = точная копия main palette ────────────────────────
+ * Активируется через <html data-theme="dark"> (см. miniapp/src/theme.ts).
+ * Переключатель — ThemeToggle в Профиле. JSX не трогается, только
+ * перекраска через переменные. */
+[data-theme="dark"] {
+  /* Surfaces — main palette */
+  --bg-0: #0b0d12;
+  --bg-1: #12151c;
+  --bg-2: #181c25;
+  --bg-3: #20242f;
+  --bg-inset: #0e1118;
+
+  /* Text */
+  --text:       #e8eaf0;
+  --text-dim:   #b4b7c2;
+  --text-faint: #7d8190;
+  --text-on-accent: #fff;
+
+  /* Accent — purple из main */
+  --accent:        #7c5cff;
+  --accent-soft:   #a489ff;
+  --accent-deep:   #5a3fff;
+  --accent-glow:   rgba(124, 92, 255, 0.35);
+  --accent-tint:        rgba(124, 92, 255, 0.14);
+  --accent-tint-strong: rgba(124, 92, 255, 0.26);
+
+  /* Speak / Record — mint / coral из main */
+  --speak:       #33d9a6;
+  --speak-soft:  #6ee7c1;
+  --speak-tint:  rgba(51, 217, 166, 0.18);
+  --speak-glow:  rgba(51, 217, 166, 0.30);
+  --record:      #ff5470;
+  --record-soft: #ff8094;
+  --record-tint: rgba(255, 84, 112, 0.18);
+  --record-glow: rgba(255, 84, 112, 0.30);
+
+  /* Warn — приглушённый butter, читается на dark */
+  --warn:      #d9b84a;
+  --warn-tint: rgba(217, 184, 74, 0.20);
+
+  /* Borders */
+  --border:        rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-accent: rgba(124, 92, 255, 0.40);
+
+  /* Pastels (для NoteCard sage/cream/warn tone'ов) → purple-tint */
+  --pastel-sage:  rgba(124, 92, 255, 0.18);
+  --pastel-rose:  rgba(255, 84, 112, 0.18);
+  --pastel-cream: rgba(255, 255, 255, 0.04);
+
+  /* Cards / gradients */
+  --grad-card:         #181c25;
+  --grad-primary:      linear-gradient(180deg, #7c5cff, #5a3fff);
+  --grad-primary-deep: linear-gradient(180deg, #5a3fff, #4a30dc);
+
+  /* На dark клетку убираем (юзер: «вернуть градиент только на тёмной»). */
+  --grid-line: transparent;
+
+  /* Card shadow — глубже */
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.25),
+                 0 14px 28px -14px rgba(0, 0, 0, 0.45);
+
+  /* Popover-surface на dark — slightly raised */
+  --surface-popup: #1f2330;
+
+  /* BottomNav frosted bg на dark */
+  --nav-bg: rgba(20, 23, 32, 0.85);
+}
+
+/* ─── Compat: старые имена → новые v2-токены ──────────────────────── */
+:root {
+  /* surfaces */
+  --bg: var(--bg-0);
+  --surface: var(--bg-1);
+  --surface-2: var(--bg-3);
+  --surface-raise: var(--bg-2);
+
+  /* accent — теперь mossy green вместо coral */
+  --accent-hover: var(--accent-deep);
+  --accent-press: var(--accent-deep);
+  --accent-border: var(--border-accent);
+  --accent-ring: var(--accent-glow);
+  --accent-soft: var(--accent-tint);
+
+  /* status */
+  --success: var(--speak);
+  --warn-soft: var(--warn-tint);
+  --error-soft: var(--error-tint);
+
+  /* radii: v2 использует --radius-pill вместо --radius-full */
+  --radius-full: var(--radius-pill);
+
+  /* shadows: --shadow-xs/--shadow-xl у v2 нет, мапим на ближайшие */
+  --shadow-xs: var(--shadow-sm);
+  --shadow-xl: var(--shadow-lg);
+
+  /* ink-900 для color-mix в моих стилях */
+  --ink-900: var(--text);
+
+  /* типографика — старые имена */
+  --font-ui: var(--font-text);
+  --fs-h1: var(--text-h1);
+  --fs-h2: var(--text-h2);
+  --fs-h3: var(--text-h3);
+  --fs-body-lg: var(--text-body-lg);
+  --fs-body: var(--text-base);
+  --fs-body-sm: var(--text-sm);
+  --fs-caption: var(--text-xs);
+  --fs-micro: var(--text-2xs);
+  --fw-regular: var(--weight-regular);
+  --fw-medium: var(--weight-medium);
+  --fw-semibold: var(--weight-semibold);
+  --fw-bold: var(--weight-bold);
+  --tap-min: var(--hit-min);
+  --ls-label: var(--tracking-wide, 0.06em);
+
+  /* focus ring — формат box-shadow */
+  --focus-ring: 0 0 0 3px var(--accent-glow);
+}
+
+/* ─── Notebook-paper фон (v2 signature) ─────────────────────────────
+ * Тонкая grid-сетка 24×24 поверх warm cream — даёт ощущение «тетради
+ * в клеточку», как задумано в DS. Линии полупрозрачные (4% от ink-900),
+ * субтильные но заметные. */
+body,
+.app-shell,
+.app-shell__body,
+.mode-selector,
+.lst-screen,
+.grm-screen,
+.srs-screen,
+.tutor-app,
+.profile-screen,
+.prog-v2,
+.srs-v2,
+.wrd-v2,
+.lp {
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.035)) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.035)) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ─── Dark theme: вместо клетки — radial-gradient «орбы» из main ───── */
+[data-theme="dark"] body,
+[data-theme="dark"] .app-shell {
+  background-image:
+    radial-gradient(circle at 15% 15%, rgba(124, 92, 255, 0.22), transparent 45%),
+    radial-gradient(circle at 85% 85%, rgba(51, 217, 166, 0.14), transparent 50%);
+  background-size: auto, auto;
+  background-attachment: fixed;
+}
+/* На dark убираем illustrations с RichModeCard (cream-стилизованные
+ * PNG в правом углу выглядят неуместно на dark canvas). */
+[data-theme="dark"] .dsx-rich-mode__illust {
+  display: none;
+}
+
+[data-theme="dark"] .app-shell__body,
+[data-theme="dark"] .mode-selector,
+[data-theme="dark"] .lst-screen,
+[data-theme="dark"] .grm-screen,
+[data-theme="dark"] .srs-screen,
+[data-theme="dark"] .tutor-app,
+[data-theme="dark"] .profile-screen,
+[data-theme="dark"] .prog-v2,
+[data-theme="dark"] .srs-v2,
+[data-theme="dark"] .wrd-v2,
+[data-theme="dark"] .lp {
+  /* Внутри shell — solid bg, орбы видны через прозрачные слои выше */
+  background-image: none;
+  background-color: transparent;
+}

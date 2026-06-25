@@ -1,13 +1,20 @@
 // ModeSelector.tsx — стартовый экран mini-app: выбор режима тренировки.
 // Speaking — существующий голосовой тьютор; Listening — генерация подкаста.
+// v2-стиль: warm cream surfaces, RichModeCard с illustrations, StatTile из
+// ds-react, lucide-иконки, Source Serif заголовки.
 
 import WebApp from "@twa-dev/sdk";
 import { useEffect, useState } from "react";
 import { ProgressScreen } from "./ProgressScreen";
-import { AccountSheet } from "./AccountSheet";
+import { ModalScreen } from "./ModalScreen";
 import { SubscribeScreen } from "./SubscribeScreen";
 import { OnboardingModal } from "./OnboardingModal";
 import { fetchMe } from "./auth";
+import { RichModeCard } from "./ds-react/RichModeCard";
+import { StatTile } from "./ds-react/StatTile";
+import { TopBar } from "./ds-react/TopBar";
+import { LogoBox } from "./ds-react/LogoBox";
+import { SerifH } from "./ds-react/typography";
 
 export type Mode = "speaking" | "listening" | "grammar" | "srs";
 
@@ -32,7 +39,6 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
   const [userName, setUserName] = useState<string>("there");
   const [stats, setStats] = useState<MeStats | null>(null);
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
-  const [accountOpen, setAccountOpen] = useState<boolean>(false);
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
   // Онбординг. autoOpen — при первом заходе (помечаем done в БД).
   // manualOpen — юзер сам открыл через «Открыть гид» в Аккаунте (не помечаем).
@@ -90,90 +96,56 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
 
   return (
     <div className="mode-selector">
-      <div className="bg-orb bg-orb--one" aria-hidden />
-      <div className="bg-orb bg-orb--two" aria-hidden />
-
-      <header className="mode-selector__header">
-        <div className="tutor-brand">
-          <span className="tutor-brand__dot" aria-hidden />
-          <span className="tutor-brand__name">English Tutor</span>
-        </div>
-        <div className="mode-selector__header-right">
-          <p className="tutor-hello">Hi, {userName}</p>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setAccountOpen(true)}
-            aria-label="Аккаунт и настройки входа"
-            title="Аккаунт"
-          >
-            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>👤</span>
-          </button>
-        </div>
-      </header>
+      <TopBar
+        title="English Tutor"
+        logo={false}
+        right={
+          <>
+            <span className="ms-hello">Hi, {userName}</span>
+            <LogoBox size={32} />
+          </>
+        }
+      />
 
       <main className="mode-selector__main">
-        <h1 className="mode-selector__title">Что тренируем сегодня?</h1>
+        <SerifH as="h1" size={32}>Что тренируем сегодня?</SerifH>
         <p className="mode-selector__subtitle">
           Выбери режим — слова и прогресс общие.
         </p>
 
         <div className="mode-cards">
-          <button
-            type="button"
-            className="mode-card"
+          <RichModeCard
+            icon="mic"
+            title="Разговор"
+            subtitle="Push-to-talk диалог с AI-тьютором."
+            illustration="/illustrations/speaking-cafe.png"
+            tone="accent"
             onClick={() => onPick("speaking")}
-          >
-            <span className="mode-card__emoji" aria-hidden>🎙️</span>
-            <span className="mode-card__text">
-              <span className="mode-card__title">Разговор</span>
-              <span className="mode-card__hint">
-                Push-to-talk диалог с AI-тьютором.
-              </span>
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className="mode-card"
+          />
+          <RichModeCard
+            icon="headphones"
+            title="Слушание"
+            subtitle="Подкаст на твою тему и слова."
+            illustration="/illustrations/listening-podcast.png"
+            tone="speak"
             onClick={() => onPick("listening")}
-          >
-            <span className="mode-card__emoji" aria-hidden>🎧</span>
-            <span className="mode-card__text">
-              <span className="mode-card__title">Слушание</span>
-              <span className="mode-card__hint">
-                Подкаст на твою тему и слова.
-              </span>
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className="mode-card"
+          />
+          <RichModeCard
+            icon="book-open"
+            title="Грамматика"
+            subtitle="Уроки A1–C1 и разбор твоих ошибок."
+            illustration="/illustrations/grammar-notebook.png"
+            tone="warn"
             onClick={() => onPick("grammar")}
-          >
-            <span className="mode-card__emoji" aria-hidden>📝</span>
-            <span className="mode-card__text">
-              <span className="mode-card__title">Грамматика</span>
-              <span className="mode-card__hint">
-                Уроки A1–C1 и разбор твоих ошибок.
-              </span>
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className="mode-card"
+          />
+          <RichModeCard
+            icon="layers"
+            title="Слова"
+            subtitle="Карточки на повтор — интервальное запоминание."
+            illustration="/illustrations/vocabulary-cards.png"
+            tone="accent"
             onClick={() => onPick("srs")}
-          >
-            <span className="mode-card__emoji" aria-hidden>📚</span>
-            <span className="mode-card__text">
-              <span className="mode-card__title">Слова</span>
-              <span className="mode-card__hint">
-                Карточки на повтор — интервальное запоминание.
-              </span>
-            </span>
-          </button>
+          />
         </div>
 
         {stats && (
@@ -183,47 +155,25 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
             aria-label="Моя статистика — открыть полный прогресс"
             onClick={() => setProgressOpen(true)}
           >
-            <div className="ms-stat">
-              <span className="ms-stat__value">🔥 {stats.streak.current}</span>
-              <span className="ms-stat__label">дней подряд</span>
-            </div>
-            <div className="ms-stat">
-              <span className="ms-stat__value">⏱ {stats.total_minutes}</span>
-              <span className="ms-stat__label">минут практики</span>
-            </div>
-            <div className="ms-stat">
-              <span className="ms-stat__value">📚 {stats.total_words}</span>
-              <span className="ms-stat__label">слов в словаре</span>
-            </div>
-            <div className="ms-stat">
-              <span className="ms-stat__value">
-                🏅 {stats.achievements_earned}/{stats.achievements_total}
-              </span>
-              <span className="ms-stat__label">медалей</span>
-            </div>
+            <StatTile icon="flame" tone="streak" value={stats.streak.current} label="дней подряд" />
+            <StatTile icon="timer" tone="default" value={stats.total_minutes} label="минут практики" />
+            <StatTile icon="layers" tone="default" value={stats.total_words} label="слов в словаре" />
+            <StatTile icon="award" tone="accent" value={`${stats.achievements_earned}/${stats.achievements_total}`} label="медалей" />
           </button>
         )}
       </main>
 
       {progressOpen && (
-        <ProgressScreen
-          apiBase={API_BASE}
-          initData={WebApp.initData || ""}
-          onClose={() => setProgressOpen(false)}
-        />
+        <ModalScreen>
+          <ProgressScreen
+            apiBase={API_BASE}
+            initData={WebApp.initData || ""}
+            onClose={() => setProgressOpen(false)}
+          />
+        </ModalScreen>
       )}
 
-      {accountOpen && (
-        <AccountSheet
-          onClose={() => setAccountOpen(false)}
-          onLoggedOut={() => {
-            setAccountOpen(false);
-            onLoggedOut?.();
-          }}
-          onOpenSubscribe={() => setSubscribeOpen(true)}
-          onOpenTutorial={() => { setAccountOpen(false); setOnboardingManual(true); }}
-        />
-      )}
+      {/* AccountSheet popover убран — профиль теперь живёт в bottom-tab. */}
 
       {subscribeOpen && (
         <SubscribeScreen

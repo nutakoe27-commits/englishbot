@@ -1,0 +1,37 @@
+/* ============================================================
+   English Tutor — Spacing, radii, layout
+   8px base grid. Generous radii for the soft, friendly feel.
+   ============================================================ */
+:root {
+  /* --- Spacing scale (8px base, with 4/6 half-steps) --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+
+  /* --- Radii --- */
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;     /* primary card radius */
+  --radius-xl: 28px;     /* large sheets */
+  --radius-pill: 999px;
+
+  /* --- Layout --- */
+  --app-max-width: 440px;   /* mobile mini-app frame */
+  --screen-pad: 20px;       /* horizontal screen gutter */
+  --hit-min: 44px;          /* min touch target */
+
+  /* --- Z-index --- */
+  --z-base: 1;        /* @kind other */
+  --z-sticky: 10;     /* @kind other */
+  --z-overlay: 100;   /* @kind other */
+  --z-sheet: 110;     /* @kind other */
+  --z-toast: 200;     /* @kind other */
+}

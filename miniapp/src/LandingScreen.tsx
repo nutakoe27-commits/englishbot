@@ -15,6 +15,7 @@
 
 import { useEffect } from "react";
 import { ymHit, ymReachGoal } from "./metrika";
+import { ThemeToggle } from "./ThemeToggle";
 import "./Landing.css";
 
 interface Props {
@@ -86,6 +87,7 @@ function Header({ onLogin, onCta }: { onLogin: () => void; onCta: () => void }) 
           <span className="lp-brand__name">English Tutor</span>
         </div>
         <nav className="lp-nav">
+          <ThemeToggle />
           <button type="button" className="lp-nav__link" onClick={onLogin}>
             Войти
           </button>

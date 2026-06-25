@@ -15,8 +15,13 @@ import { PodcastPlayer } from "./PodcastPlayer";
 import { Transcript } from "./Transcript";
 import { ProgressScreen } from "./ProgressScreen";
 import { WordsScreen } from "./WordsScreen";
+import { ModalScreen } from "./ModalScreen";
 import { LockScreen } from "./LockScreen";
 import { SubscribeScreen } from "./SubscribeScreen";
+import { IconButton } from "./ds-react/IconButton";
+import { SerifH } from "./ds-react/typography";
+import { Icon } from "./ds-react/Icon";
+import { useLucide } from "./lucide";
 import {
   CATEGORY_OPTIONS,
   loadListeningSettings,
@@ -57,6 +62,7 @@ export function ListeningScreen({ onExit }: Props) {
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
   const inTelegram = !!WebApp.initData;
   const abortRef = useRef<AbortController | null>(null);
+  useLucide(`${phase}-${progressOpen}-${wordsOpen}-${paywall}`);
 
   useEffect(() => {
     try { WebApp.ready(); } catch { /* старые клиенты */ }
@@ -138,40 +144,21 @@ export function ListeningScreen({ onExit }: Props) {
       <div className="bg-orb bg-orb--one" aria-hidden />
       <div className="bg-orb bg-orb--two" aria-hidden />
 
-      <header className="tutor-header">
-        <div className="tutor-brand">
-          <button
-            type="button"
-            className="icon-button tutor-back"
-            onClick={onExit}
-            aria-label="Назад к выбору режима"
-            title="Назад"
-          >
-            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>←</span>
-          </button>
-          <span className="tutor-brand__dot" aria-hidden />
-          <span className="tutor-brand__name">Listening</span>
+      <header className="mode-v2-top">
+        <button type="button" className="mode-v2-back" onClick={onExit} aria-label="Назад">
+          <Icon name="arrow-left" size={16} />
+          <span>Назад</span>
+        </button>
+        <div className="mode-v2-title">
+          <span className="mode-v2-title__icon mode-v2-title__icon--speak">
+            <Icon name="headphones" size={16} />
+          </span>
+          <SerifH as="h1" size={22}>Слушание</SerifH>
         </div>
-        <div className="tutor-header__right">
-          <p className="tutor-hello">Hi, {userName}</p>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setProgressOpen(true)}
-            aria-label="Мой прогресс"
-            title="Мой прогресс"
-          >
-            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>📊</span>
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setWordsOpen(true)}
-            aria-label="Мои слова"
-            title="Мои слова"
-          >
-            <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden>📖</span>
-          </button>
+        <div className="mode-v2-actions">
+          <span className="mode-v2-hello">Hi, {userName}</span>
+          <IconButton icon="chart-no-axes-column" size="sm" label="Мой прогресс" onClick={() => setProgressOpen(true)} />
+          <IconButton icon="book-marked" size="sm" label="Мои слова" onClick={() => setWordsOpen(true)} />
         </div>
       </header>
 
@@ -241,18 +228,22 @@ export function ListeningScreen({ onExit }: Props) {
       </main>
 
       {wordsOpen && (
-        <WordsScreen
-          apiBase={API_BASE}
-          onClose={() => setWordsOpen(false)}
-        />
+        <ModalScreen>
+          <WordsScreen
+            apiBase={API_BASE}
+            onClose={() => setWordsOpen(false)}
+          />
+        </ModalScreen>
       )}
 
       {progressOpen && (
-        <ProgressScreen
-          apiBase={API_BASE}
-          initData={WebApp.initData || ""}
-          onClose={() => setProgressOpen(false)}
-        />
+        <ModalScreen>
+          <ProgressScreen
+            apiBase={API_BASE}
+            initData={WebApp.initData || ""}
+            onClose={() => setProgressOpen(false)}
+          />
+        </ModalScreen>
       )}
 
       {paywall && (
@@ -261,7 +252,7 @@ export function ListeningScreen({ onExit }: Props) {
           botUsername={BOT_USERNAME}
           message="Бесплатные подкасты на сегодня закончились. С подпиской — без лимитов."
           onDismiss={() => setPaywall(false)}
-          onOpenSubscribe={inTelegram ? undefined : () => setSubscribeOpen(true)}
+          onOpenSubscribe={() => setSubscribeOpen(true)}
         />
       )}
 
