@@ -227,18 +227,22 @@ export function ListeningScreen({ onExit }: Props) {
       </main>
 
       {wordsOpen && (
-        <WordsScreen
-          apiBase={API_BASE}
-          onClose={() => setWordsOpen(false)}
-        />
+        <div className="modal-screen">
+          <WordsScreen
+            apiBase={API_BASE}
+            onClose={() => setWordsOpen(false)}
+          />
+        </div>
       )}
 
       {progressOpen && (
-        <ProgressScreen
-          apiBase={API_BASE}
-          initData={WebApp.initData || ""}
-          onClose={() => setProgressOpen(false)}
-        />
+        <div className="modal-screen">
+          <ProgressScreen
+            apiBase={API_BASE}
+            initData={WebApp.initData || ""}
+            onClose={() => setProgressOpen(false)}
+          />
+        </div>
       )}
 
       {paywall && (

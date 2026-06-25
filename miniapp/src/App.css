@@ -568,14 +568,37 @@ button {
 .sheet-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 100;
-  background: color-mix(in srgb, var(--ink-900) 62%, transparent);
+  z-index: 300;                  /* выше BottomNav (z-index 100), иначе нав перебивает футер шита */
+  background: color-mix(in srgb, var(--ink-900) 55%, transparent);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: flex-end;
   justify-content: center;
   animation: sheet-fade-in 180ms ease-out;
+}
+
+/* ─── .modal-screen — обёртка для ProgressScreen/WordsScreen, когда они
+ * открываются ПОВЕРХ Speaking/Listening/Grammar (а не как tab). Тёплый
+ * затемнённый backdrop + grid фон. */
+.modal-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.10)) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.10)) 1px, transparent 1px);
+  background-size: 24px 24px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  animation: sheet-fade-in 180ms ease-out;
+}
+.modal-screen > * {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100%;
 }
 
 @keyframes sheet-fade-in {
@@ -1039,7 +1062,7 @@ button {
 .lock-screen {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 250;       /* выше BottomNav (100) и .modal-screen (250 — одного уровня ок) */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2731,20 +2754,31 @@ button {
   gap: 12px;
   padding: 14px 16px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-1);
+  border-radius: 12px;                              /* было пилюлей — теперь карточкой */
+  background: var(--bg-2);                          /* solid cream, не сливается */
   color: var(--text);
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.15s, transform 0.1s, opacity 0.15s;
+  box-shadow: 0 1px 3px rgba(60, 50, 30, 0.06);
+  transition: border-color 0.15s, transform 0.1s, opacity 0.15s, box-shadow 0.15s;
 }
 .grm-topic-row:active:not(:disabled) { transform: scale(0.98); }
-.grm-topic-row[data-status="available"] { border-color: var(--accent-border); }
-.grm-topic-row[data-status="available"]:hover { border-color: var(--accent); }
-.grm-topic-row[data-status="done"] { opacity: 0.85; }
+.grm-topic-row[data-status="available"] {
+  border-color: var(--border-accent);
+}
+.grm-topic-row[data-status="available"]:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 12px rgba(60, 50, 30, 0.10);
+}
+.grm-topic-row[data-status="done"] {
+  background: var(--accent-tint);
+  border-color: var(--border-accent);
+  opacity: 1;
+}
 .grm-topic-row[data-status="locked"] {
-  opacity: 0.45;
+  opacity: 0.7;                                     /* было 0.45 — карточка читаема */
   cursor: not-allowed;
+  background: var(--bg-1);
 }
 .grm-topic-row__icon { font-size: 18px; line-height: 1; flex-shrink: 0; }
 .grm-topic-row__body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -2827,18 +2861,16 @@ button {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   overflow: hidden;
+  background: var(--bg-2);                        /* base cream */
 }
 .grm-examples__row {
   display: grid;
-  /* minmax(0,1fr) вместо 1fr — иначе колонки не ужимаются ниже своего
-     контента и длинные примеры распирают таблицу шире экрана (grid blowout),
-     из-за чего .grm-screen{overflow:hidden} срезает весь правый край теории. */
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
   padding: 9px 12px;
 }
 .grm-examples__row:nth-child(odd) {
-  background: var(--border-strong);
+  background: var(--bg-3);                        /* solid alt cream (#F2EBD8), не translucent dark */
 }
 .grm-examples__row + .grm-examples__row {
   border-top: 1px solid var(--border);
