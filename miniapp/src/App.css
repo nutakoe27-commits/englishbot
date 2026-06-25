@@ -3632,8 +3632,10 @@ button {
  * darker dim backdrop через body. */
 @media (min-width: 768px) {
   body {
-    background-color: #BFAB7E;             /* darker wheat backdrop вокруг shell */
-    background-image: none;                /* без grid на тёмном фоне */
+    /* Тот же warm-dim backdrop что у .sub-screen популярки со статистикой
+     * (color-mix var(--text) 45% + cream) — солидный pre-resolved цвет. */
+    background-color: #9F968A;
+    background-image: none;
   }
   .app-shell {
     margin-top: 24px;
