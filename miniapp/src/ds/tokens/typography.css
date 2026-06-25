@@ -1,81 +1,42 @@
-/* ─────────────────────────────────────────────────────────────────────────
+/* ============================================================
    English Tutor — Typography
-   Two families with character: Spectral (display serif) + Golos Text (UI).
-   Scale is modular, tuned for screens. Sizes in rem (root = 16px).
-   ───────────────────────────────────────────────────────────────────────── */
+   Display: Source Serif 4 — literary serif, slight contrast,
+   old-style numerals; gives the "notebook + premium book" feel.
+   Text/UI: Inter — clean, friendly, highly legible at small sizes.
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700;8..60,800&family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root {
-  /* ── Families ────────────────────────────────────────────────────────── */
-  --font-display: "Spectral", Georgia, "Times New Roman", serif;
-  --font-ui:      "Golos Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono:    ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-display: 'Source Serif 4', 'Source Serif Pro', Georgia, serif;
+  --font-text: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
 
-  /* ── Weights ─────────────────────────────────────────────────────────── */
-  --fw-regular:  400; /* @kind font */
-  --fw-medium:   500; /* @kind font */
-  --fw-semibold: 600; /* @kind font */
-  --fw-bold:     700; /* @kind font */
+  /* --- Type scale (mobile-first, px) --- */
+  --text-display: 34px;   /* hero screen question */
+  --text-h1: 28px;        /* screen titles */
+  --text-h2: 22px;        /* section / sheet titles */
+  --text-h3: 18px;        /* card titles */
+  --text-body-lg: 16px;   /* reading text (grammar/listening) */
+  --text-base: 15px;      /* default UI */
+  --text-sm: 14px;        /* secondary */
+  --text-xs: 13px;        /* captions */
+  --text-2xs: 11px;       /* eyebrow / overline labels */
 
-  /* ── Type scale (font-size / line-height) ────────────────────────────── */
-  --fs-display-2xl: 3.75rem;  /* 60 — hero, serif */
-  --lh-display-2xl: 1.04; /* @kind font */
-  --fs-display-xl:  3rem;     /* 48 */
-  --lh-display-xl:  1.06; /* @kind font */
-  --fs-display-lg:  2.375rem; /* 38 */
-  --lh-display-lg:  1.1; /* @kind font */
+  /* --- Weights --- */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-extrabold: 800;
 
-  --fs-h1: 1.875rem;  /* 30 */
-  --lh-h1: 1.15; /* @kind font */
-  --fs-h2: 1.5rem;    /* 24 */
-  --lh-h2: 1.2; /* @kind font */
-  --fs-h3: 1.25rem;   /* 20 */
-  --lh-h3: 1.3; /* @kind font */
+  /* --- Line heights --- */
+  --leading-tight: 1.18;
+  --leading-snug: 1.32;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
 
-  --fs-body-lg: 1.125rem;  /* 18 */
-  --lh-body-lg: 1.6; /* @kind font */
-  --fs-body:    1rem;      /* 16 */
-  --lh-body:    1.6; /* @kind font */
-  --fs-body-sm: 0.875rem;  /* 14 */
-  --lh-body-sm: 1.5; /* @kind font */
-  --fs-caption: 0.8125rem; /* 13 */
-  --lh-caption: 1.45; /* @kind font */
-  --fs-micro:   0.6875rem; /* 11 — eyebrows, labels */
-  --lh-micro:   1.3; /* @kind font */
-
-  /* ── Letter-spacing ──────────────────────────────────────────────────── */
-  --ls-display: -0.02em; /* @kind font */
-  --ls-heading: -0.01em; /* @kind font */
-  --ls-body:    0;        /* @kind font */
-  --ls-label:   0.08em;  /* @kind font */
-
-  /* ── Semantic roles ──────────────────────────────────────────────────── */
-  --text-display: var(--fw-bold) var(--fs-display-xl)/var(--lh-display-xl) var(--font-display); /* @kind font */
-  --text-eyebrow-spacing: var(--ls-label); /* @kind font */
+  /* --- Letter spacing --- */
+  --tracking-tight: -0.02em;
+  --tracking-normal: -0.005em;
+  --tracking-wide: 0.10em;     /* overline labels (uppercased) */
 }
-
-/* Base element defaults (consumers opt in via these or the .u-* helpers) */
-body {
-  font-family: var(--font-ui);
-  font-size: var(--fs-body);
-  line-height: var(--lh-body);
-  color: var(--text);
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-}
-
-/* ── Helper classes (optional, handy for specimens & quick markup) ─────── */
-.u-display { font-family: var(--font-display); font-weight: var(--fw-bold);
-  font-size: var(--fs-display-xl); line-height: var(--lh-display-xl);
-  letter-spacing: var(--ls-display); }
-.u-h1 { font-family: var(--font-display); font-weight: var(--fw-semibold);
-  font-size: var(--fs-h1); line-height: var(--lh-h1); letter-spacing: var(--ls-heading); }
-.u-h2 { font-family: var(--font-ui); font-weight: var(--fw-semibold);
-  font-size: var(--fs-h2); line-height: var(--lh-h2); letter-spacing: var(--ls-heading); }
-.u-h3 { font-family: var(--font-ui); font-weight: var(--fw-semibold);
-  font-size: var(--fs-h3); line-height: var(--lh-h3); }
-.u-body { font-family: var(--font-ui); font-size: var(--fs-body); line-height: var(--lh-body); }
-.u-body-sm { font-family: var(--font-ui); font-size: var(--fs-body-sm); line-height: var(--lh-body-sm); }
-.u-eyebrow { font-family: var(--font-ui); font-weight: var(--fw-semibold);
-  font-size: var(--fs-micro); line-height: var(--lh-micro);
-  letter-spacing: var(--ls-label); text-transform: uppercase; }
-.u-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }

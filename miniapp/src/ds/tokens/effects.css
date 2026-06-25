@@ -1,0 +1,52 @@
+/* ============================================================
+   English Tutor — Effects: shadows, gradients, motion
+   Signature look = thin pencil hairlines + soft warm shadows
+   + butter-yellow highlighter accents. NO neon glows, NO heavy
+   drop shadows.
+   ============================================================ */
+:root {
+  /* --- Elevation shadows (warm, soft, low spread) --- */
+  --shadow-sm: 0 1px 3px rgba(42, 38, 34, 0.06);
+  --shadow-md: 0 4px 14px rgba(42, 38, 34, 0.08);
+  --shadow-lg: 0 14px 36px -10px rgba(42, 38, 34, 0.18);
+  --shadow-sheet: 0 -8px 30px -6px rgba(42, 38, 34, 0.18);
+
+  /* --- Tinted "glows" — used as soft halos on big buttons only --- */
+  --glow-accent: 0 4px 14px var(--accent-glow);
+  --glow-speak: 0 4px 14px var(--speak-glow);
+  --glow-record: 0 4px 18px var(--record-glow);
+
+  /* --- Inner hairline highlight (top edge of raised cards) --- */
+  --edge-top: inset 0 1px 0 rgba(255, 255, 255, 0.55);  /* @kind shadow */
+
+  /* --- Signature surface gradients --- */
+  --grad-card: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  --grad-primary: linear-gradient(180deg, var(--accent), var(--accent-deep));
+  --grad-primary-deep: linear-gradient(180deg, var(--accent-deep), #3B4A36);
+  --grad-user-bubble: linear-gradient(135deg, rgba(92, 112, 80, 0.16), rgba(92, 112, 80, 0.06));  /* @kind color */
+
+  /* Ambient page light — apply to the app canvas */
+  --ambient-bg: var(--bg-0);
+
+  /* --- Glass / blur --- */
+  --blur-sheet: blur(16px);   /* @kind other */
+  --blur-bar: blur(10px);     /* @kind other */
+  --glass-bg: rgba(250, 245, 232, 0.78);
+
+  /* --- Motion --- */
+  /* signature soft-out easing */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1); /* @kind other */
+  /* subtle overshoot */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* @kind other */
+  --dur-fast: 140ms;  /* @kind other */
+  --dur-base: 200ms;  /* @kind other */
+  --dur-slow: 320ms;  /* @kind other */
+
+  /* --- Interaction conventions ---
+     hover  : lighten surface (--surface-hover) or accent-soft
+     press  : scale(0.97) + keep color
+     focus  : 0 0 0 3px rgba(accent) ring
+     disabled: opacity 0.45, no shadow */
+  --press-scale: 0.97;  /* @kind other */
+  --ring: 0 0 0 3px rgba(92, 112, 80, 0.32);  /* @kind shadow */
+}

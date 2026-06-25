@@ -3549,6 +3549,8 @@ button {
 .app-shell {
   position: relative;
   width: 100%;
+  max-width: 480px;       /* mobile-frame для согласованности с mode-selector */
+  margin: 0 auto;          /* центрируем на десктопе */
   height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -3558,8 +3560,21 @@ button {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  /* Внутренние экраны (ModeSelector / SrsScreen / ProgressScreen /
-   * ProfileScreen) сами управляют своим скроллом и max-width. */
+}
+/* Внутренние экраны (ModeSelector / SrsScreen / ProgressScreen /
+ * ProfileScreen) сами имеют height:100dvh + max-width:480px из своих
+ * стилей. Когда они внутри .app-shell-frame'a — эти ограничения дублируют
+ * родителя и ломают flex. Сбрасываем. */
+.app-shell__body > .tutor-app,
+.app-shell__body > .lst-screen,
+.app-shell__body > .grm-screen,
+.app-shell__body > .srs-screen,
+.app-shell__body > .mode-selector,
+.app-shell__body > .profile-screen {
+  height: 100%;
+  max-height: none;
+  max-width: none;
+  margin: 0;
 }
 
 /* ─── BottomNav (4 таба внизу) ───────────────────────────────────────── */

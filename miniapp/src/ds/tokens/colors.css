@@ -1,128 +1,82 @@
-/* ─────────────────────────────────────────────────────────────────────────
-   English Tutor — Color system
-   Warm-tinted neutrals (paper & ink, never pure gray), one confident accent
-   (coral), and meaning-carrying semantics inherited from the product:
-   emerald = the tutor's voice, amber = corrections, coral = recording.
-   Dual theme: light is default on :root, dark overrides on [data-theme="dark"].
-   ───────────────────────────────────────────────────────────────────────── */
-
+/* ============================================================
+   English Tutor — Color tokens
+   Warm "notebook on grid paper" palette: cream surfaces, deep
+   mossy green primary, butter-yellow highlighter accent, dusty
+   rose for record, pencil-grey hairlines.
+   ============================================================ */
 :root {
-  /* ── Raw palette — warm neutrals (paper → ink) ───────────────────────── */
-  --paper-50:  #faf7f0;
-  --paper-100: #f6f1e8;
-  --paper-200: #ece5d6;
-  --paper-300: #ddd4c1;
-  --paper-400: #b8ad97;
-  --ink-400:   #9a958c;
-  --ink-500:   #6b6760;
-  --ink-600:   #4a4640;
-  --ink-700:   #322f2a;
-  --ink-800:   #22201b;
-  --ink-900:   #1c1a17;   /* warm near-black */
-  --ink-950:   #14120e;
+  /* --- Base surfaces (warm wheat / cream) --- */
+  --bg-0: #EFE7D6;     /* app canvas — warm wheat */
+  --bg-1: #FAF5E8;     /* raised surface / card base */
+  --bg-2: #FFFCF2;     /* elevated surface / card top */
+  --bg-3: #F2EBD8;     /* hover / pressed surface */
+  --bg-inset: #E8DFCB; /* wells, inputs, track grooves */
 
-  /* ── Raw palette — coral (brand accent) ──────────────────────────────── */
-  --coral-50:  #fdf0ec;
-  --coral-100: #fbdfd6;
-  --coral-200: #f6bcab;
-  --coral-300: #ef9077;
-  --coral-400: #e96f50;
-  --coral-500: #e2553b;   /* brand accent */
-  --coral-600: #c8472f;
-  --coral-700: #a23824;
+  /* --- Hairlines & borders (warm-dark at low alpha — pencil) --- */
+  --border: rgba(42, 38, 34, 0.10);
+  --border-strong: rgba(42, 38, 34, 0.22);
+  --border-accent: rgba(92, 112, 80, 0.32);
 
-  /* ── Raw palette — emerald (tutor voice / success) ───────────────────── */
-  --emerald-100: #d6f0e2;
-  --emerald-300: #6dcfa3;
-  --emerald-500: #1f8a5b;
-  --emerald-600: #197049;
-  --emerald-400: #34c188;
+  /* --- Text (warm-dark, never pure black) --- */
+  --text: #2A2622;        /* primary */
+  --text-dim: #6B5F50;    /* secondary / labels */
+  --text-faint: #968A75;  /* tertiary / disabled */
+  --text-on-accent: #FAF5E8;
 
-  /* ── Raw palette — amber (corrections / warning) ─────────────────────── */
-  --amber-100: #faeccf;
-  --amber-300: #ecbf6e;
-  --amber-500: #d98a1f;
-  --amber-600: #b06f15;
+  /* --- Primary: mossy green --- */
+  --accent: #5C7050;
+  --accent-soft: #7C8F6E;
+  --accent-deep: #485840;
+  --accent-glow: rgba(92, 112, 80, 0.22);
+  --accent-tint: rgba(92, 112, 80, 0.10);     /* fill for selected chips/cards */
+  --accent-tint-strong: rgba(92, 112, 80, 0.18);
 
-  /* ── Raw palette — clay (error / danger) ─────────────────────────────── */
-  --clay-100: #f7dcd6;
-  --clay-500: #c33a28;
-  --clay-600: #a52e1f;
+  /* --- Speak / success: softer sage (illustration tone) --- */
+  --speak: #6B8A5C;
+  --speak-soft: #9EB48F;
+  --speak-glow: rgba(107, 138, 92, 0.22);
+  --speak-tint: rgba(107, 138, 92, 0.10);
 
-  /* ── Semantic — LIGHT theme ──────────────────────────────────────────── */
-  --bg:            var(--paper-100);   /* page canvas */
-  --surface:       #fffdf9;            /* cards, sheets */
-  --surface-2:     var(--paper-50);    /* subtle inset / nested */
-  --surface-raise: #ffffff;            /* elevated / popovers */
+  /* --- Record / danger: dusty rose --- */
+  --record: #B85C5C;
+  --record-soft: #C77B7B;
+  --record-glow: rgba(184, 92, 92, 0.28);
+  --record-tint: rgba(184, 92, 92, 0.10);
 
-  --text:        var(--ink-900);
-  --text-dim:    var(--ink-500);
-  --text-faint:  var(--ink-400);
-  --text-on-accent: #fffdf9;
+  /* --- Warn / streak: butter yellow (highlighter marker) --- */
+  --warn: #D9B84A;
+  --warn-soft: #E8D77E;
+  --warn-tint: rgba(217, 184, 74, 0.20);
 
-  --border:        rgba(28, 26, 23, 0.10);
-  --border-strong: rgba(28, 26, 23, 0.18);
-  --border-faint:  rgba(28, 26, 23, 0.06);
+  /* --- Error --- */
+  --error: #C44848;
+  --error-tint: rgba(196, 72, 72, 0.10);
 
-  --accent:        var(--coral-500);
-  --accent-hover:  var(--coral-600);
-  --accent-press:  var(--coral-700);
-  --accent-soft:   rgba(226, 85, 59, 0.12);   /* tinted fills */
-  --accent-ring:   rgba(226, 85, 59, 0.30);   /* glow / focus ring */
-  --accent-border: rgba(226, 85, 59, 0.32);
+  /* --- Illustration pastels (referenced from cards/illos) --- */
+  --pastel-rose:  #E8C9C2;
+  --pastel-sky:   #C8D5E0;
+  --pastel-sage:  #C8D2B8;
+  --pastel-cream: #EFE0BA;
 
-  --speak:       var(--emerald-500);
-  --speak-soft:  rgba(31, 138, 91, 0.12);
-  --record:      var(--coral-500);            /* recording = brand moment */
-  --record-soft: rgba(226, 85, 59, 0.14);
+  /* --- Highlighter marker (butter pill used as accent bar) --- */
+  --marker: #E8D77E;
+  --marker-soft: #F0E2A6;
 
-  --warn:        var(--amber-500);
-  --warn-soft:   rgba(217, 138, 31, 0.14);
-  --error:       var(--clay-500);
-  --error-soft:  rgba(195, 58, 40, 0.12);
-  --success:     var(--emerald-500);
+  /* --- Semantic aliases (use these in components) --- */
+  --surface-app: var(--bg-0);
+  --surface-card: var(--bg-1);
+  --surface-card-top: var(--bg-2);
+  --surface-hover: var(--bg-3);
+  --surface-inset: var(--bg-inset);
 
-  /* focus ring used by all interactive primitives */
-  --focus-ring:  0 0 0 3px var(--accent-ring);
+  --text-heading: var(--text);
+  --text-body: var(--text);
+  --text-label: var(--text-dim);
+  --text-muted: var(--text-faint);
 
-  color-scheme: light;
-}
+  --primary: var(--accent);
+  --primary-hover: var(--accent-deep);
+  --on-primary: var(--text-on-accent);
 
-/* ── Semantic — DARK theme ─────────────────────────────────────────────── */
-[data-theme="dark"] {
-  --bg:            var(--ink-950);
-  --surface:       #1c1a15;
-  --surface-2:     #22201b;
-  --surface-raise: #29261f;
-
-  --text:        #f2eee4;             /* warm off-white */
-  --text-dim:    #a8a296;
-  --text-faint:  #6e685c;
-  --text-on-accent: #1c1a17;
-
-  --border:        rgba(242, 238, 228, 0.10);
-  --border-strong: rgba(242, 238, 228, 0.18);
-  --border-faint:  rgba(242, 238, 228, 0.06);
-
-  --accent:        var(--coral-500);
-  --accent-hover:  var(--coral-400);
-  --accent-press:  var(--coral-300);
-  --accent-soft:   rgba(226, 85, 59, 0.16);
-  --accent-ring:   rgba(226, 85, 59, 0.38);
-  --accent-border: rgba(226, 85, 59, 0.40);
-
-  --speak:       var(--emerald-400);
-  --speak-soft:  rgba(52, 193, 136, 0.16);
-  --record:      var(--coral-500);
-  --record-soft: rgba(226, 85, 59, 0.18);
-
-  --warn:        var(--amber-300);
-  --warn-soft:   rgba(236, 191, 110, 0.16);
-  --error:       #e26a57;
-  --error-soft:  rgba(226, 106, 87, 0.16);
-  --success:     var(--emerald-400);
-
-  --text-on-accent: #fffdf9;
-
-  color-scheme: dark;
+  --focus-ring: var(--accent-soft);
 }

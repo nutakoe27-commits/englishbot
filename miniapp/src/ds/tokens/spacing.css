@@ -1,61 +1,37 @@
-/* ─────────────────────────────────────────────────────────────────────────
-   English Tutor — Spacing, radius, shadow, motion
-   Strict 4px base scale — zero magic numbers downstream.
-   ───────────────────────────────────────────────────────────────────────── */
-
+/* ============================================================
+   English Tutor — Spacing, radii, layout
+   8px base grid. Generous radii for the soft, friendly feel.
+   ============================================================ */
 :root {
-  /* ── Spacing (4px grid) ──────────────────────────────────────────────── */
-  --space-0:  0;
-  --space-1:  0.25rem;  /* 4  */
-  --space-2:  0.5rem;   /* 8  */
-  --space-3:  0.75rem;  /* 12 */
-  --space-4:  1rem;     /* 16 */
-  --space-5:  1.25rem;  /* 20 */
-  --space-6:  1.5rem;   /* 24 */
-  --space-8:  2rem;     /* 32 */
-  --space-10: 2.5rem;   /* 40 */
-  --space-12: 3rem;     /* 48 */
-  --space-16: 4rem;     /* 64 */
-  --space-20: 5rem;     /* 80 */
-  --space-24: 6rem;     /* 96 */
+  /* --- Spacing scale (8px base, with 4/6 half-steps) --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
 
-  /* ── Radius ──────────────────────────────────────────────────────────── */
-  --radius-xs:   0.375rem; /* 6  */
-  --radius-sm:   0.625rem; /* 10 */
-  --radius-md:   0.875rem; /* 14 */
-  --radius-lg:   1.25rem;  /* 20 */
-  --radius-xl:   1.75rem;  /* 28 */
-  --radius-full: 999px;
+  /* --- Radii --- */
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;     /* primary card radius */
+  --radius-xl: 28px;     /* large sheets */
+  --radius-pill: 999px;
 
-  /* ── Elevation — warm-tinted, soft, low (editorial, not floaty) ──────── */
-  --shadow-xs: 0 1px 2px rgba(28, 26, 23, 0.06);
-  --shadow-sm: 0 2px 6px rgba(28, 26, 23, 0.07);
-  --shadow-md: 0 6px 18px -6px rgba(28, 26, 23, 0.14);
-  --shadow-lg: 0 18px 40px -16px rgba(28, 26, 23, 0.22);
-  --shadow-xl: 0 30px 60px -24px rgba(28, 26, 23, 0.30);
+  /* --- Layout --- */
+  --app-max-width: 440px;   /* mobile mini-app frame */
+  --screen-pad: 20px;       /* horizontal screen gutter */
+  --hit-min: 44px;          /* min touch target */
 
-  /* ── Motion — short, ease-out, purposeful (120–250ms) ────────────────── */
-  --ease:      cubic-bezier(0.22, 0.61, 0.36, 1); /* @kind other */
-  --ease-out:  cubic-bezier(0.16, 1, 0.3, 1); /* @kind other */
-  --dur-fast:  120ms; /* @kind other */
-  --dur-base:  180ms; /* @kind other */
-  --dur-slow:  250ms; /* @kind other */
-
-  /* ── Layout ──────────────────────────────────────────────────────────── */
-  --container:    1120px;   /* landing max width */
-  --app-width:    480px;    /* Telegram Mini App column */
-  --tap-min:      44px;     /* minimum touch target */
-}
-
-/* Dark theme: deepen shadows so elevation still reads on near-black */
-[data-theme="dark"] {
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.45);
-  --shadow-md: 0 8px 22px -8px rgba(0, 0, 0, 0.55);
-  --shadow-lg: 0 20px 46px -18px rgba(0, 0, 0, 0.65);
-  --shadow-xl: 0 34px 70px -26px rgba(0, 0, 0, 0.72);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root { --dur-fast: 0ms; /* @kind other */ --dur-base: 0ms; /* @kind other */ --dur-slow: 0ms; /* @kind other */ }
+  /* --- Z-index --- */
+  --z-base: 1;        /* @kind other */
+  --z-sticky: 10;     /* @kind other */
+  --z-overlay: 100;   /* @kind other */
+  --z-sheet: 110;     /* @kind other */
+  --z-toast: 200;     /* @kind other */
 }

@@ -1,10 +1,66 @@
-/* ─────────────────────────────────────────────────────────────────────────
-   English Tutor — Design System · global entry point
-   Consumers link THIS file only. It is an @import manifest — no rules here.
-   ───────────────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────
+   English Tutor — Design System v2 entry point.
+   Imports tokens + базовые правила + compat-слой.
 
-@import "./tokens/fonts.css";
+   Compat-слой ниже мапит старые имена переменных (--bg, --surface,
+   --accent-soft, --accent-hover, --shadow-lg, --radius-full и т.д.)
+   на новые v2-токены. Это нужно, чтобы App.css и Landing.css
+   продолжили работать без массового переписывания.
+   ──────────────────────────────────────────────────────────────────── */
+
 @import "./tokens/colors.css";
 @import "./tokens/typography.css";
 @import "./tokens/spacing.css";
-@import "./components.css";
+@import "./tokens/effects.css";
+@import "./tokens/base.css";
+
+/* ─── Compat: старые имена → новые v2-токены ──────────────────────── */
+:root {
+  /* surfaces */
+  --bg: var(--bg-0);
+  --surface: var(--bg-1);
+  --surface-2: var(--bg-3);
+  --surface-raise: var(--bg-2);
+
+  /* accent — теперь mossy green вместо coral */
+  --accent-hover: var(--accent-deep);
+  --accent-press: var(--accent-deep);
+  --accent-border: var(--border-accent);
+  --accent-ring: var(--accent-glow);
+  --accent-soft: var(--accent-tint);
+
+  /* status */
+  --success: var(--speak);
+  --warn-soft: var(--warn-tint);
+  --error-soft: var(--error-tint);
+
+  /* radii: v2 использует --radius-pill вместо --radius-full */
+  --radius-full: var(--radius-pill);
+
+  /* shadows: --shadow-xs/--shadow-xl у v2 нет, мапим на ближайшие */
+  --shadow-xs: var(--shadow-sm);
+  --shadow-xl: var(--shadow-lg);
+
+  /* ink-900 для color-mix в моих стилях */
+  --ink-900: var(--text);
+
+  /* типографика — старые имена */
+  --font-ui: var(--font-text);
+  --fs-h1: var(--text-h1);
+  --fs-h2: var(--text-h2);
+  --fs-h3: var(--text-h3);
+  --fs-body-lg: var(--text-body-lg);
+  --fs-body: var(--text-base);
+  --fs-body-sm: var(--text-sm);
+  --fs-caption: var(--text-xs);
+  --fs-micro: var(--text-2xs);
+  --fw-regular: var(--weight-regular);
+  --fw-medium: var(--weight-medium);
+  --fw-semibold: var(--weight-semibold);
+  --fw-bold: var(--weight-bold);
+  --tap-min: var(--hit-min);
+  --ls-label: var(--tracking-wide, 0.06em);
+
+  /* focus ring — формат box-shadow */
+  --focus-ring: 0 0 0 3px var(--accent-glow);
+}
