@@ -46,6 +46,82 @@
   --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.6),
                  0 2px 6px rgba(60, 50, 30, 0.10),
                  0 14px 28px -14px rgba(60, 50, 30, 0.28);
+
+  /* Popover-surface (используется в confirm-card / summary-card /
+   * listening transcript / settings fullscreen mobile bg) */
+  --surface-popup: #EFE7D6;
+
+  /* BottomNav frosted background */
+  --nav-bg: rgba(250, 245, 232, 0.85);
+}
+
+/* ─── Dark theme = точная копия main palette ────────────────────────
+ * Активируется через <html data-theme="dark"> (см. miniapp/src/theme.ts).
+ * Переключатель — ThemeToggle в Профиле. JSX не трогается, только
+ * перекраска через переменные. */
+[data-theme="dark"] {
+  /* Surfaces — main palette */
+  --bg-0: #0b0d12;
+  --bg-1: #12151c;
+  --bg-2: #181c25;
+  --bg-3: #20242f;
+  --bg-inset: #0e1118;
+
+  /* Text */
+  --text:       #e8eaf0;
+  --text-dim:   #b4b7c2;
+  --text-faint: #7d8190;
+  --text-on-accent: #fff;
+
+  /* Accent — purple из main */
+  --accent:        #7c5cff;
+  --accent-soft:   #a489ff;
+  --accent-deep:   #5a3fff;
+  --accent-glow:   rgba(124, 92, 255, 0.35);
+  --accent-tint:        rgba(124, 92, 255, 0.14);
+  --accent-tint-strong: rgba(124, 92, 255, 0.26);
+
+  /* Speak / Record — mint / coral из main */
+  --speak:       #33d9a6;
+  --speak-soft:  #6ee7c1;
+  --speak-tint:  rgba(51, 217, 166, 0.18);
+  --speak-glow:  rgba(51, 217, 166, 0.30);
+  --record:      #ff5470;
+  --record-soft: #ff8094;
+  --record-tint: rgba(255, 84, 112, 0.18);
+  --record-glow: rgba(255, 84, 112, 0.30);
+
+  /* Warn — приглушённый butter, читается на dark */
+  --warn:      #d9b84a;
+  --warn-tint: rgba(217, 184, 74, 0.20);
+
+  /* Borders */
+  --border:        rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-accent: rgba(124, 92, 255, 0.40);
+
+  /* Pastels (для NoteCard sage/cream/warn tone'ов) → purple-tint */
+  --pastel-sage:  rgba(124, 92, 255, 0.18);
+  --pastel-rose:  rgba(255, 84, 112, 0.18);
+  --pastel-cream: rgba(255, 255, 255, 0.04);
+
+  /* Cards / gradients */
+  --grad-card:         #181c25;
+  --grad-primary:      linear-gradient(180deg, #7c5cff, #5a3fff);
+  --grad-primary-deep: linear-gradient(180deg, #5a3fff, #4a30dc);
+
+  /* Сетка-фон — белые линии на тёмном */
+  --grid-line: rgba(255, 255, 255, 0.04);
+
+  /* Card shadow — глубже */
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.25),
+                 0 14px 28px -14px rgba(0, 0, 0, 0.45);
+
+  /* Popover-surface на dark — slightly raised */
+  --surface-popup: #1f2330;
+
+  /* BottomNav frosted bg на dark */
+  --nav-bg: rgba(20, 23, 32, 0.85);
 }
 
 /* ─── Compat: старые имена → новые v2-токены ──────────────────────── */

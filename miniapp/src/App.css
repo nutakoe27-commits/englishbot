@@ -1383,7 +1383,7 @@ button {
 .summary-card {
   width: 100%;
   max-width: 460px;
-  background: #EFE7D6;
+  background: var(--surface-popup);
   border: 1px solid var(--border-strong);
   border-radius: 16px;
   padding: 22px 20px 18px;
@@ -1685,7 +1685,7 @@ button {
 }
 
 .confirm-card {
-  background: #EFE7D6;
+  background: var(--surface-popup);
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   padding: 20px 18px 16px;
@@ -2486,7 +2486,7 @@ button {
   padding: 18px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
-  background: #EFE7D6;
+  background: var(--surface-popup);
   box-shadow: var(--shadow-card);
   font-size: 15px;
   line-height: 1.7;
@@ -3656,10 +3656,10 @@ button {
  * Mobile: shell заполняет всё, body не виден. */
 @media (min-width: 768px) {
   body {
-    background-color: #EFE7D6;
+    background-color: var(--surface-popup);
     background-image:
-      linear-gradient(to right, rgba(42, 38, 34, 0.03) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(42, 38, 34, 0.03) 1px, transparent 1px);
+      linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.03)) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.03)) 1px, transparent 1px);
     background-size: 24px 24px;
   }
   .app-shell {
@@ -3789,7 +3789,7 @@ button {
   /* Падинг только TOP/BOTTOM — горизонтальный 0, чтобы пилюля и кнопки
    * считались от одного 100% (см. формулу в BottomNav.tsx). */
   padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px));
-  background: rgba(250, 245, 232, 0.85);
+  background: var(--nav-bg);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border-top: 1px solid var(--border);
