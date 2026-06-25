@@ -43,7 +43,7 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
     draft.role !== "custom" || draft.roleCustom.trim().length > 0;
 
   return (
-    <ModalScreen>
+    <ModalScreen fullscreen>
       <div className="settings-popover" role="dialog" aria-modal="true" aria-label="Tutor settings">
         <header className="settings-popover__header">
           <SerifH as="h2" size={24}>Settings</SerifH>

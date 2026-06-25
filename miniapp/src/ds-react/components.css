@@ -456,6 +456,26 @@
   align-self: flex-start;
 }
 
+/* fullscreen-вариант ModalScreen: popover на весь viewport,
+ * без max-width / border / radius / shadow card-обёртки. */
+.sub-screen--fullscreen {
+  padding: 0;
+  background: var(--bg-2);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.sub-screen--fullscreen .sub-screen__inner {
+  max-width: none;
+  width: 100%;
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  align-self: stretch;
+  padding: 16px 18px 24px;
+}
+
 /* ─── SettingsPopover (бывший .sheet) — теперь как .sub-screen popover ── */
 .settings-popover {
   width: 100%;
