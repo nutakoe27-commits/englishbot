@@ -7,6 +7,9 @@
  *  - `mode='return'` — юзер вернулся с ЮKassa (URL содержит ?payment_id=N).
  *    Опрашиваем /api/payments/status каждые 2с до status='succeeded' либо
  *    таймаута. На успехе зовём `onPaid()`.
+ *
+ * UI v2: notebook-paper фон + warm cream surface, тарифы как sage-tinted
+ * NoteCard'ы, цена крупным Source Serif, lucide x-close.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -19,9 +22,12 @@ import {
   type Plan,
 } from "./auth";
 import { ymHit, ymReachGoal } from "./metrika";
+import { Button } from "./ds-react/Button";
+import { IconButton } from "./ds-react/IconButton";
+import { NoteCard } from "./ds-react/NoteCard";
+import { SerifH } from "./ds-react/typography";
+import { useLucide } from "./lucide";
 
-// Публичная оферта — статичный файл, раздаётся nginx'ом miniapp из public/.
-// Лежит в miniapp/public/oferta.html, Vite копирует его в dist при сборке.
 const OFFER_URL = "/oferta.html";
 
 interface Props {
@@ -34,7 +40,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
   const [plans, setPlans] = useState<Plan[]>([]);
   const [me, setMe] = useState<MeInfo | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null); // ключ тарифа в процессе
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
   const [askEmailFor, setAskEmailFor] = useState<Plan["key"] | null>(null);
   const [emailInput, setEmailInput] = useState<string>("");
@@ -45,10 +51,10 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
     initialReturnPaymentId ? "pending" : null,
   );
 
+  useLucide(`${loading}-${askEmailFor}-${returnStatus}-${plans.length}`);
+
   useEffect(() => {
     let alive = true;
-    // Виртуальный pageview: фронт SPA, поэтому при «навигации» в Subscribe
-    // отправляем hit отдельно. Цель subscribe_opened — точка входа в воронку.
     ymHit(window.location.origin + "/subscribe", "Подписка — тарифы");
     if (!initialReturnPaymentId) ymReachGoal("subscribe_opened");
     void (async () => {
@@ -60,7 +66,6 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
     return () => { alive = false; };
   }, [initialReturnPaymentId]);
 
-  // Полл статуса при возврате с ЮKassa.
   useEffect(() => {
     if (!returnPaymentId || returnStatus !== "pending") return;
     let cancelled = false;
@@ -78,7 +83,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
           amount_rub: s.amount_rub,
           days: s.days_granted,
         });
-        await fetchMe();          // обновим subscription_until в кэше где-то
+        await fetchMe();
         onPaid?.();
         return;
       }
@@ -86,7 +91,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
         setReturnStatus("canceled");
         return;
       }
-      if (attempts > 60) {        // ~2 минуты на полл (webhook может прийти позже)
+      if (attempts > 60) {
         setReturnStatus("expired");
         return;
       }
@@ -120,7 +125,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
         setError("Не получилось создать платёж. Попробуй ещё раз.");
       }
     } finally { setBusy(null); }
-  }, [busy]);
+  }, [busy, plans]);
 
   const submitEmail = (e: React.FormEvent) => {
     e.preventDefault();
@@ -134,166 +139,136 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
     void launchPayment(askEmailFor, v);
   };
 
-  // ── Render: режим возврата ────────────────────────────────────────────
-  if (returnPaymentId) {
-    return (
-      <div className="sheet-backdrop" onClick={onClose}>
-        <div className="sheet" onClick={(e) => e.stopPropagation()}>
-          <header className="sheet__header">
-            <h2 className="sheet__title">Оплата</h2>
-            <button className="sheet__close" onClick={onClose} aria-label="Закрыть">✕</button>
-          </header>
-          <div className="sheet__content">
-            {returnStatus === "pending" && (
-              <>
-                <p className="acc-lead">⏳ Ждём подтверждения от ЮKassa…</p>
-                <p className="acc-hint">
-                  Это может занять до минуты. Можешь не закрывать страницу —
-                  как только платёж пройдёт, подписка активируется
-                  автоматически.
-                </p>
-              </>
-            )}
-            {returnStatus === "succeeded" && (
-              <>
-                <p className="acc-lead">✅ Подписка активирована!</p>
-                <p className="acc-hint">Открывай любой режим — лимиты сняты.</p>
-              </>
-            )}
-            {returnStatus === "canceled" && (
-              <>
-                <p className="acc-lead">❌ Платёж отменён.</p>
-                <p className="acc-hint">Можешь попробовать ещё раз.</p>
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  onClick={() => {
-                    setReturnPaymentId(null);
-                    setReturnStatus(null);
-                  }}
-                >
-                  К тарифам
-                </button>
-              </>
-            )}
-            {returnStatus === "expired" && (
-              <>
-                <p className="acc-lead">⏰ Подтверждение задерживается.</p>
-                <p className="acc-hint">
-                  Если ты уже оплатил — подписка активируется в течение пары минут.
-                  Открой эту страницу заново или напиши @kmo_ai, мы поможем.
-                </p>
-              </>
-            )}
-          </div>
-          <footer className="sheet__footer">
-            <button type="button" className="btn btn--primary" onClick={onClose}>
-              Готово
-            </button>
-          </footer>
-        </div>
-      </div>
-    );
-  }
+  // Recommended plan для дефолтного "sage-tinted" акцента — берём средний (monthly).
+  const recommendedKey: string | undefined =
+    plans.find((p) => p.key === "monthly")?.key ?? plans[1]?.key ?? plans[0]?.key;
 
-  // ── Render: режим выбора тарифа ───────────────────────────────────────
   return (
-    <div className="sheet-backdrop" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <header className="sheet__header">
-          <h2 className="sheet__title">Подписка</h2>
-          <button className="sheet__close" onClick={onClose} aria-label="Закрыть">✕</button>
+    <div className="sub-screen">
+      <div className="sub-screen__inner">
+        <header className="sub-screen__top">
+          <SerifH as="h1" size={28}>Подписка</SerifH>
+          <IconButton icon="x" variant="surface" size="md" label="Закрыть" onClick={onClose} />
         </header>
 
-        <div className="sheet__content">
-          {loading ? (
-            <p className="acc-hint">Загрузка…</p>
+        <div className="sub-screen__body">
+          {returnPaymentId ? (
+            <NoteCard padding={20} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {returnStatus === "pending" && (
+                <>
+                  <div className="sub-status sub-status--pending">⏳ Ждём подтверждения от ЮKassa…</div>
+                  <p className="sub-hint">
+                    Это может занять до минуты. Можешь не закрывать страницу —
+                    как только платёж пройдёт, подписка активируется
+                    автоматически.
+                  </p>
+                </>
+              )}
+              {returnStatus === "succeeded" && (
+                <>
+                  <div className="sub-status sub-status--ok">✅ Подписка активирована!</div>
+                  <p className="sub-hint">Открывай любой режим — лимиты сняты.</p>
+                </>
+              )}
+              {returnStatus === "canceled" && (
+                <>
+                  <div className="sub-status sub-status--err">❌ Платёж отменён.</div>
+                  <p className="sub-hint">Можешь попробовать ещё раз.</p>
+                  <Button variant="primary" fullWidth onClick={() => { setReturnPaymentId(null); setReturnStatus(null); }}>
+                    К тарифам
+                  </Button>
+                </>
+              )}
+              {returnStatus === "expired" && (
+                <>
+                  <div className="sub-status sub-status--warn">⏰ Подтверждение задерживается.</div>
+                  <p className="sub-hint">
+                    Если ты уже оплатил — подписка активируется в течение пары минут.
+                    Открой эту страницу заново или напиши @kmo_ai, мы поможем.
+                  </p>
+                </>
+              )}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+                <Button variant="secondary" onClick={onClose}>Готово</Button>
+              </div>
+            </NoteCard>
+          ) : loading ? (
+            <p className="sub-hint">Загрузка…</p>
           ) : askEmailFor ? (
-            <form className="acc-pwd-form" onSubmit={submitEmail}>
-              <p className="acc-lead">
-                Нужен email для электронного чека (требование 54-ФЗ).
-              </p>
-              <input
-                className="login-input"
-                type="email"
-                placeholder="Email"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                required
-                autoFocus
-                inputMode="email"
-                maxLength={255}
-              />
-              <button type="submit" className="btn btn--primary" disabled={!!busy}>
-                {busy ? "…" : "Продолжить к оплате"}
-              </button>
-              <button
-                type="button"
-                className="btn btn--ghost"
-                onClick={() => setAskEmailFor(null)}
-              >
-                Назад
-              </button>
-              <p className="sub-offer">
-                Продолжая, вы принимаете условия{" "}
-                <a href={OFFER_URL} target="_blank" rel="noreferrer">
-                  публичной оферты
-                </a>
-                .
-              </p>
-            </form>
+            <NoteCard padding={20}>
+              <form className="sub-email-form" onSubmit={submitEmail}>
+                <p className="sub-lead">Нужен email для электронного чека (требование 54-ФЗ).</p>
+                <input
+                  className="sub-input"
+                  type="email"
+                  placeholder="Email"
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  required
+                  autoFocus
+                  inputMode="email"
+                  maxLength={255}
+                />
+                <Button type="submit" variant="primary" fullWidth disabled={!!busy}>
+                  {busy ? "…" : "Продолжить к оплате"}
+                </Button>
+                <Button type="button" variant="ghost" fullWidth onClick={() => setAskEmailFor(null)}>
+                  Назад
+                </Button>
+                <p className="sub-offer">
+                  Продолжая, вы принимаете условия{" "}
+                  <a href={OFFER_URL} target="_blank" rel="noreferrer">публичной оферты</a>.
+                </p>
+              </form>
+            </NoteCard>
           ) : (
             <>
               {me?.subscription_until && (
-                <p className="acc-lead">
+                <p className="sub-lead">
                   Подписка активна до <b>{_fmtDate(me.subscription_until)}</b>.
                   Можно продлить на любой срок — дни прибавляются.
                 </p>
               )}
 
-              <div className="sub-plans">
-                {plans.map((p) => (
-                  <button
-                    key={p.key}
-                    type="button"
-                    className="sub-plan"
-                    onClick={() => void launchPayment(p.key)}
-                    disabled={!!busy}
-                  >
-                    <div className="sub-plan__title">{p.title}</div>
-                    <div className="sub-plan__price">{p.amount_rub} ₽</div>
-                    <div className="sub-plan__days">{p.days} {_daysWord(p.days)}</div>
-                  </button>
-                ))}
+              <div className="sub-plans-v2">
+                {plans.map((p) => {
+                  const isRecommended = p.key === recommendedKey;
+                  return (
+                    <button
+                      key={p.key}
+                      type="button"
+                      className={`sub-plan-v2 ${isRecommended ? "is-recommended" : ""}`}
+                      onClick={() => void launchPayment(p.key)}
+                      disabled={!!busy}
+                    >
+                      <div className="sub-plan-v2__head">
+                        <span className="sub-plan-v2__title">{p.title}</span>
+                        {isRecommended && <span className="sub-plan-v2__badge">Рекомендуем</span>}
+                      </div>
+                      <div className="sub-plan-v2__price">{p.amount_rub} ₽</div>
+                      <div className="sub-plan-v2__days">{p.days} {_daysWord(p.days)}</div>
+                    </button>
+                  );
+                })}
               </div>
 
-              <p className="acc-hint">
+              <p className="sub-hint">
                 Оплата на сайте ЮKassa. После успешной оплаты подписка
                 активируется автоматически. Эл. чек придёт на твой email.
               </p>
               <p className="sub-offer">
                 Нажимая «Оплатить», вы принимаете условия{" "}
-                <a href={OFFER_URL} target="_blank" rel="noreferrer">
-                  публичной оферты
-                </a>
-                .
+                <a href={OFFER_URL} target="_blank" rel="noreferrer">публичной оферты</a>.
               </p>
             </>
           )}
 
-          {error && <p className="login-error">{error}</p>}
+          {error && <p className="sub-error">{error}</p>}
         </div>
-
-        <footer className="sheet__footer">
-          <button type="button" className="btn btn--ghost" onClick={onClose}>
-            Закрыть
-          </button>
-        </footer>
       </div>
     </div>
   );
 }
-
 
 function _fmtDate(iso: string): string {
   try {
