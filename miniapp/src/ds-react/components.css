@@ -420,28 +420,36 @@
 .dsx-rich-mode:hover .dsx-rich-mode__arrow { color: var(--accent-deep); border-color: var(--border-accent); }
 
 /* ─── SubscribeScreen v2 ────────────────────────────────────────────── */
+/* Тёмный warm-tinted backdrop с блюром, внутри — cream card-обёртка,
+ * чтобы поповер ВИДИМО отличался от страницы под ним (а не сливался с
+ * canvas одного цвета). */
 .sub-screen {
   position: fixed;
   inset: 0;
   z-index: 900;
   overflow-y: auto;
-  background: var(--bg);
-  background-image:
-    linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.07)) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.07)) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background: color-mix(in srgb, var(--text) 45%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   -webkit-overflow-scrolling: touch;
+  display: flex;
+  justify-content: center;
+  padding: 24px 16px;
+  box-sizing: border-box;
 }
 .sub-screen__inner {
   width: 100%;
-  max-width: 480px;
-  margin: 0 auto;
-  padding: 12px 18px 32px;
+  max-width: 460px;
+  padding: 16px 22px 28px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  min-height: 100%;
   box-sizing: border-box;
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  margin: auto 0;
 }
 .sub-screen__top {
   display: flex;

@@ -1044,9 +1044,9 @@ button {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(11, 13, 18, 0.88);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: color-mix(in srgb, var(--text) 45%, transparent);  /* warm dim, не пиксельно-чёрный */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   opacity: 0;
   transition: opacity 240ms var(--ease);
 }
@@ -1057,7 +1057,7 @@ button {
 .lock-screen__card {
   max-width: 420px;
   width: 100%;
-  background: var(--surface-2);
+  background: var(--bg-2);
   border: 1px solid var(--border-strong);
   border-radius: 20px;
   padding: 28px 24px;
@@ -1065,6 +1065,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  box-shadow: var(--shadow-card);
 }
 
 .lock-screen__icon {
@@ -3571,24 +3572,6 @@ button {
   flex-direction: column;
   background-color: var(--bg);
 }
-/* Desktop (≥768px): отпускаем shell на естественную высоту и даём
- * скроллить ВСЁ окно (а не только узкую 480px колонку). BottomNav
- * становится sticky-pinned внизу viewport'a. На мобиле всё как
- * было — flex column + внутренний scroll. */
-@media (min-width: 768px) {
-  .app-shell {
-    height: auto;
-    min-height: 100dvh;
-  }
-  .app-shell__body {
-    overflow: visible;
-  }
-  .bnav {
-    position: sticky;
-    bottom: 0;
-    z-index: 50;
-  }
-}
 .app-shell__body {
   flex: 1 1 auto;
   min-height: 0;
@@ -3631,6 +3614,50 @@ button {
   min-height: 100%;
   height: auto;
   padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Desktop (≥768px): отпускаем ВСЕ inner-scroll контейнеры. Shell растёт
+ * по контенту, скроллит окно, BottomNav становится sticky внизу
+ * viewport'a. Мобиле — без изменений (внутренний скролл колонки).
+ * ВАЖНО: этот блок должен быть ПОСЛЕ всех правил .app-shell__body /
+ * .app-shell__body > * выше, иначе они перебивают через cascade. */
+@media (min-width: 768px) {
+  .app-shell {
+    height: auto !important;
+    min-height: 100dvh;
+  }
+  .app-shell__body {
+    overflow: visible !important;
+  }
+  /* Сбрасываем фиксированную height: 100dvh и собственный overflow:
+   * hidden у внутренних экранов — пусть растут по контенту, скроллит
+   * окно. */
+  .app-shell__body > .tutor-app,
+  .app-shell__body > .lst-screen,
+  .app-shell__body > .grm-screen,
+  .app-shell__body > .srs-screen,
+  .app-shell__body > .mode-selector,
+  .app-shell__body > .profile-screen,
+  .app-shell__body > .prog-v2,
+  .app-shell__body > .srs-v2,
+  .app-shell__body > .wrd-v2 {
+    height: auto !important;
+    min-height: 0;
+    overflow: visible !important;
+  }
+  /* Внутри .mode-selector / .lst-screen / .grm-screen есть своя
+   * scroll-зона (__main / log) — на desktop тоже отпускаем. */
+  .mode-selector__main,
+  .lst-main,
+  .tutor-log {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  .bnav {
+    position: sticky;
+    bottom: 0;
+    z-index: 50;
+  }
 }
 
 /* ─── BottomNav (v2: sliding sage pill, frosted bg, lucide icons) ──── */
