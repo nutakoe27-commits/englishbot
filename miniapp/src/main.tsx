@@ -101,7 +101,9 @@ type AuthState = "loading" | "authed" | "login";
 function Root() {
   // Хуки всегда первыми, до условных return — иначе React 18 в проде может
   // выкинуть «rendered fewer hooks than expected».
-  const [screen, setScreen] = useState<Mode | "selector">("selector");
+  // Стартовый экран определяется один раз по deep-link (battle / srs / mode).
+  // TabShell дальше владеет state'ом таба и mode'а.
+  const [screen] = useState<Mode | "selector">("selector");
   const [startParam] = useState<string>(() => readStartParam());
   const [auth, setAuth] = useState<AuthState>("loading");
   // На вебе для не-залогиненных показываем сначала Landing, по клику
@@ -163,19 +165,20 @@ function Root() {
     );
   }
 
-  const backToSelector = () => setScreen("selector");
-  // Тренировочные экраны рендерятся БЕЗ bottom-nav, чтобы не отвлекать
-  // от практики.
-  if (screen === "speaking") return <App onExit={backToSelector} />;
-  if (screen === "listening") return <ListeningScreen onExit={backToSelector} />;
-  if (screen === "grammar") return <GrammarScreen onExit={backToSelector} />;
-
-  // Tab-shell: 4 главных таба (home / progress / words / profile) + BottomNav.
-  // Mode-card «Слова» на главной — тоже ведёт сюда (tab='words' = SrsScreen).
   return (
     <TabShell
-      initialTab={screen === "srs" ? "words" : "home"}
-      onOpenMode={(m) => setScreen(m)}
+      initialTab={
+        screen === "srs"
+          ? "words"
+          : screen === "selector"
+            ? "home"
+            : undefined
+      }
+      initialMode={
+        screen === "speaking" || screen === "listening" || screen === "grammar"
+          ? screen
+          : null
+      }
       onLoggedOut={() => { setShowLogin(false); setAuth("login"); }}
     />
   );
@@ -183,34 +186,45 @@ function Root() {
 
 function TabShell({
   initialTab,
-  onOpenMode,
+  initialMode,
   onLoggedOut,
 }: {
-  initialTab: TabKey;
-  onOpenMode: (m: Mode) => void;
+  initialTab?: TabKey;
+  initialMode?: Mode | null;
   onLoggedOut: () => void;
 }) {
-  const [tab, setTab] = useState<TabKey>(initialTab);
-  // Subscribe/Onboarding модалки — рендерятся поверх любого таба.
+  // mode != null → юзер в тренировочном экране (Speaking/Listening/Grammar).
+  // В этом случае ни один tab не подсвечен в BottomNav.
+  // Клик по любому tab → выходим из mode и переключаемся.
+  const [tab, setTab] = useState<TabKey>(initialTab ?? "home");
+  const [mode, setMode] = useState<Mode | null>(initialMode ?? null);
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
   const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
 
+  const switchTab = (next: TabKey) => {
+    setMode(null);
+    setTab(next);
+  };
+  const exitMode = () => setMode(null);
+
   let body: React.ReactNode;
-  if (tab === "home") {
-    // ModeSelector рендерится как «домашний таб». Логика logout остаётся
-    // (хотя теперь работает и через таб «Профиль»).
+  if (mode === "speaking") {
+    body = <App onExit={exitMode} />;
+  } else if (mode === "listening") {
+    body = <ListeningScreen onExit={exitMode} />;
+  } else if (mode === "grammar") {
+    body = <GrammarScreen onExit={exitMode} />;
+  } else if (tab === "home") {
     body = (
       <ModeSelector
         onPick={(m) => {
           if (m === "srs") { setTab("words"); return; }
-          onOpenMode(m);
+          setMode(m);
         }}
         onLoggedOut={onLoggedOut}
       />
     );
   } else if (tab === "progress") {
-    // ProgressScreen раньше была модалкой; теперь рендерится как таб, по
-    // «закрытию» возвращает на «home».
     body = (
       <ProgressScreen
         apiBase={(import.meta.env.VITE_API_BASE as string) || "https://api-english.krichigindocs.ru"}
@@ -221,7 +235,6 @@ function TabShell({
   } else if (tab === "words") {
     body = <SrsScreen onExit={() => setTab("home")} />;
   } else {
-    // tab === "profile"
     body = (
       <AccountSheet
         embedded
@@ -232,10 +245,14 @@ function TabShell({
     );
   }
 
+  // В режиме тренировки ни один таб не активен — но нав видна и кликабельна.
+  // При клике exit'имся из mode и переключаемся.
+  const activeForNav: TabKey | undefined = mode ? undefined : tab;
+
   return (
     <div className="app-shell">
       <div className="app-shell__body">{body}</div>
-      <BottomNav active={tab} onChange={setTab} />
+      <BottomNav active={activeForNav as TabKey} onChange={switchTab} />
       {subscribeOpen && (
         <SubscribeScreen onClose={() => setSubscribeOpen(false)} />
       )}

@@ -1323,12 +1323,13 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  background: var(--bg-1);
-  border: 1px solid var(--border);
+  padding: 10px 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   font-size: 14px;
   color: var(--text);
+  box-shadow: 0 1px 3px rgba(60, 50, 30, 0.06);
 }
 .wrd-v2__item-text {
   flex: 1;

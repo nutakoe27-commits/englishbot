@@ -3718,12 +3718,14 @@ button {
 /* ─── ProfileScreen (AccountSheet в embedded-режиме как fullscreen tab) ─ */
 .profile-screen {
   width: 100%;
-  height: 100%;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
-  background-color: var(--bg);
   color: var(--text);
-  overflow: hidden;
+  /* background и grid — из ds/styles.css */
+  /* Никаких height:100% + overflow:hidden — иначе ломается скролл и на
+   * мобиле, и на десктопе. Контейнер просто растёт по контенту,
+   * scroll'ит .app-shell__body (mobile) или окно (desktop). */
 }
 .ps-inner {
   width: 100%;
@@ -3732,7 +3734,6 @@ button {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  min-height: 0;
 }
 .ps-header {
   flex-shrink: 0;
@@ -3750,10 +3751,7 @@ button {
   letter-spacing: var(--ls-heading);
 }
 .ps-content {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  /* Естественная высота — скроллит родитель (.app-shell__body или окно) */
   padding: var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;
