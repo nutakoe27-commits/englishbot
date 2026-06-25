@@ -3738,10 +3738,17 @@ button {
   /* Внутри .mode-selector / .lst-screen / .grm-screen есть своя
    * scroll-зона (__main / log) — на desktop тоже отпускаем. */
   .mode-selector__main,
-  .lst-main,
-  .tutor-log {
+  .lst-main {
     overflow: visible !important;
     max-height: none !important;
+  }
+  /* .tutor-log (диалог-лог в Speaking) НЕ отпускаем — иначе при многих
+   * сообщениях он растягивает .tutor-app и ломает sticky talk-button.
+   * Жёсткий max-height + внутренний scroll. */
+  .tutor-log {
+    max-height: calc(100dvh - 280px);
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
   }
   /* BottomNav на desktop — fixed к низу viewport'a, шириной как колонка
    * (max-width: 480px центрировано). sticky внутри auto-height shell
