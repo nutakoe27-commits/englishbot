@@ -1465,7 +1465,7 @@ export default function App({ onExit }: AppProps = {}) {
           kind={lockState}
           message={lockMessage}
           botUsername={BOT_USERNAME}
-          onOpenSubscribe={inTelegram ? undefined : () => setSubscribeOpen(true)}
+          onOpenSubscribe={() => setSubscribeOpen(true)}
         />
       )}
 

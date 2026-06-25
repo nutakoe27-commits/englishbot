@@ -252,7 +252,7 @@ export function ListeningScreen({ onExit }: Props) {
           botUsername={BOT_USERNAME}
           message="Бесплатные подкасты на сегодня закончились. С подпиской — без лимитов."
           onDismiss={() => setPaywall(false)}
-          onOpenSubscribe={inTelegram ? undefined : () => setSubscribeOpen(true)}
+          onOpenSubscribe={() => setSubscribeOpen(true)}
         />
       )}
 

@@ -882,7 +882,7 @@ export function GrammarScreen({ onExit }: Props) {
           botUsername={BOT_USERNAME}
           message="Бесплатные уроки грамматики на сегодня закончились. С подпиской — без лимитов."
           onDismiss={() => setPaywall(false)}
-          onOpenSubscribe={inTelegram ? undefined : () => setSubscribeOpen(true)}
+          onOpenSubscribe={() => setSubscribeOpen(true)}
         />
       )}
 
