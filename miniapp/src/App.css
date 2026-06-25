@@ -3563,6 +3563,24 @@ button {
   flex-direction: column;
   background-color: var(--bg);
 }
+/* Desktop (≥768px): отпускаем shell на естественную высоту и даём
+ * скроллить ВСЁ окно (а не только узкую 480px колонку). BottomNav
+ * становится sticky-pinned внизу viewport'a. На мобиле всё как
+ * было — flex column + внутренний scroll. */
+@media (min-width: 768px) {
+  .app-shell {
+    height: auto;
+    min-height: 100dvh;
+  }
+  .app-shell__body {
+    overflow: visible;
+  }
+  .bnav {
+    position: sticky;
+    bottom: 0;
+    z-index: 50;
+  }
+}
 .app-shell__body {
   flex: 1 1 auto;
   min-height: 0;

@@ -21,8 +21,16 @@
  * активный chip / icon-pad / answer-button это SOLID pastel плитки.
  * Перекрываем токены, чтобы все «кнопко-подобное» имело цвет. */
 :root {
-  /* App canvas — чуть глубже wheat для большего контраста с cream-кардами */
-  --bg-0: #E4D5B7;
+  /* App canvas — насыщенный wheat: cream-карточки выпрыгивают. */
+  --bg-0: #D4C49F;
+
+  /* Карточки — solid cream поверх canvas, без полупрозрачного gradient. */
+  --bg-1: #FAF5E8;
+  --bg-2: #FFFCF2;
+
+  /* Принудительно solid карточная заливка вместо top→bottom gradient
+   * (gradient путал глаз — казалось что карточка прозрачная). */
+  --grad-card: #FFFCF2;
 
   /* Active fills: solid pastels (а не rgba(...) tint'ы) */
   --accent-tint:        #DCE3CC;   /* hover / passive sage fill */
@@ -31,8 +39,14 @@
   --record-tint:        #E8C9C2;   /* dusty rose pastel */
   --warn-tint:          #EFE0BA;   /* butter cream pastel */
 
-  /* Grid линии чуть заметнее (0.04 → 0.07) — фактура «тетрадки» видна. */
-  --grid-line: rgba(42, 38, 34, 0.07);
+  /* Grid линии заметнее (0.04 → 0.10) — фактура «тетрадки» очевидная,
+   * на канвасе явная, на solid карточках не видна (карточки её закрывают). */
+  --grid-line: rgba(42, 38, 34, 0.10);
+
+  /* Карточные тени — заметнее, чтобы прямо «приподнимались» от канваса */
+  --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.6),
+                 0 2px 6px rgba(60, 50, 30, 0.10),
+                 0 14px 28px -14px rgba(60, 50, 30, 0.28);
 }
 
 /* ─── Compat: старые имена → новые v2-токены ──────────────────────── */

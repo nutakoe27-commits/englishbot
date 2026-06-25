@@ -176,11 +176,11 @@
 
 /* ─── NoteCard ──────────────────────────────────────────────────────── */
 .dsx-card {
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   font-family: var(--font-text);
   color: var(--text);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 2px 6px rgba(42, 38, 34, 0.06), 0 12px 26px -12px rgba(42, 38, 34, 0.18);
+  box-shadow: var(--shadow-card);
 }
 .dsx-card--default { background: var(--grad-card); }
 .dsx-card--sage    { background: var(--pastel-sage); border-color: var(--border-accent); }
@@ -280,7 +280,7 @@
   gap: var(--space-1);
   padding: var(--space-4);
   background: var(--grad-card);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
 }
 .dsx-stat__top {
@@ -337,7 +337,7 @@
   gap: var(--space-3) var(--space-4);
   padding: var(--space-4) var(--space-5);
   background: var(--grad-card);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   color: var(--text);
   text-align: left;
@@ -470,7 +470,7 @@
   color: var(--text);
   cursor: pointer;
   font-family: var(--font-text);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 2px 6px rgba(42, 38, 34, 0.06), 0 12px 26px -12px rgba(42, 38, 34, 0.18);
+  box-shadow: var(--shadow-card);
   transition: background var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease), transform var(--dur-fast) var(--ease);
   -webkit-tap-highlight-color: transparent;
 }
@@ -1497,7 +1497,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   font-family: var(--font-text);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 2px 6px rgba(42, 38, 34, 0.06), 0 12px 26px -12px rgba(42, 38, 34, 0.18);
+  box-shadow: var(--shadow-card);
 }
 :is(.grm-screen, .grm-screen *) .grm-mode-card:hover {
   border-color: var(--border-accent);
@@ -1549,7 +1549,7 @@
   background: var(--grad-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 2px 6px rgba(42, 38, 34, 0.06), 0 12px 26px -12px rgba(42, 38, 34, 0.18);
+  box-shadow: var(--shadow-card);
   padding: 14px 14px;
 }
 :is(.tutor-app, .tutor-app *) .tutor-log__empty-title {
