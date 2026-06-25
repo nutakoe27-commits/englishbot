@@ -503,10 +503,11 @@
 }
 .settings-popover__footer .btn {
   flex: 1;
-  padding: 8px 14px;
-  font-size: 13.5px;
-  border-radius: 10px;
-  min-height: 36px;
+  padding: 8px 14px !important;
+  font-size: 13.5px !important;
+  border-radius: 10px !important;
+  min-height: 36px !important;
+  letter-spacing: 0 !important;
 }
 .sub-screen__top {
   display: flex;
