@@ -39,7 +39,12 @@
     <link rel="alternate icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
-    <meta name="theme-color" content="#7c5cff" />
+    <meta name="theme-color" content="#5C7050" />
+
+    <!-- lucide-icons CDN: рендерит SVG-иконки из <i data-lucide="name"/>.
+         После каждого React-commit нужно вызвать window.lucide.createIcons(),
+         см. src/lucide.ts useLucide hook. -->
+    <script src="https://unpkg.com/lucide@latest"></script>
 
     <!-- Yandex.Metrika counter — стоит на всех страницах SPA, т.к. index.html
          один. Доп. цели (subscription_paid и т.п.) шлём через window.ym из

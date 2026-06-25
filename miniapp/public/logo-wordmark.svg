@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 56" width="240" height="56" role="img" aria-label="English Tutor">
+  <defs>
+    <linearGradient id="etgw" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a18aff"></stop>
+      <stop offset="55%" stop-color="#7c5cff"></stop>
+      <stop offset="100%" stop-color="#6b48f5"></stop>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="4" width="48" height="48" rx="13" ry="13" fill="url(#etgw)"></rect>
+  <path d="M18 16h13v5h-7.6v4.7h6.9v4.6h-6.9v4.7H31v5H18z" fill="#ffffff"></path>
+  <circle cx="33.6" cy="18.4" r="2.6" fill="#33d9a6"></circle>
+  <text x="62" y="29" font-family="&#39;Space Grotesk&#39;, sans-serif" font-size="20" font-weight="700" letter-spacing="-0.02em" fill="#e8eaf0">English</text>
+  <text x="62" y="46" font-family="&#39;Space Grotesk&#39;, sans-serif" font-size="20" font-weight="700" letter-spacing="-0.02em" fill="#8a91a0">Tutor</text>
+</svg>

@@ -5,6 +5,9 @@ import WebApp from "@twa-dev/sdk";
 // Импортируется ПЕРВЫМ, чтобы App.css и Landing.css могли использовать
 // var(--bg/--text/--accent/--space-*/--radius-*).
 import "./ds/styles.css";
+// Стили dsx-* компонентов (Button/Card/Chip/Switch/TopBar/etc), используются в
+// новых экранах фаз 1+ ребрендинга на v2 дизайн-систему.
+import "./ds-react/components.css";
 import { initTheme } from "./theme";
 initTheme();
 import App from "./App";
