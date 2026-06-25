@@ -1431,12 +1431,13 @@ button {
   gap: 6px;
 }
 .summary-chip {
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-border);
+  background: var(--accent-tint-strong);
+  border: 1px solid var(--border-accent);
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 13px;
-  color: #d4caff;
+  font-weight: 600;
+  color: var(--accent-deep);
 }
 .summary-hint {
   font-size: 12px;
@@ -1452,7 +1453,7 @@ button {
   gap: 10px;
 }
 .summary-mistakes li {
-  background: var(--surface-2);
+  background: var(--bg-2);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   padding: 8px 10px;
@@ -1470,14 +1471,19 @@ button {
   font-size: 13px;
 }
 .summary-example__bad {
-  color: #ff8e8e;
+  color: var(--record);              /* dusty rose solid */
   text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: rgba(184, 92, 92, 0.7);
+  font-weight: 600;
 }
 .summary-example__arrow {
-  opacity: 0.5;
+  opacity: 0.6;
+  color: var(--text-dim);
 }
 .summary-example__good {
-  color: #8ee29a;
+  color: var(--accent-deep);         /* mossy green deep */
+  font-weight: 700;
 }
 .summary-empty {
   font-size: 13px;
@@ -1738,8 +1744,9 @@ button {
 
 .confirm-btn--danger {
   background: var(--record);
-  border: 1px solid var(--record);
-  color: #fff;
+  border: 2px solid var(--text);             /* чёрная (warm-dark) обводка */
+  color: var(--text);                        /* чёрный (warm-dark) текст */
+  font-weight: 700;
 }
 .confirm-btn--danger:hover,
 .confirm-btn--danger:active {
