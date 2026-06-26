@@ -53,11 +53,12 @@ BOT_USERNAME: str = os.getenv("BOT_USERNAME", "kmo_ai_english_bot").lstrip("@")
 BACKEND_URL: str = os.getenv("BACKEND_URL", "http://backend:8000").rstrip("/")
 BACKEND_BOT_SECRET: Optional[str] = os.getenv("BACKEND_BOT_SECRET") or None
 
-# Free Period — промо-период без оплаты. При FREE_PERIOD=1 бот скрывает
-# кнопки подписки, /subscribe возвращает уведомление вместо инвойса,
-# в /profile нет блока «оформить подписку», лимит 10 минут не показывается.
-# Платёжные обработчики (pre_checkout/successful_payment) остаются активными,
-# чтобы корректно обработать уже отправленные инвойсы и ручные выдачи.
+# Free Period — промо-период без оплаты. При FREE_PERIOD=1 бот не
+# показывает лимит 10 минут в карточке профиля. Подписка теперь
+# оформляется внутри мини-аппа (SubscribeScreen → ЮKassa); команды
+# /subscribe в боте больше нет. Старые TG-Payments обработчики
+# (pre_checkout/on_successful_payment) оставлены для back-compat
+# существующих invoice'ов.
 FREE_PERIOD: bool = os.getenv("FREE_PERIOD", "0") == "1"
 
 FREE_PERIOD_TEXT = (
@@ -343,22 +344,16 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
             await _handle_auth_deeplink(message, token)
             return
 
-    # Deep-link из mini app: «/start subscribe» — сразу показываем экран подписки.
-    # В Free Period подписка не нужна — отдаём промо-сообщение.
+    # Deep-link /start subscribe убран: подписка теперь оформляется внутри
+    # мини-аппа через SubscribeScreen → ЮKassa. На случай если старый
+    # клиент пришлёт payload=subscribe — просто открываем mini app.
     payload = payload_raw.lower()
     if payload == "subscribe":
-        if FREE_PERIOD:
-            await message.answer(
-                text=FREE_PERIOD_TEXT,
-                parse_mode="HTML",
-                reply_markup=_miniapp_keyboard(),
-            )
-        else:
-            await message.answer(
-                text=SUBSCRIBE_TEXT,
-                parse_mode="HTML",
-                reply_markup=_subscribe_keyboard(),
-            )
+        await message.answer(
+            text="Открой mini app — тарифы и оплата на вкладке «Профиль».",
+            parse_mode="HTML",
+            reply_markup=_miniapp_keyboard(),
+        )
         return
 
     user_name = message.from_user.first_name if message.from_user else "друг"
@@ -428,22 +423,23 @@ GUIDE_TEXT = (
     "━━━━━━━━━━━━━━━━━━━━━\n"
     "📚 <b>Личный словарь</b>\n"
     "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "Тапни 📖 в шапке mini app — это твой словарь активной лексики. "
-    "Слова оттуда подмешиваются в речь тьютора и в подкасты, чтобы ты "
-    "встречал их в контексте. Они же — карточки в режиме «📚 Слова».\n\n"
+    "Открой вкладку <b>Слова</b> в меню внизу mini app — это твой словарь "
+    "активной лексики. Слова оттуда подмешиваются в речь тьютора и в "
+    "подкасты, чтобы ты встречал их в контексте. Они же — карточки в "
+    "режиме «📚 Слова».\n\n"
     "Если в разговоре или подкасте тапнуть на слово — покажу перевод и "
     "кнопку «+ В словарь». Один тап — и слово уже учится.\n\n"
     "━━━━━━━━━━━━━━━━━━━━━\n"
     "📊 <b>Прогресс</b>\n"
     "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "Тапни 📊 в шапке mini app или /profile в боте: стрик, минуты по режимам, "
-    "пройденные темы грамматики, медали.\n\n"
+    "Вкладка <b>Прогресс</b> в меню внизу mini app (или /profile в боте): "
+    "стрик, минуты по режимам, пройденные темы грамматики, медали.\n\n"
     "Стрик растёт за любую практику — голосом, текстом, подкастом или "
     "грамматикой. Главное — каждый день.\n\n"
     "━━━━━━━━━━━━━━━━━━━━━\n"
     "⚙️ <b>Настройки под тебя</b>\n"
     "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "В mini app шестерёнка → подгони бота:\n"
+    "В режиме Разговор тапни шестерёнку справа сверху — подгони бота:\n"
     "• <b>Уровень</b> (A2–C1) — насколько простым языком я буду говорить\n"
     "• <b>Роль</b> — учитель, бариста, интервьюер, друг и др.\n"
     "• <b>Длина ответов</b> — короткие или развёрнутые\n"
@@ -489,8 +485,6 @@ async def cmd_help(message: Message) -> None:
         "/guide — <b>как правильно заниматься</b> (прочитай обязательно)",
         "/profile — твой прогресс и статистика",
     ]
-    if not FREE_PERIOD:
-        lines.append("/subscribe — информация о подписке")
     lines += [
         "/reminder — настройка ежедневного напоминания",
         "/help — эта справка",
@@ -554,12 +548,8 @@ def _profile_keyboard(has_sub: bool) -> InlineKeyboardMarkup:
             )
         ],
     ]
-    # В Free Period кнопку подписки не показываем — она просто не нужна.
-    if not FREE_PERIOD:
-        sub_text = "⭐ Продлить подписку" if has_sub else "⭐ Оформить подписку"
-        rows.append([
-            InlineKeyboardButton(text=sub_text, callback_data="profile:subscribe")
-        ])
+    # Подписка оформляется внутри мини-аппа (вкладка Профиль → «Оформить
+    # подписку»). Отдельной кнопки в боте больше нет.
     rows += [
         [
             InlineKeyboardButton(
@@ -760,89 +750,17 @@ async def cmd_profile(message: Message) -> None:
     )
 
 
-@dp.callback_query(lambda c: c.data == "profile:subscribe")
-async def cb_profile_subscribe(query: CallbackQuery) -> None:
-    await query.answer()
-    if not query.message:
-        return
-    if FREE_PERIOD:
-        await query.message.answer(
-            text=FREE_PERIOD_TEXT,
-            reply_markup=_miniapp_keyboard(),
-            parse_mode="HTML",
-        )
-        return
-    await query.message.answer(
-        text=SUBSCRIBE_TEXT,
-        reply_markup=_subscribe_keyboard(),
-        parse_mode="HTML",
-    )
+# cb_profile_subscribe удалён: кнопки «Оформить подписку» больше нет в
+# профиле бота. Тарифы — внутри мини-аппа на вкладке Профиль.
 
 
-# ─── /subscribe ──────────────────────────────────────────────────────────────
-SUBSCRIBE_TEXT = (
-    "⭐ <b>Подписка English Tutor</b>\n\n"
-    "На бесплатном тарифе в день доступно: <b>20 минут разговора</b>, "
-    "<b>2 подкаста</b> и <b>3 урока грамматики</b>. Словарь и повторение слов — "
-    "всегда бесплатно. Лимиты сбрасываются в полночь по МСК.\n\n"
-    "С подпиской — <b>без лимитов</b> и круглые сутки:\n"
-    f"• <b>{PRICE_TRIAL3_RUB} ₽ / 3 дня</b>\n"
-    f"• <b>{PRICE_MONTHLY_RUB} ₽ / месяц</b>\n"
-    f"• <b>{PRICE_YEARLY_RUB} ₽ / год</b> (выгоднее ~50%)\n\n"
-    "Оплата картой, SberPay или ЮМани — через ЮКассу прямо в Telegram. "
-    "<i>Чек будет отправлен на указанный email.</i>\n\n"
-    "💛 <b>Нет возможности оплатить?</b> Это не повод бросать английский. "
-    "Напиши «прошу доступ» в комментариях под любым постом в канале "
-    "@kmo_ai — и я выдам подписку бесплатно, без условий и лишних вопросов. "
-    "Учиться должны все, у кого есть желание."
-)
-
-
-def _subscribe_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=f"💳 3 дня — {PRICE_TRIAL3_RUB} ₽",
-                    callback_data="subscribe:trial3",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"💳 Месяц — {PRICE_MONTHLY_RUB} ₽",
-                    callback_data="subscribe:monthly",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"💳 Год — {PRICE_YEARLY_RUB} ₽",
-                    callback_data="subscribe:yearly",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🎙 Начать разговор",
-                    web_app=WebAppInfo(url=MINIAPP_URL),
-                )
-            ],
-        ]
-    )
-
-
-@dp.message(Command("subscribe"))
-async def cmd_subscribe(message: Message) -> None:
-    if FREE_PERIOD:
-        await message.answer(
-            text=FREE_PERIOD_TEXT,
-            parse_mode="HTML",
-            reply_markup=_miniapp_keyboard(),
-        )
-        return
-    await message.answer(
-        text=SUBSCRIBE_TEXT,
-        parse_mode="HTML",
-        reply_markup=_subscribe_keyboard(),
-    )
+# ─── /subscribe и SUBSCRIBE_TEXT удалены ──────────────────────────────────────
+# Подписка теперь оформляется ВНУТРИ мини-аппа: SubscribeScreen → ЮKassa
+# (см. miniapp/src/SubscribeScreen.tsx + backend/app/payment_routes.py).
+# Команда /subscribe убрана из набора, текст и клавиатура — тоже.
+# Telegram Payments хендлеры (cb_subscribe / pre_checkout /
+# on_successful_payment) ниже ОСТАВЛЕНЫ для back-compat — старые
+# invoice'ы которые юзер мог получить раньше будут отрабатывать.
 
 
 # ─── /reminder ───────────────────────────────────────────────────────────────
@@ -1092,7 +1010,11 @@ def _build_provider_data(plan_key: str, plan: dict) -> Optional[str]:
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("subscribe:"))
 async def cb_subscribe(callback: CallbackQuery) -> None:
-    """При клике на тариф — посылаем sendInvoice с provider_token ЮКассы."""
+    """DEPRECATED (back-compat): обработка subscribe:{plan} callback'ов
+    из старых invoice-сообщений. Новые платежи идут через мини-апп
+    (SubscribeScreen → ЮKassa), кнопок этих в боте больше не отправляется,
+    но если юзер тапнет старый — sendInvoice отработает.
+    При клике на тариф — посылаем sendInvoice с provider_token ЮКассы."""
     # Free Period: инвойс не отправляем. Это safety-net на случай, если у юзера
     # остался старый экран /subscribe в Telegram (под флагом эти кнопки не
     # рисуются, но callback из истории чата может прилететь).
@@ -1157,6 +1079,8 @@ async def cb_subscribe(callback: CallbackQuery) -> None:
 
 
 # ---- pre_checkout_query: отвечаем строго в течение 10 секунд ----
+# DEPRECATED (back-compat): нужен только для старых TG-invoice'ов от
+# cb_subscribe выше. Новые платежи — через мини-апп + ЮKassa webhook.
 @dp.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery) -> None:
     payload = query.invoice_payload or ""
@@ -1181,6 +1105,8 @@ async def pre_checkout(query: PreCheckoutQuery) -> None:
 
 
 # ---- successful_payment: зачисляем дни, записываем в payments ----
+# DEPRECATED (back-compat): обрабатывает старые TG-payments транзакции.
+# Новые платежи зачисляются backend webhook'ом (см. payment_routes.py).
 @dp.message(lambda m: m.successful_payment is not None)
 async def on_successful_payment(message: Message) -> None:
     if not message.successful_payment or not message.from_user:
@@ -1235,14 +1161,12 @@ async def on_successful_payment(message: Message) -> None:
 
 async def _set_bot_commands() -> None:
     """Задать список команд, который виден в меню Telegram."""
+    # /subscribe убран: подписка оформляется внутри мини-аппа (SubscribeScreen
+    # → ЮKassa), команда в боте больше не нужна.
     commands = [
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="guide", description="Как заниматься (инструкция)"),
         BotCommand(command="profile", description="Мой профиль"),
-    ]
-    if not FREE_PERIOD:
-        commands.append(BotCommand(command="subscribe", description="Подписка"))
-    commands += [
         BotCommand(command="reminder", description="Напоминания"),
         BotCommand(command="help", description="Справка по командам"),
     ]
