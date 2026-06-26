@@ -3743,8 +3743,8 @@ button {
   }
   /* Сбрасываем фиксированную height: 100dvh и собственный overflow:
    * hidden у внутренних экранов — пусть растут по контенту, скроллит
-   * окно. */
-  .app-shell__body > .tutor-app,
+   * окно. ИСКЛЮЧЕНИЕ: .tutor-app (Speaking) — оставляем фиксированную
+   * высоту чтобы chat-log не удлинял страницу при многих сообщениях. */
   .app-shell__body > .lst-screen,
   .app-shell__body > .grm-screen,
   .app-shell__body > .srs-screen,
@@ -3757,20 +3757,20 @@ button {
     min-height: 0;
     overflow: visible !important;
   }
-  /* Внутри .mode-selector / .lst-screen / .grm-screen есть своя
-   * scroll-зона (__main / log) — на desktop тоже отпускаем. */
+  /* Внутри .mode-selector / .lst-screen есть своя scroll-зона
+   * (__main / log) — на desktop тоже отпускаем. */
   .mode-selector__main,
   .lst-main {
     overflow: visible !important;
     max-height: none !important;
   }
-  /* .tutor-log (диалог-лог в Speaking) НЕ отпускаем — иначе при многих
-   * сообщениях он растягивает .tutor-app и ломает sticky talk-button.
-   * Жёсткий max-height + внутренний scroll. */
-  .tutor-log {
-    max-height: calc(100dvh - 280px);
-    overflow-y: auto !important;
-    overscroll-behavior: contain;
+  /* Speaking: .tutor-app сохраняет mobile-поведение — fixed height
+   * (минус padding shell'a + bnav) + внутренний grid scroll. Так
+   * chat-log не растягивается на бесконечность при длинной истории. */
+  .app-shell__body > .tutor-app {
+    height: calc(100dvh - 70px - env(safe-area-inset-bottom, 0px)) !important;
+    max-height: calc(100dvh - 70px - env(safe-area-inset-bottom, 0px)) !important;
+    overflow: hidden !important;
   }
   /* BottomNav на desktop — fixed к низу viewport'a, шириной как колонка
    * (max-width: 480px центрировано). sticky внутри auto-height shell
