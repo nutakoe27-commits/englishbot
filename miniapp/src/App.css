@@ -283,11 +283,15 @@ button {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-rows: 20px 156px 18px 32px;
+  /* status (Your turn) / talk-button (108px) / bottom-slot (End session) — без
+   * лишнего row под label (label теперь внутри кнопки). Прижато к низу
+   * через align-content: end, чтобы дать максимум места чату сверху. */
+  grid-template-rows: auto 108px auto;
   justify-items: center;
   align-items: center;
-  gap: 10px;
-  padding: 8px 0 4px;
+  align-content: end;
+  gap: 8px;
+  padding: 4px 0 2px;
 }
 
 /* ─── Статус ──────────────────────────────────────────────────── */
