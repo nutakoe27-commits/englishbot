@@ -345,17 +345,21 @@ button {
 /* ─── Кнопка Hold-to-Talk ────────────────────────────────────── */
 .talk-button {
   position: relative;
-  width: 140px;
-  height: 140px;
+  width: 104px;
+  height: 104px;
   border-radius: 50%;
   border: none;
   background: var(--surface-2);
   color: var(--accent);
   cursor: pointer;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   touch-action: none;
   outline: none;
+  padding: 0;
   transition:
     transform 180ms var(--ease),
     color 180ms var(--ease),
@@ -466,17 +470,24 @@ button {
   100% { transform: scale(1.18); opacity: 0;   }
 }
 
-/* ─── Подпись под кнопкой ──────────────────────────────────────── */
-.talk-button__label {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
+/* ─── Подпись внутри кнопки (под иконкой mic) ───────────────────── */
+.talk-button__label-inner {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-dim);
+  color: inherit;
   text-align: center;
-  line-height: 18px;
-  height: 18px;
-  transition: color 180ms var(--ease);
+  line-height: 1.1;
+  max-width: 84px;
+  pointer-events: none;
+  transition: color 180ms var(--ease), opacity 180ms var(--ease);
+}
+
+/* Старая внешняя подпись больше не используется (label перенесён внутрь
+ * кнопки). Если где-то остался — скрыт. */
+.talk-button__label {
+  display: none;
 }
 
 /* ─── Нижняя строка — всегда занимает 32px ────────────────────── */

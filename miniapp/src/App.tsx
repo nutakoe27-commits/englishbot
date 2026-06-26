@@ -1391,18 +1391,18 @@ export default function App({ onExit }: AppProps = {}) {
             <span className="talk-button__ring" aria-hidden />
             <span className="talk-button__icon" aria-hidden>
               {isRecording ? (
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
                   <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
                 </svg>
               ) : isSpeaking ? (
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
                   <path
                     d="M4 9v6h4l5 4V5L8 9H4zm11.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"
                     fill="currentColor"
                   />
                 </svg>
               ) : (
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
                   <path
                     d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3z"
                     fill="currentColor"
@@ -1414,10 +1414,8 @@ export default function App({ onExit }: AppProps = {}) {
                 </svg>
               )}
             </span>
+            <span className="talk-button__label-inner">{buttonLabel}</span>
           </button>
-
-          {/* Подпись под кнопкой */}
-          <div className="talk-button__label">{buttonLabel}</div>
 
           {/* Нижняя строка */}
           <div className="tutor-bottom-slot">
