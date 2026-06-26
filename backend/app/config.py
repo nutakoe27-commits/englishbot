@@ -61,8 +61,8 @@ class Settings(BaseSettings):
 
     # Цены подписки в рублях (синхронизированы с bot/app/main.py).
     SUBSCRIPTION_PRICE_TRIAL3_RUB: int = 99
-    SUBSCRIPTION_PRICE_MONTHLY_RUB: int = 499
-    SUBSCRIPTION_PRICE_YEARLY_RUB: int = 2999
+    SUBSCRIPTION_PRICE_MONTHLY_RUB: int = 999
+    SUBSCRIPTION_PRICE_YEARLY_RUB: int = 5999
 
     # ─── База данных ──────────────────────────────────────────────────────
     # Формат: mysql+asyncmy://user:password@host:port/dbname?charset=utf8mb4

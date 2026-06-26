@@ -92,11 +92,11 @@ export function LockScreen({ kind, message, botUsername, onDismiss, onOpenSubscr
               <span className="lock-screen__price-period">/ 3 дня</span>
             </div>
             <div className="lock-screen__price">
-              <span className="lock-screen__price-amount">499 ₽</span>
+              <span className="lock-screen__price-amount">999 ₽</span>
               <span className="lock-screen__price-period">/ месяц</span>
             </div>
             <div className="lock-screen__price">
-              <span className="lock-screen__price-amount">2 999 ₽</span>
+              <span className="lock-screen__price-amount">5 999 ₽</span>
               <span className="lock-screen__price-period">/ год</span>
             </div>
           </div>

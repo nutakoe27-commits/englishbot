@@ -319,7 +319,7 @@ function Pricing({ onCta }: { onCta: () => void }) {
           />
           <PlanCard
             title="Месячный"
-            price="499 ₽"
+            price="999 ₽"
             period="30 дней"
             hint="Самый популярный"
             onCta={onCta}
@@ -327,10 +327,10 @@ function Pricing({ onCta }: { onCta: () => void }) {
           />
           <PlanCard
             title="Годовой"
-            price="2 999 ₽"
-            oldPrice="5 988 ₽"
+            price="5 999 ₽"
+            oldPrice="11 988 ₽"
             period="365 дней"
-            hint="Экономия 2 989 ₽ — это 50%"
+            hint="Экономия 5 989 ₽ — это 50%"
             onCta={onCta}
             ctaLabel="Начать бесплатно"
           />

@@ -70,8 +70,8 @@ FREE_PERIOD_TEXT = (
 
 # Цены синхронизированы с LockScreen/Paywall в mini app.
 PRICE_TRIAL3_RUB = int(os.getenv("SUBSCRIPTION_PRICE_TRIAL3_RUB", "99"))
-PRICE_MONTHLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_MONTHLY_RUB", "499"))
-PRICE_YEARLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_YEARLY_RUB", "2999"))
+PRICE_MONTHLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_MONTHLY_RUB", "999"))
+PRICE_YEARLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_YEARLY_RUB", "5999"))
 
 # Дневной лимит для free-тарифа (секунды). Источник истины — settings_kv
 # в backend (ключ free_seconds_per_day), здесь держим фолбэк-значение для
