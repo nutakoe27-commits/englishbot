@@ -223,9 +223,20 @@ body,
 [data-theme="dark"] .profile-screen,
 [data-theme="dark"] .prog-v2,
 [data-theme="dark"] .srs-v2,
-[data-theme="dark"] .wrd-v2,
-[data-theme="dark"] .lp {
+[data-theme="dark"] .wrd-v2 {
   /* Внутри shell — solid bg, орбы видны через прозрачные слои выше */
   background-image: none;
   background-color: transparent;
+}
+
+/* Лендинг = standalone <div class="lp"> без .app-shell, на всю высоту
+ * скролла. У него собственный dark-фон с орбами (НЕ fixed — иначе на
+ * мобиле background-attachment:fixed не рендерится). */
+[data-theme="dark"] .lp {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(circle at 15% 8%, rgba(124, 92, 255, 0.20), transparent 40%),
+    radial-gradient(circle at 85% 30%, rgba(51, 217, 166, 0.12), transparent 45%);
+  background-repeat: no-repeat;
+  background-attachment: scroll;
 }
