@@ -13,6 +13,14 @@ html:has(body.lp-active) {
   overscroll-behavior: auto !important;
 }
 
+/* Тёмная тема: жёсткий чёрный фон на body/html во время лендинга —
+ * чтобы на мобиле не было «прозрачного»/белого фона (мобильные браузеры
+ * игнорируют orbs с background-attachment:fixed). */
+[data-theme="dark"] html:has(body.lp-active),
+[data-theme="dark"] body.lp-active {
+  background-color: #0b0d12 !important;
+}
+
 .lp {
   /* Локальные алиасы мапятся на DS-токены (warm-neutrals + coral). Поддержка
      light/dark из DS работает автоматически через [data-theme]. */
