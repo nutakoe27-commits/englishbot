@@ -22,6 +22,7 @@ import { Button } from "./ds-react/Button";
 import { SerifH } from "./ds-react/typography";
 import { Icon } from "./ds-react/Icon";
 import { useLucide } from "./lucide";
+import { playWord } from "./tts";
 
 interface WordItem {
   word: string;
@@ -212,6 +213,15 @@ export function WordsScreen({ apiBase, onClose }: Props) {
                   <span className="wrd-v2__item-tr"> — {w.translation}</span>
                 )}
               </div>
+              <button
+                type="button"
+                className="wrd-v2__speak"
+                onClick={() => playWord(w.word)}
+                aria-label={`Послушать ${w.word}`}
+                title="Послушать"
+              >
+                <Icon name="volume-2" size={14} />
+              </button>
               <button
                 type="button"
                 className="wrd-v2__rm"

@@ -30,6 +30,7 @@ from .payment_routes import router as payment_router
 from .grammar import router as grammar_router
 from .listening import router as listening_router
 from .srs import router as srs_router
+from .tts import router as tts_router
 from .auth import resolve_user
 from .config import settings
 from .db import db_session, init_db
@@ -134,6 +135,7 @@ app.include_router(payment_router)
 app.include_router(listening_router)
 app.include_router(grammar_router)
 app.include_router(srs_router)
+app.include_router(tts_router)
 
 
 @app.get("/health", tags=["System"])

@@ -25,7 +25,9 @@ import { NoteCard } from "./ds-react/NoteCard";
 import { Button } from "./ds-react/Button";
 import { SerifH } from "./ds-react/typography";
 import { Icon } from "./ds-react/Icon";
+import { IconButton } from "./ds-react/IconButton";
 import { useLucide } from "./lucide";
+import { playWord } from "./tts";
 
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
@@ -348,7 +350,10 @@ export function SrsScreen({ onExit: _onExit }: Props) {
         </header>
 
         <NoteCard padding="32px 24px" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 18, minHeight: 220 }}>
-          <div className="srs-v2__flip-word">{card.word}</div>
+          <div className="srs-v2__word-row">
+            <div className="srs-v2__flip-word">{card.word}</div>
+            <IconButton icon="volume-2" size="md" label="Послушать" onClick={() => playWord(card.word)} />
+          </div>
           {!revealed ? (
             <Button variant="secondary" onClick={() => setRevealed(true)} disabled={busy}>
               Показать перевод

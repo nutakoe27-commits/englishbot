@@ -1257,6 +1257,12 @@
   border-radius: var(--radius-md);
   line-height: 1.5;
 }
+.srs-v2__word-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
 .srs-v2__flip-word {
   font-family: var(--font-display);
   font-size: 38px;
@@ -1453,9 +1459,11 @@
 }
 .wrd-v2__item-word { font-weight: 600; }
 .wrd-v2__item-tr { color: var(--text-dim); }
-.wrd-v2__rm {
+.wrd-v2__rm,
+.wrd-v2__speak {
   width: 28px;
   height: 28px;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1471,6 +1479,11 @@
   background: var(--record-tint);
   color: var(--record);
   border-color: rgba(184, 92, 92, 0.32);
+}
+.wrd-v2__speak:hover {
+  background: var(--accent-tint);
+  color: var(--accent-deep);
+  border-color: var(--border-accent);
 }
 
 /* ─── Mode top-bar v2 (Listening / Grammar header swap) ─────────────── */

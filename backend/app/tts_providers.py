@@ -15,6 +15,7 @@ import asyncio
 import base64
 import json
 import logging
+import struct
 from typing import AsyncIterator, Protocol
 
 import websockets
@@ -25,6 +26,28 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 OUTPUT_SAMPLE_RATE = 24000  # фиксировано по всему пайплайну
+
+
+def wrap_pcm_to_wav(pcm: bytes, sample_rate: int = OUTPUT_SAMPLE_RATE) -> bytes:
+    """16-bit mono PCM → WAV-байты (44-байтный RIFF header).
+
+    Shared между listening.py (подкаст) и tts.py (озвучка одного слова)."""
+    n_channels = 1
+    bps = 16
+    byte_rate = sample_rate * n_channels * bps // 8
+    block_align = n_channels * bps // 8
+    data_size = len(pcm)
+    riff_size = 36 + data_size
+    header = (
+        b"RIFF"
+        + struct.pack("<I", riff_size)
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack("<IHHIIHH", 16, 1, n_channels, sample_rate, byte_rate, block_align, bps)
+        + b"data"
+        + struct.pack("<I", data_size)
+    )
+    return header + pcm
 
 
 # ─── Контракт ────────────────────────────────────────────────────────────────

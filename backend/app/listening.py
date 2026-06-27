@@ -35,7 +35,11 @@ from pydantic import BaseModel, Field
 from .config import settings
 from .db import db_session
 from . import presence
-from .tts_providers import KokoroTTSProvider, OUTPUT_SAMPLE_RATE
+from .tts_providers import (
+    KokoroTTSProvider,
+    OUTPUT_SAMPLE_RATE,
+    wrap_pcm_to_wav as _wrap_pcm_to_wav_shared,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,24 +93,9 @@ def _gc_audio_store() -> None:
             break
 
 
-def _wrap_pcm_to_wav(pcm: bytes, sample_rate: int = OUTPUT_SAMPLE_RATE) -> bytes:
-    """16-bit mono PCM → WAV-байты (44-байтный RIFF header)."""
-    n_channels = 1
-    bps = 16
-    byte_rate = sample_rate * n_channels * bps // 8
-    block_align = n_channels * bps // 8
-    data_size = len(pcm)
-    riff_size = 36 + data_size
-    header = (
-        b"RIFF"
-        + struct.pack("<I", riff_size)
-        + b"WAVE"
-        + b"fmt "
-        + struct.pack("<IHHIIHH", 16, 1, n_channels, sample_rate, byte_rate, block_align, bps)
-        + b"data"
-        + struct.pack("<I", data_size)
-    )
-    return header + pcm
+# _wrap_pcm_to_wav вынесен в tts_providers.wrap_pcm_to_wav (shared с tts.py).
+# Локальный алиас — чтобы не трогать остальные вызовы в этом файле.
+_wrap_pcm_to_wav = _wrap_pcm_to_wav_shared
 
 
 # ─── Промпт и LLM-вызов ──────────────────────────────────────────────────────
