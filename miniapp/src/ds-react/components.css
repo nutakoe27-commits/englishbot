@@ -692,13 +692,19 @@
   align-items: center;
   justify-content: center;
   padding: 24px 18px;
-  background: var(--bg);
+  background-color: var(--bg);
   background-image:
     linear-gradient(to right, var(--grid-line, rgba(42, 38, 34, 0.035)) 1px, transparent 1px),
     linear-gradient(to bottom, var(--grid-line, rgba(42, 38, 34, 0.035)) 1px, transparent 1px);
   background-size: 24px 24px;
   -webkit-overflow-scrolling: touch;
   box-sizing: border-box;
+}
+/* Тёмная тема: жёсткий чёрный фон страницы авторизации (на мобиле
+ * градиентная сетка прозрачна, без явного цвета фон «пропадал»). */
+[data-theme="dark"] .login-v2 {
+  background-color: #0b0d12 !important;
+  background-image: none;
 }
 .login-v2__card {
   width: 100%;
