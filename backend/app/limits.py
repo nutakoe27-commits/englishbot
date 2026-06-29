@@ -25,7 +25,7 @@ from .db import Repo
 
 log = logging.getLogger(__name__)
 
-DEFAULT_FREE_SECONDS_PER_DAY = 1200  # 20 минут
+DEFAULT_FREE_SECONDS_PER_DAY = 900  # 15 минут
 
 
 @dataclass

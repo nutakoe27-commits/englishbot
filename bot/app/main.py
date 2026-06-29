@@ -76,7 +76,7 @@ PRICE_YEARLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_YEARLY_RUB", "5999"))
 # Дневной лимит для free-тарифа (секунды). Источник истины — settings_kv
 # в backend (ключ free_seconds_per_day), здесь держим фолбэк-значение для
 # отображения в профиле.
-FREE_DAILY_SECONDS = int(os.getenv("FREE_DAILY_SECONDS", "1200"))
+FREE_DAILY_SECONDS = int(os.getenv("FREE_DAILY_SECONDS", "900"))
 
 # ADMIN_IDS (через запятую) — эти tg_id минуют maintenance-гейт.
 _ADMIN_IDS: set[int] = {

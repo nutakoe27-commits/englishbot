@@ -500,7 +500,7 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
 
             # Бесплатные лимиты — единый источник истины settings_kv (их же
             # читает backend). Тянем, чтобы профиль показывал актуальные числа.
-            free_seconds_per_day = 1200
+            free_seconds_per_day = 900
             free_listening_per_day = 2
             free_grammar_per_day = 3
             try:
