@@ -377,10 +377,9 @@ function Charity() {
           <div className="lp-charity__emoji" aria-hidden>💛</div>
           <h3 className="lp-charity__title">Нет возможности оплатить?</h3>
           <p>
-            Это не повод бросать английский. Напиши <b>«прошу доступ»</b> в
-            комментариях под любым постом в{" "}
-            <a href="https://t.me/kmo_ai" target="_blank" rel="noreferrer">@kmo_ai</a>{" "}
-            — выдам подписку бесплатно. Без бюрократии и сложных условий.
+            Это не повод бросать английский. Напиши мне лично:{" "}
+            <a href="https://t.me/NuTak0e" target="_blank" rel="noreferrer">@NuTak0e</a>{" "}
+            — разберёмся и найдём вариант.
           </p>
         </div>
       </div>

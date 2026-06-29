@@ -67,8 +67,8 @@ export function LockScreen({ kind, message, botUsername, onDismiss, onOpenSubscr
   };
 
   const handleOpenChannel = () => {
-    // Канал, где можно попросить бесплатный доступ в комментариях.
-    const url = "https://t.me/kmo_ai";
+    // Личка автора — там можно попросить доступ, если нет возможности оплатить.
+    const url = "https://t.me/NuTak0e";
     const tg = (window as any).Telegram?.WebApp;
     if (tg?.openTelegramLink) {
       tg.openTelegramLink(url);
@@ -107,15 +107,15 @@ export function LockScreen({ kind, message, botUsername, onDismiss, onOpenSubscr
         {kind === "limit_reached" && (
           <p className="lock-screen__charity">
             Нет возможности оплатить? Это не повод бросать английский — напиши
-            «прошу доступ» в комментариях под любым постом в{" "}
+            мне лично:{" "}
             <button
               type="button"
               className="lock-screen__charity-link"
               onClick={handleOpenChannel}
             >
-              @kmo_ai
+              @NuTak0e
             </button>
-            , и я выдам подписку бесплатно. 💛
+            {" "}— разберёмся и найдём вариант. 💛
           </p>
         )}
         {onDismiss && (

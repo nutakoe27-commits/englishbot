@@ -451,7 +451,9 @@ GUIDE_TEXT = (
     "• <i>«I want to practice ordering food at a restaurant.»</i>\n"
     "• <i>«Teach me 5 useful phrases for a job interview.»</i>\n"
     "• <i>«Pretend you're a tourist in Moscow and I'm helping you.»</i>\n\n"
-    "Готов? Жми «🎤 Начать разговор» из /start. Удачи! 🚀"
+    "Готов? Жми «🎤 Начать разговор» из /start. Удачи! 🚀\n\n"
+    "💛 Нет возможности оплатить подписку? Это не повод бросать английский — "
+    "напиши мне лично: @NuTak0e, разберёмся и найдём вариант."
 )
 
 

@@ -394,6 +394,14 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
               >
                 📣 Новости проекта — @kmo_ai
               </a>
+              <a
+                className="acc-channel"
+                href="https://t.me/NuTak0e"
+                target="_blank"
+                rel="noreferrer"
+              >
+                ✍️ Связаться с автором — @NuTak0e
+              </a>
             </>
           )}
         </div>
