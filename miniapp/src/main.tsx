@@ -20,7 +20,7 @@ import { LoginScreen } from "./LoginScreen";
 import { LandingScreen } from "./LandingScreen";
 import { BottomNav } from "./BottomNav";
 import { AccountSheet } from "./AccountSheet";
-import { ProgressScreen } from "./ProgressScreen";
+import { LeaderboardScreen } from "./LeaderboardScreen";
 import { SubscribeScreen } from "./SubscribeScreen";
 import { OnboardingModal } from "./OnboardingModal";
 import type { TabKey } from "./tabs";
@@ -224,14 +224,8 @@ function TabShell({
         onLoggedOut={onLoggedOut}
       />
     );
-  } else if (tab === "progress") {
-    body = (
-      <ProgressScreen
-        apiBase={(import.meta.env.VITE_API_BASE as string) || "https://api-english.krichigindocs.ru"}
-        initData={WebApp.initData || ""}
-        onClose={() => setTab("home")}
-      />
-    );
+  } else if (tab === "leaderboard") {
+    body = <LeaderboardScreen />;
   } else if (tab === "words") {
     body = <SrsScreen onExit={() => setTab("home")} />;
   } else {

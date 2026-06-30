@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, date, time, timedelta, timezone
 from typing import Optional, Sequence
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1451,6 +1451,118 @@ class Repo:
             .group_by(SessionRow.mode)
         )
         return {mode: int(secs) for mode, secs in res.all() if int(secs or 0) > 0}
+
+    # ─── Очки / лидерборд / уровень ─────────────────────────────────────
+    def _month_bounds_utc(self) -> tuple[datetime, datetime]:
+        """[начало текущего МСК-месяца, начало следующего) в наивном UTC.
+        started_at в sessions хранится как naive UTC (utcnow())."""
+        today = msk_today()
+        first = today.replace(day=1)
+        if today.month == 12:
+            nxt = today.replace(year=today.year + 1, month=1, day=1)
+        else:
+            nxt = today.replace(month=today.month + 1, day=1)
+        first_utc = (
+            datetime.combine(first, time(0, 0), tzinfo=MSK)
+            .astimezone(timezone.utc).replace(tzinfo=None)
+        )
+        nxt_utc = (
+            datetime.combine(nxt, time(0, 0), tzinfo=MSK)
+            .astimezone(timezone.utc).replace(tzinfo=None)
+        )
+        return first_utc, nxt_utc
+
+    async def user_points(self, user_id: int, *, month_only: bool) -> int:
+        """Очки юзера: speaking_min + listening_min + 5·grammar_sessions.
+        month_only=True — только текущий МСК-месяц (лидерборд);
+        False — за всё время (уровень)."""
+        from ..points import compute_points
+        conds = [SessionRow.user_id == user_id]
+        if month_only:
+            first_utc, nxt_utc = self._month_bounds_utc()
+            conds += [SessionRow.started_at >= first_utc, SessionRow.started_at < nxt_utc]
+        res = await self.s.execute(
+            select(
+                SessionRow.mode,
+                func.count(SessionRow.id),
+                func.coalesce(func.sum(SessionRow.used_seconds), 0),
+            ).where(*conds).group_by(SessionRow.mode)
+        )
+        speak_sec = listen_sec = grammar_cnt = 0
+        for mode, cnt, secs in res.all():
+            secs = int(secs or 0)
+            cnt = int(cnt or 0)
+            if mode in ("voice", "chat"):
+                speak_sec += secs
+            elif mode == "listening":
+                listen_sec += secs
+            elif mode == "grammar":
+                grammar_cnt += cnt
+        return compute_points(speak_sec, listen_sec, grammar_cnt)
+
+    async def leaderboard_month(self, limit: int = 3) -> list[dict]:
+        """Топ-N юзеров по очкам за текущий месяц.
+        [{user_id, first_name, points}], отсортировано по убыванию очков."""
+        from ..points import GRAMMAR_POINTS
+        first_utc, nxt_utc = self._month_bounds_utc()
+        # Очки агрегируем прямо в SQL: minutes(speaking)+minutes(listening)+5·grammar.
+        speak = func.sum(
+            case((SessionRow.mode.in_(("voice", "chat")), SessionRow.used_seconds), else_=0)
+        )
+        listen = func.sum(
+            case((SessionRow.mode == "listening", SessionRow.used_seconds), else_=0)
+        )
+        gram = func.sum(case((SessionRow.mode == "grammar", 1), else_=0))
+        points_expr = (
+            func.floor(speak / 60) + func.floor(listen / 60) + gram * GRAMMAR_POINTS
+        )
+        res = await self.s.execute(
+            select(
+                SessionRow.user_id,
+                User.first_name,
+                points_expr.label("points"),
+            )
+            .join(User, User.id == SessionRow.user_id)
+            .where(SessionRow.started_at >= first_utc, SessionRow.started_at < nxt_utc)
+            .group_by(SessionRow.user_id, User.first_name)
+            .having(points_expr > 0)
+            .order_by(points_expr.desc())
+            .limit(limit)
+        )
+        return [
+            {"user_id": int(uid), "first_name": fn, "points": int(pts or 0)}
+            for uid, fn, pts in res.all()
+        ]
+
+    async def user_month_rank(self, user_id: int) -> tuple[int, int]:
+        """(rank, points) юзера в месячном лидерборде. rank = (кол-во юзеров
+        с очками строго больше) + 1. Если у юзера 0 очков — rank=0."""
+        my_points = await self.user_points(user_id, month_only=True)
+        if my_points <= 0:
+            return 0, 0
+        from ..points import GRAMMAR_POINTS
+        first_utc, nxt_utc = self._month_bounds_utc()
+        speak = func.sum(
+            case((SessionRow.mode.in_(("voice", "chat")), SessionRow.used_seconds), else_=0)
+        )
+        listen = func.sum(
+            case((SessionRow.mode == "listening", SessionRow.used_seconds), else_=0)
+        )
+        gram = func.sum(case((SessionRow.mode == "grammar", 1), else_=0))
+        points_expr = (
+            func.floor(speak / 60) + func.floor(listen / 60) + gram * GRAMMAR_POINTS
+        )
+        sub = (
+            select(SessionRow.user_id, points_expr.label("p"))
+            .where(SessionRow.started_at >= first_utc, SessionRow.started_at < nxt_utc)
+            .group_by(SessionRow.user_id)
+            .subquery()
+        )
+        res = await self.s.execute(
+            select(func.count()).select_from(sub).where(sub.c.p > my_points)
+        )
+        ahead = int(res.scalar() or 0)
+        return ahead + 1, my_points
 
     async def sessions_breakdown_since(
         self, since_dt: datetime,

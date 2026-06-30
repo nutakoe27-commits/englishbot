@@ -546,6 +546,66 @@ async def me_achievements(
     }
 
 
+# ─── Геймификация: уровень + лидерборд ──────────────────────────────────────
+@app.get("/api/me/level", tags=["Me"])
+async def me_level(
+    init_data: str = "", authorization: Optional[str] = Header(None),
+) -> dict:
+    """Уровень юзера по lifetime-очкам + прогресс до следующего уровня."""
+    from fastapi import HTTPException, status
+    from .db import Repo
+    from .points import level_info
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await resolve_user(repo, authorization=authorization, init_data=init_data)
+        lifetime = await repo.user_points(user.id, month_only=False)
+    return level_info(lifetime)
+
+
+@app.get("/api/leaderboard", tags=["Me"])
+async def leaderboard(
+    init_data: str = "", authorization: Optional[str] = Header(None),
+) -> dict:
+    """Топ-3 за текущий месяц + строка самого юзера (место + очки)."""
+    from datetime import date as _date
+    from fastapi import HTTPException, status
+    from .db import Repo
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+
+    def _name(fn: Optional[str]) -> str:
+        return (fn or "").strip() or "Студент"
+
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await resolve_user(repo, authorization=authorization, init_data=init_data)
+        top_rows = await repo.leaderboard_month(limit=3)
+        my_rank, my_points = await repo.user_month_rank(user.id)
+
+    top = [
+        {
+            "rank": i + 1,
+            "name": _name(r["first_name"]),
+            "points": r["points"],
+            "is_me": r["user_id"] == user.id,
+        }
+        for i, r in enumerate(top_rows)
+    ]
+    # Имя текущего юзера для me-блока.
+    me_name = next((t["name"] for t in top if t["is_me"]), None)
+    if me_name is None:
+        me_name = _name(getattr(user, "first_name", None))
+    today = _date.today()
+    return {
+        "month": f"{today.year:04d}-{today.month:02d}",
+        "top": top,
+        "me": {"rank": my_rank, "points": my_points, "name": me_name},
+        "total": len(top_rows),
+    }
+
+
 # Backfill достижений для существующих юзеров — единоразово при старте.
 # Иначе при первой же сессии каждый активный юзер получит burst из 5+
 # push'ей. Маркер хранится в settings_kv['achievements_backfilled'].

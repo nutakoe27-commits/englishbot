@@ -1,2 +1,2 @@
 /** Главные табы нижней навигации. */
-export type TabKey = "home" | "progress" | "words" | "profile";
+export type TabKey = "home" | "leaderboard" | "words" | "profile";

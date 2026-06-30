@@ -9,6 +9,7 @@ import { ProgressScreen } from "./ProgressScreen";
 import { ModalScreen } from "./ModalScreen";
 import { SubscribeScreen } from "./SubscribeScreen";
 import { OnboardingModal } from "./OnboardingModal";
+import { LevelProgressBar } from "./LevelProgressBar";
 import { fetchMe } from "./auth";
 import { RichModeCard } from "./ds-react/RichModeCard";
 import { StatTile } from "./ds-react/StatTile";
@@ -108,6 +109,7 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
       />
 
       <main className="mode-selector__main">
+        <LevelProgressBar />
         <SerifH as="h1" size={32}>Что тренируем сегодня?</SerifH>
         <p className="mode-selector__subtitle">
           Выбери режим — слова и прогресс общие.

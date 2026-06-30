@@ -12,10 +12,10 @@ interface Props {
 }
 
 const TABS: { key: TabKey; icon: string; label: string }[] = [
-  { key: "home",     icon: "house",                label: "Главная"  },
-  { key: "progress", icon: "chart-no-axes-column", label: "Прогресс" },
-  { key: "words",    icon: "layers",               label: "Слова"    },
-  { key: "profile",  icon: "user-round",           label: "Профиль"  },
+  { key: "home",        icon: "house",      label: "Главная"   },
+  { key: "leaderboard", icon: "trophy",     label: "Лидерборд" },
+  { key: "words",       icon: "layers",     label: "Слова"     },
+  { key: "profile",     icon: "user-round", label: "Профиль"   },
 ];
 
 export function BottomNav({ active, onChange }: Props) {
