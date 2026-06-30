@@ -1189,6 +1189,10 @@ async def main() -> None:
         from .reminders import winback_loop
         asyncio.create_task(winback_loop(bot, MINIAPP_URL))
         logger.info("Starting winback loop (DB ready)")
+        # Рассылка скидки не-подписчикам раз в 3 дня.
+        from .reminders import discount_broadcast_loop
+        asyncio.create_task(discount_broadcast_loop(bot, MINIAPP_URL))
+        logger.info("Starting discount broadcast loop (DB ready)")
     else:
         logger.warning(
             "Reminders loop NOT started — DATABASE_URL not set or DB not reachable"

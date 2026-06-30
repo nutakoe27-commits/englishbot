@@ -882,3 +882,155 @@ async def winback_loop(bot: Bot, miniapp_url: str) -> None:
         except Exception as exc:
             logger.error("[winback] ошибка в цикле: %s", exc, exc_info=True)
             await asyncio.sleep(60)
+
+
+# ─── Рассылка скидки не-подписчикам ───────────────────────────────────────────
+
+DISCOUNT_COOLDOWN_DAYS = 3            # раз в 3 дня
+DISCOUNT_PUSH_HOURS_MSK = {12}       # полдень МСК
+DISCOUNT_PROMO_CODE = os.getenv("DISCOUNT_PROMO_CODE", "SALE20")
+DISCOUNT_PERCENT = int(os.getenv("DISCOUNT_PROMO_PERCENT", "20"))
+
+
+def _discount_keyboard(miniapp_url: str) -> InlineKeyboardMarkup:
+    # web_app кнопка открывает мини-апп по точному URL с ?promo=CODE —
+    # фронт читает его и сразу применяет скидку на экране тарифов.
+    sep = "&" if "?" in miniapp_url else "?"
+    url = f"{miniapp_url}{sep}promo={DISCOUNT_PROMO_CODE}"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎁 Использовать скидку",
+                    web_app=WebAppInfo(url=url),
+                )
+            ],
+        ]
+    )
+
+
+def _discount_text() -> str:
+    return (
+        f"🎁 <b>Скидка {DISCOUNT_PERCENT}% на любой тариф!</b>\n\n"
+        "Подписка снимает все лимиты: безлимит разговоров, подкастов и "
+        "грамматики, доступ круглые сутки.\n\n"
+        f"Сейчас — со скидкой <b>{DISCOUNT_PERCENT}%</b> на месяц, год или "
+        "2 года. Жми кнопку ниже — скидка применится автоматически. 💛"
+    )
+
+
+async def _discount_cooldown_active() -> bool:
+    """True, если с последней рассылки скидки прошло меньше N дней."""
+    if not is_db_ready():
+        return True
+    assert _SessionMaker is not None
+    async with _SessionMaker() as s:
+        res = await s.execute(
+            select(_SettingKV).where(_SettingKV.key == "discount_last_sent_at")
+        )
+        row = res.scalar_one_or_none()
+    if not row or not row.value:
+        return False
+    try:
+        last = datetime.fromisoformat(row.value)
+    except Exception:
+        return False
+    return (datetime.utcnow() - last) < timedelta(days=DISCOUNT_COOLDOWN_DAYS)
+
+
+async def _mark_discount_sent() -> None:
+    if not is_db_ready():
+        return
+    assert _SessionMaker is not None
+    now_iso = datetime.utcnow().isoformat()
+    async with _SessionMaker() as s:
+        res = await s.execute(
+            select(_SettingKV).where(_SettingKV.key == "discount_last_sent_at")
+        )
+        row = res.scalar_one_or_none()
+        if row is None:
+            s.add(_SettingKV(
+                key="discount_last_sent_at", value=now_iso, updated_at=datetime.utcnow(),
+            ))
+        else:
+            await s.execute(
+                update(_SettingKV).where(_SettingKV.key == "discount_last_sent_at")
+                .values(value=now_iso, updated_at=datetime.utcnow())
+            )
+        await s.commit()
+
+
+async def _select_non_subscribers() -> list["_User"]:
+    """Все не-подписчики с tg_id, не заблокированные."""
+    if not is_db_ready():
+        return []
+    assert _SessionMaker is not None
+    now_utc = datetime.utcnow()
+    from sqlalchemy import or_
+    async with _SessionMaker() as s:
+        res = await s.execute(
+            select(_User).where(
+                _User.is_blocked.is_(False),
+                _User.tg_id.is_not(None),
+                or_(
+                    _User.subscription_until.is_(None),
+                    _User.subscription_until <= now_utc,
+                ),
+            )
+        )
+        return list(res.scalars().all())
+
+
+async def _send_discount_broadcast(bot: Bot, miniapp_url: str) -> None:
+    """Один проход рассылки скидки. Глобальный cooldown через settings_kv."""
+    if await _discount_cooldown_active():
+        logger.info("[discount] cooldown активен — пропуск")
+        return
+    users = await _select_non_subscribers()
+    if not users:
+        logger.info("[discount] нет не-подписчиков")
+        return
+    logger.info("[discount] рассылка %d не-подписчикам", len(users))
+    kb = _discount_keyboard(miniapp_url)
+    text = _discount_text()
+    sent, failed, blocked = 0, 0, 0
+    for u in users:
+        try:
+            await bot.send_message(
+                chat_id=u.tg_id, text=text, parse_mode="HTML", reply_markup=kb,
+            )
+            sent += 1
+        except TelegramForbiddenError:
+            blocked += 1
+            try:
+                await set_user_reminder(u.tg_id, enabled=False)
+            except Exception:
+                pass
+        except TelegramRetryAfter as exc:
+            await asyncio.sleep(exc.retry_after + 1)
+        except Exception as exc:
+            failed += 1
+            logger.warning("[discount] не отправлено tg_id=%s: %s", u.tg_id, exc)
+        await asyncio.sleep(0.05)
+    await _mark_discount_sent()
+    logger.info("[discount] итог: sent=%d failed=%d blocked=%d", sent, failed, blocked)
+
+
+async def discount_broadcast_loop(bot: Bot, miniapp_url: str) -> None:
+    """Цикл: на границе часа МСК, если час в DISCOUNT_PUSH_HOURS_MSK и
+    прошло ≥N дней с прошлой рассылки — шлём скидку не-подписчикам."""
+    logger.info("[discount] цикл запущен (hours=%s, cooldown=%dд)",
+                sorted(DISCOUNT_PUSH_HOURS_MSK), DISCOUNT_COOLDOWN_DAYS)
+    await asyncio.sleep(20)
+    while True:
+        try:
+            sleep_s = _seconds_until_next_msk_hour()
+            await asyncio.sleep(sleep_s)
+            if datetime.now(MSK).hour in DISCOUNT_PUSH_HOURS_MSK:
+                await _send_discount_broadcast(bot, miniapp_url)
+        except asyncio.CancelledError:
+            logger.info("[discount] цикл остановлен")
+            raise
+        except Exception as exc:
+            logger.error("[discount] ошибка в цикле: %s", exc, exc_info=True)
+            await asyncio.sleep(60)

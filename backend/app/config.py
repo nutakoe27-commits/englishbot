@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     SUBSCRIPTION_PRICE_YEARLY_RUB: int = 5999
     SUBSCRIPTION_PRICE_TWOYEAR_RUB: int = 9999
 
+    # Промокод скидки для рассылки не-подписчикам (бот шлёт раз в N дней).
+    # Backend гарантирует его существование при старте.
+    DISCOUNT_PROMO_CODE: str = "SALE20"
+    DISCOUNT_PROMO_PERCENT: int = 20
+
     # ─── База данных ──────────────────────────────────────────────────────
     # Формат: mysql+asyncmy://user:password@host:port/dbname?charset=utf8mb4
     # На VPS: mysql+asyncmy://englishbot:PWD@host.docker.internal:3306/englishbot?charset=utf8mb4

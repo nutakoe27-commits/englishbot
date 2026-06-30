@@ -35,9 +35,11 @@ interface Props {
   onClose: () => void;
   onPaid?: () => void;
   initialReturnPaymentId?: number;
+  // Промокод из deep-link (бот шлёт ?promo=SALE20) — авто-применяется на старте.
+  initialPromoCode?: string;
 }
 
-export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Props) {
+export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initialPromoCode }: Props) {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [me, setMe] = useState<MeInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,6 +122,36 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
       setPromoMsg(`Скидка ${r.discount_percent}% применена ко всем тарифам.`);
     } finally { setPromoBusy(false); }
   }, [promoInput, promoBusy]);
+
+  // Авто-применение промокода из deep-link скидки (?promo=SALE20). Один раз
+  // на старте: проверяем код, и если валиден и ещё не использован — сразу
+  // показываем цены со скидкой, юзеру остаётся только выбрать тариф.
+  useEffect(() => {
+    const code = (initialPromoCode || "").trim().toUpperCase();
+    if (!code) return;
+    let alive = true;
+    setPromoInput(code);
+    setPromoBusy(true);
+    void (async () => {
+      try {
+        const r = await checkPromo(code);
+        if (!alive || !r) return;
+        if (r.already_used) {
+          setPromoMsg("Этот промокод ты уже использовал.");
+          return;
+        }
+        if (!r.valid) {
+          setPromoMsg("Промокод недействителен.");
+          return;
+        }
+        setPromoApplied({ code, pct: r.discount_percent });
+        setPromoMsg(`Скидка ${r.discount_percent}% применена ко всем тарифам.`);
+      } finally {
+        if (alive) setPromoBusy(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [initialPromoCode]);
 
   const _discounted = useCallback((amount: number): number => {
     if (!promoApplied) return amount;

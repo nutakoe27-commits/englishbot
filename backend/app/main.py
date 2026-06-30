@@ -637,6 +637,25 @@ async def _backfill_achievements_on_startup() -> None:
         )
 
 
+# Гарантируем существование промокода скидки (для рассылки не-подписчикам).
+@app.on_event("startup")
+async def _ensure_discount_promo_on_startup() -> None:
+    if not settings.DATABASE_URL:
+        return
+    try:
+        from .db import Repo
+        async with db_session() as session:
+            repo = Repo(session)
+            await repo.ensure_promo(
+                settings.DISCOUNT_PROMO_CODE, settings.DISCOUNT_PROMO_PERCENT,
+            )
+            await session.commit()
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[discount] ensure promo failed: %r", exc,
+        )
+
+
 # ─── WebSocket — голосовой диалог ─────────────────────────────────────────────
 
 @app.websocket("/ws/voice")

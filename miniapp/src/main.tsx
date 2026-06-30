@@ -106,6 +106,21 @@ function Root() {
   const [screen] = useState<Mode | "selector">("selector");
   const [startParam] = useState<string>(() => readStartParam());
   const [auth, setAuth] = useState<AuthState>("loading");
+  // Deep-link скидки: бот открывает мини-апп с ?promo=CODE — сразу
+  // показываем тарифы с авто-применённой скидкой. Читаем один раз и чистим URL.
+  const [promoParam] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const v = (p.get("promo") || "").trim();
+      if (v) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("promo");
+        window.history.replaceState(null, "", url.pathname + (url.search || "") + url.hash);
+      }
+      return v;
+    } catch { return ""; }
+  });
   // На вебе для не-залогиненных показываем сначала Landing, по клику
   // CTA — LoginScreen. Внутри Telegram Mini App initData аутентифицирует
   // юзера автоматически (см. ниже), Landing не появляется.
@@ -179,6 +194,7 @@ function Root() {
           ? screen
           : null
       }
+      initialPromo={promoParam}
       onLoggedOut={() => { setShowLogin(false); setAuth("login"); }}
     />
   );
@@ -187,10 +203,12 @@ function Root() {
 function TabShell({
   initialTab,
   initialMode,
+  initialPromo,
   onLoggedOut,
 }: {
   initialTab?: TabKey;
   initialMode?: Mode | null;
+  initialPromo?: string;
   onLoggedOut: () => void;
 }) {
   // mode != null → юзер в тренировочном экране (Speaking/Listening/Grammar).
@@ -198,7 +216,11 @@ function TabShell({
   // Клик по любому tab → выходим из mode и переключаемся.
   const [tab, setTab] = useState<TabKey>(initialTab ?? "home");
   const [mode, setMode] = useState<Mode | null>(initialMode ?? null);
-  const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
+  // Deep-link скидки: если бот открыл мини-апп с ?promo=CODE — сразу
+  // показываем экран тарифов с авто-применённой скидкой.
+  const [subscribeOpen, setSubscribeOpen] = useState<boolean>(
+    !!(initialPromo && initialPromo.trim()),
+  );
   const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
 
   const switchTab = (next: TabKey) => {
@@ -248,7 +270,10 @@ function TabShell({
       <div className="app-shell__body">{body}</div>
       <BottomNav active={activeForNav as TabKey} onChange={switchTab} />
       {subscribeOpen && (
-        <SubscribeScreen onClose={() => setSubscribeOpen(false)} />
+        <SubscribeScreen
+          initialPromoCode={initialPromo}
+          onClose={() => setSubscribeOpen(false)}
+        />
       )}
       {onboardingManual && (
         <OnboardingModal

@@ -712,6 +712,16 @@ class Repo:
         await self.s.flush()
         return p
 
+    async def ensure_promo(self, code: str, discount_percent: int) -> None:
+        """Гарантировать существование промокода (для рассылки скидки).
+        Если уже есть — НЕ перетираем (мог быть изменён админом)."""
+        code = code.strip().upper()
+        if not code:
+            return
+        if await self.get_promo(code) is not None:
+            return
+        await self.create_promo(code, discount_percent)
+
     async def list_promos(self) -> list:
         from .models import PromoCode
         res = await self.s.execute(
