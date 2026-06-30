@@ -172,7 +172,7 @@ class Payment(Base):
     )
     amount_rub: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     plan: Mapped[str] = mapped_column(
-        SAEnum("trial3", "monthly", "yearly", "gift", "admin_grant", "manual_pay",
+        SAEnum("trial3", "monthly", "yearly", "twoyear", "gift", "admin_grant", "manual_pay",
                name="payment_plan"),
         nullable=False,
     )
@@ -185,8 +185,32 @@ class Payment(Base):
     days_granted: Mapped[int] = mapped_column(Integer, nullable=False)
     granted_by_tg_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     notes: Mapped[Optional[str]] = mapped_column(String(500))
+    # Промокод, применённый к платежу (аудит скидки).
+    promo_code: Mapped[Optional[str]] = mapped_column(String(32))
+    discount_percent: Mapped[Optional[int]] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class PromoCode(Base):
+    __tablename__ = "promo_codes"
+
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    discount_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    used_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class PromoActivation(Base):
+    __tablename__ = "promo_activations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    payment_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    discount_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class SettingKV(Base):

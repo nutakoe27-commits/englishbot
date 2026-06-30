@@ -39,18 +39,19 @@ router = APIRouter(prefix="/api/payments", tags=["Payments"])
 # ─── Каталог тарифов (синхронизирован с bot/app/main.py:_PLAN_CATALOG) ──
 def _plan_catalog() -> dict[str, dict]:
     return {
-        "trial3":  {"days": 3,   "amount_rub": settings.SUBSCRIPTION_PRICE_TRIAL3_RUB,
-                    "title": "Пробный период — 3 дня"},
         "monthly": {"days": 30,  "amount_rub": settings.SUBSCRIPTION_PRICE_MONTHLY_RUB,
                     "title": "Подписка на месяц"},
         "yearly":  {"days": 365, "amount_rub": settings.SUBSCRIPTION_PRICE_YEARLY_RUB,
                     "title": "Подписка на год"},
+        "twoyear": {"days": 730, "amount_rub": settings.SUBSCRIPTION_PRICE_TWOYEAR_RUB,
+                    "title": "Подписка на 2 года"},
     }
 
 
 class _CreatePaymentIn(BaseModel):
-    plan: str                          # trial3 | monthly | yearly
+    plan: str                          # monthly | yearly | twoyear
     email: Optional[str] = None        # для 54-ФЗ чека, если у юзера ещё нет
+    promo_code: Optional[str] = None   # промокод для скидки (опционально)
 
 
 def _require_db() -> None:
@@ -72,6 +73,31 @@ async def list_plans() -> dict:
     ]}
 
 
+@router.get("/promo/check")
+async def promo_check(
+    code: str, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Проверить промокод до оплаты — фронт показывает цену со скидкой.
+    {valid, discount_percent, already_used}."""
+    _require_db()
+    from .db import Repo
+    norm = (code or "").strip().upper()
+    if not norm:
+        return {"valid": False, "discount_percent": 0, "already_used": False}
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await auth_lib.resolve_user(repo, authorization=authorization)
+        promo = await repo.get_promo(norm)
+        if not promo or not promo.active:
+            return {"valid": False, "discount_percent": 0, "already_used": False}
+        used = await repo.promo_used_by_user(norm, user.id)
+        return {
+            "valid": not used,
+            "discount_percent": int(promo.discount_percent),
+            "already_used": used,
+        }
+
+
 @router.post("/create")
 async def create_payment(
     body: _CreatePaymentIn, authorization: Optional[str] = Header(None),
@@ -88,10 +114,27 @@ async def create_payment(
     if not settings.YOOKASSA_SHOP_ID or not settings.YOOKASSA_SECRET_KEY:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "yookassa_not_configured")
 
+    # Итоговая сумма (со скидкой промокода) и метаданные промо — вычисляются
+    # внутри db-блока, используются дальше при вызове ЮKassa.
+    final_amount = int(info["amount_rub"])
+    promo_pct = 0
+    promo_code_norm: Optional[str] = None
+
     from .db import Repo
     async with db_session() as session:
         repo = Repo(session)
         user = await auth_lib.resolve_user(repo, authorization=authorization)
+
+        # Промокод: валидируем, проверяем «1 раз на юзера», применяем скидку.
+        if body.promo_code:
+            promo_code_norm = body.promo_code.strip().upper()
+            promo = await repo.get_promo(promo_code_norm)
+            if not promo or not promo.active:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "promo_invalid")
+            if await repo.promo_used_by_user(promo_code_norm, user.id):
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "promo_already_used")
+            promo_pct = int(promo.discount_percent)
+            final_amount = max(1, round(int(info["amount_rub"]) * (100 - promo_pct) / 100))
 
         # Email для чека: приоритет — переданный в body (свежий ввод от юзера),
         # потом users.email. Если фискализация включена и email нигде нет — 400.
@@ -116,17 +159,19 @@ async def create_payment(
         payment = await repo.create_pending_payment(
             user_id=user.id,
             plan=plan,
-            amount_rub=info["amount_rub"],
+            amount_rub=final_amount,
             days_granted=info["days"],
             provider_payment_id=tmp_pid,
             notes=f"web yookassa shop={settings.YOOKASSA_SHOP_ID}",
+            promo_code=promo_code_norm,
+            discount_percent=promo_pct or None,
         )
         await session.commit()
         local_payment_id = int(payment.id)
 
     # 2) Зовём ЮKassa. user.id и плата — в metadata, обратный adres — return_url.
     yk_resp = await yk.create_payment(
-        amount_rub=info["amount_rub"],
+        amount_rub=final_amount,
         description=f"English Tutor: {info['title']}",
         return_url=_return_url(local_payment_id),
         metadata={
@@ -165,8 +210,10 @@ async def create_payment(
         "payment_id": local_payment_id,
         "provider_payment_id": provider_pid,
         "confirmation_url": confirmation_url,
-        "amount_rub": info["amount_rub"],
+        "amount_rub": final_amount,
         "days": info["days"],
+        "promo_code": promo_code_norm,
+        "discount_percent": promo_pct,
     }
 
 

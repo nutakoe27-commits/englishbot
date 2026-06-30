@@ -15,6 +15,8 @@ import {
   type UserSession,
   type PaymentItem,
   type PaymentsMonthChart,
+  type PromoItem,
+  type PromoActivation,
 } from "./api";
 import {
   ResponsiveContainer,
@@ -224,6 +226,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     view = <UsersList />;
   } else if (route === "/payments") {
     view = <PaymentsPage />;
+  } else if (route === "/promo") {
+    view = <PromosPage />;
   } else if (route === "/broadcast") {
     view = <BroadcastPage />;
   } else if (route === "/settings") {
@@ -284,6 +288,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           {navBtn("/dashboard", "Метрики")}
           {navBtn("/users", "Пользователи")}
           {navBtn("/payments", "Платежи")}
+          {navBtn("/promo", "Промокоды")}
           {navBtn("/broadcast", "Массовые")}
           {navBtn("/settings", "Настройки")}
         </nav>
@@ -1884,6 +1889,178 @@ function PaymentsPage() {
             >
               Вперёд →
             </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Промокоды ───────────────────────────────────────────────────────────────
+function PromosPage() {
+  const isMobile = useIsMobile();
+  const [items, setItems] = useState<PromoItem[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [code, setCode] = useState<string>("");
+  const [discount, setDiscount] = useState<string>("10");
+  const [busy, setBusy] = useState<boolean>(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [acts, setActs] = useState<Record<string, PromoActivation[]>>({});
+
+  const reload = () => {
+    setItems(null);
+    api.listPromos()
+      .then((r) => setItems(r.items))
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  };
+  useEffect(reload, []);
+
+  const create = async () => {
+    const c = code.trim().toUpperCase();
+    const d = parseInt(discount, 10);
+    if (!c) { setErr("Введите код"); return; }
+    if (isNaN(d) || d < 1 || d > 100) { setErr("Скидка 1–100%"); return; }
+    setBusy(true); setErr(null);
+    try {
+      await api.createPromo(c, d);
+      setCode(""); setDiscount("10");
+      reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  };
+
+  const toggle = async (p: PromoItem) => {
+    try {
+      await api.togglePromo(p.code, !p.active);
+      reload();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const showActs = async (c: string) => {
+    if (expanded === c) { setExpanded(null); return; }
+    setExpanded(c);
+    if (!acts[c]) {
+      try {
+        const r = await api.promoActivations(c);
+        setActs((m) => ({ ...m, [c]: r.items }));
+      } catch { /* ignore */ }
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <h2 style={S.h2}>🎟 Промокоды</h2>
+
+      {/* Создание */}
+      <div style={S.card}>
+        <h3 style={S.h3}>Создать промокод</h3>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 12, color: colors.textMuted }}>Код</span>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              placeholder="SALE20"
+              style={{ ...S.input, textTransform: "uppercase", maxWidth: 180 }}
+              maxLength={32}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 12, color: colors.textMuted }}>Скидка %</span>
+            <input
+              type="number"
+              value={discount}
+              onChange={(e) => setDiscount(e.target.value)}
+              min={1}
+              max={100}
+              style={{ ...S.input, maxWidth: 100 }}
+            />
+          </label>
+          <button style={S.btn} onClick={create} disabled={busy}>
+            {busy ? "…" : "Создать"}
+          </button>
+        </div>
+        {err && <div style={{ ...S.error, marginTop: 12 }}>{err}</div>}
+      </div>
+
+      {/* Список */}
+      <div style={S.card}>
+        {!items && <div style={{ color: colors.textMuted }}>Загрузка…</div>}
+        {items && items.length === 0 && (
+          <div style={{ color: colors.textMuted }}>Промокодов пока нет.</div>
+        )}
+        {items && items.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table style={tableStyle(isMobile)}>
+              <thead>
+                <tr>
+                  <th style={S.th}>Код</th>
+                  <th style={S.th}>Скидка</th>
+                  <th style={S.th}>Активаций</th>
+                  <th style={S.th}>Статус</th>
+                  <th style={S.th}>Создан</th>
+                  <th style={S.th}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((p) => (
+                  <>
+                    <tr key={p.code}>
+                      <td style={{ ...S.td, fontWeight: 600 }}>{p.code}</td>
+                      <td style={S.td}>{p.discount_percent}%</td>
+                      <td style={S.td}>
+                        <button
+                          onClick={() => showActs(p.code)}
+                          style={{ background: "transparent", border: 0, color: colors.primary, cursor: "pointer", padding: 0, font: "inherit" }}
+                        >
+                          {p.used_count} {expanded === p.code ? "▲" : "▼"}
+                        </button>
+                      </td>
+                      <td style={S.td}>
+                        <button
+                          onClick={() => toggle(p)}
+                          style={{
+                            ...S.btnSecondary,
+                            padding: "4px 10px",
+                            fontSize: 12,
+                            color: p.active ? colors.success : colors.textMuted,
+                          }}
+                        >
+                          {p.active ? "вкл" : "выкл"}
+                        </button>
+                      </td>
+                      <td style={{ ...S.td, fontSize: 12, color: colors.textMuted }}>
+                        {p.created_at ? fmtDate(p.created_at) : "—"}
+                      </td>
+                      <td style={S.td}></td>
+                    </tr>
+                    {expanded === p.code && (
+                      <tr key={p.code + "-acts"}>
+                        <td colSpan={6} style={{ ...S.td, background: colors.bg }}>
+                          {!acts[p.code] && <span style={{ color: colors.textMuted }}>Загрузка…</span>}
+                          {acts[p.code] && acts[p.code].length === 0 && (
+                            <span style={{ color: colors.textMuted }}>Ещё никто не активировал.</span>
+                          )}
+                          {acts[p.code] && acts[p.code].length > 0 && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              {acts[p.code].map((a, i) => (
+                                <div key={i} style={{ fontSize: 13 }}>
+                                  {a.username ? `@${a.username}` : `#${a.user_id}`}
+                                  {a.tg_id ? ` · tg ${a.tg_id}` : ""}
+                                  {" · "}{a.discount_percent}%
+                                  {" · "}{a.created_at ? fmtDate(a.created_at) : ""}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

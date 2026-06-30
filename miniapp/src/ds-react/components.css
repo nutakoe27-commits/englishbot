@@ -629,6 +629,24 @@
   letter-spacing: -0.01em;
   line-height: 1;
 }
+.sub-plan-v2__old {
+  font-size: 16px;
+  color: var(--text-faint);
+  text-decoration: line-through;
+  margin-right: 8px;
+  font-weight: 500;
+}
+.sub-promo {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.sub-promo .sub-input { flex: 1; }
+.sub-promo-ok {
+  font-size: 13px;
+  color: var(--accent-deep);
+  font-weight: 600;
+}
 .sub-plan-v2__days {
   font-size: 12px;
   color: var(--text-faint);

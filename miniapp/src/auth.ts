@@ -288,7 +288,7 @@ export interface MeIdentity {
 
 // ─── Подписка / оплата (PR-8: ЮKassa) ────────────────────────────────
 export interface Plan {
-  key: "trial3" | "monthly" | "yearly";
+  key: "monthly" | "yearly" | "twoyear";
   days: number;
   amount_rub: number;
   title: string;
@@ -307,20 +307,40 @@ interface CreatePaymentResult {
   ok: boolean;
   confirmation_url?: string;
   payment_id?: number;
-  error?: string;          // 'email_required' | 'yookassa_not_configured' | ...
+  error?: string;          // 'email_required' | 'yookassa_not_configured' | 'promo_invalid' | 'promo_already_used'
 }
 
 export async function createPayment(
-  plan: Plan["key"], email?: string,
+  plan: Plan["key"], email?: string, promo_code?: string,
 ): Promise<CreatePaymentResult> {
   try {
-    const res = await _postJson("/api/payments/create", { plan, email });
+    const res = await _postJson("/api/payments/create", { plan, email, promo_code });
     if (res.ok) {
       const data = await res.json() as { confirmation_url: string; payment_id: number };
       return { ok: true, ...data };
     }
     return { ok: false, error: await _readError(res) };
   } catch { return { ok: false, error: "network" }; }
+}
+
+export interface PromoCheck {
+  valid: boolean;
+  discount_percent: number;
+  already_used: boolean;
+}
+
+export async function checkPromo(code: string): Promise<PromoCheck | null> {
+  try {
+    const headers: HeadersInit = {};
+    const tok = getToken();
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const res = await fetch(
+      `${API_BASE}/api/payments/promo/check?code=${encodeURIComponent(code)}`,
+      { headers },
+    );
+    if (!res.ok) return null;
+    return await res.json() as PromoCheck;
+  } catch { return null; }
 }
 
 export interface PaymentStatus {

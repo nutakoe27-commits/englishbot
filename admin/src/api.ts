@@ -272,7 +272,39 @@ export const api = {
   },
   paymentsMonthChart: () =>
     request<PaymentsMonthChart>(`/api/admin/payments/month-chart`),
+
+  // ─── Промокоды ────────────────────────────────────────
+  listPromos: () => request<{ items: PromoItem[] }>(`/api/admin/promo`),
+  createPromo: (code: string, discount_percent: number) =>
+    request<PromoItem>(`/api/admin/promo`, {
+      method: "POST",
+      body: JSON.stringify({ code, discount_percent }),
+    }),
+  togglePromo: (code: string, active: boolean) =>
+    request<{ ok: boolean }>(`/api/admin/promo/${encodeURIComponent(code)}/toggle`, {
+      method: "POST",
+      body: JSON.stringify({ active }),
+    }),
+  promoActivations: (code: string) =>
+    request<{ items: PromoActivation[]; total: number }>(
+      `/api/admin/promo/${encodeURIComponent(code)}/activations`,
+    ),
 };
+
+export interface PromoItem {
+  code: string;
+  discount_percent: number;
+  active: boolean;
+  used_count: number;
+  created_at: string | null;
+}
+export interface PromoActivation {
+  user_id: number;
+  tg_id: number | null;
+  username: string | null;
+  discount_percent: number;
+  created_at: string | null;
+}
 
 export interface PaymentItem {
   id: number;

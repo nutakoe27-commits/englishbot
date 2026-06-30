@@ -72,6 +72,7 @@ FREE_PERIOD_TEXT = (
 PRICE_TRIAL3_RUB = int(os.getenv("SUBSCRIPTION_PRICE_TRIAL3_RUB", "99"))
 PRICE_MONTHLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_MONTHLY_RUB", "999"))
 PRICE_YEARLY_RUB = int(os.getenv("SUBSCRIPTION_PRICE_YEARLY_RUB", "5999"))
+PRICE_TWOYEAR_RUB = int(os.getenv("SUBSCRIPTION_PRICE_TWOYEAR_RUB", "9999"))
 
 # Дневной лимит для free-тарифа (секунды). Источник истины — settings_kv
 # в backend (ключ free_seconds_per_day), здесь держим фолбэк-значение для
@@ -959,13 +960,6 @@ async def cb_reminder(callback: CallbackQuery) -> None:
 
 # ---- Планы подписки (единственное место, где эти данные хранятся в боте) -----
 _PLAN_CATALOG: dict[str, dict] = {
-    "trial3": {
-        "title": "English Tutor — 3 дня",
-        "description": "Безлимитный доступ ко всем режимам на 3 дня.",
-        "amount_rub": PRICE_TRIAL3_RUB,
-        "days": 3,
-        "label": "3 дня",
-    },
     "monthly": {
         "title": "English Tutor — подписка на месяц",
         "description": "Безлимитный доступ ко всем режимам на 30 дней.",
@@ -979,6 +973,13 @@ _PLAN_CATALOG: dict[str, dict] = {
         "amount_rub": PRICE_YEARLY_RUB,
         "days": 365,
         "label": "год",
+    },
+    "twoyear": {
+        "title": "English Tutor — подписка на 2 года",
+        "description": "Безлимитный доступ ко всем режимам на 730 дней.",
+        "amount_rub": PRICE_TWOYEAR_RUB,
+        "days": 730,
+        "label": "2 года",
     },
 }
 

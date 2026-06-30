@@ -572,6 +572,8 @@ class Repo:
         days_granted: int,
         provider_payment_id: str,
         notes: Optional[str] = None,
+        promo_code: Optional[str] = None,
+        discount_percent: Optional[int] = None,
     ) -> Payment:
         """Создать запись о платеже в статусе pending. Используется до того,
         как webhook ЮKassa подтвердит оплату.
@@ -585,6 +587,8 @@ class Repo:
             provider_payment_id=provider_payment_id,
             days_granted=days_granted,
             notes=notes,
+            promo_code=promo_code,
+            discount_percent=discount_percent,
             created_at=now,
             updated_at=now,
         )
@@ -640,7 +644,115 @@ class Repo:
                 status="succeeded", updated_at=now,
             )
         )
+        # Фиксируем активацию промокода (если был) — на УСПЕШНОЙ оплате.
+        if payment.promo_code:
+            await self.record_promo_activation(
+                code=payment.promo_code,
+                user_id=payment.user_id,
+                payment_id=payment.id,
+                discount_percent=int(payment.discount_percent or 0),
+            )
         return True
+
+    # ─── Промокоды ──────────────────────────────────────────────────────
+    async def get_promo(self, code: str):
+        """PromoCode по коду (любой статус) или None."""
+        from .models import PromoCode
+        if not code:
+            return None
+        res = await self.s.execute(
+            select(PromoCode).where(PromoCode.code == code.strip().upper())
+        )
+        return res.scalar_one_or_none()
+
+    async def promo_used_by_user(self, code: str, user_id: int) -> bool:
+        """Есть ли успешная активация этого промокода у юзера (правило
+        «1 раз на юзера»)."""
+        from .models import PromoActivation
+        res = await self.s.execute(
+            select(func.count()).select_from(PromoActivation).where(
+                PromoActivation.code == code.strip().upper(),
+                PromoActivation.user_id == user_id,
+            )
+        )
+        return int(res.scalar() or 0) > 0
+
+    async def record_promo_activation(
+        self, *, code: str, user_id: int, payment_id: Optional[int], discount_percent: int,
+    ) -> None:
+        """Записать активацию (идемпотентно через UNIQUE(code,user_id)) +
+        инкремент used_count."""
+        from .models import PromoActivation, PromoCode
+        code = code.strip().upper()
+        # Уже активировал? — ничего не делаем.
+        if await self.promo_used_by_user(code, user_id):
+            return
+        self.s.add(PromoActivation(
+            code=code, user_id=user_id, payment_id=payment_id,
+            discount_percent=discount_percent, created_at=utcnow(),
+        ))
+        await self.s.execute(
+            update(PromoCode).where(PromoCode.code == code).values(
+                used_count=PromoCode.used_count + 1,
+            )
+        )
+
+    async def create_promo(self, code: str, discount_percent: int):
+        """Создать промокод. Возвращает PromoCode или бросает при дубликате."""
+        from .models import PromoCode
+        code = code.strip().upper()
+        p = PromoCode(
+            code=code,
+            discount_percent=max(1, min(100, int(discount_percent))),
+            active=True,
+            used_count=0,
+            created_at=utcnow(),
+        )
+        self.s.add(p)
+        await self.s.flush()
+        return p
+
+    async def list_promos(self) -> list:
+        from .models import PromoCode
+        res = await self.s.execute(
+            select(PromoCode).order_by(PromoCode.created_at.desc())
+        )
+        return list(res.scalars().all())
+
+    async def set_promo_active(self, code: str, active: bool) -> bool:
+        from .models import PromoCode
+        code = code.strip().upper()
+        res = await self.s.execute(
+            update(PromoCode).where(PromoCode.code == code).values(active=active)
+        )
+        return (res.rowcount or 0) > 0
+
+    async def list_promo_activations(self, code: str) -> list[dict]:
+        """[{user_id, tg_id, username, discount_percent, created_at}]."""
+        from .models import PromoActivation
+        code = code.strip().upper()
+        res = await self.s.execute(
+            select(
+                PromoActivation.user_id,
+                PromoActivation.discount_percent,
+                PromoActivation.created_at,
+                User.tg_id,
+                User.username,
+            )
+            .join(User, User.id == PromoActivation.user_id, isouter=True)
+            .where(PromoActivation.code == code)
+            .order_by(PromoActivation.created_at.desc())
+        )
+        return [
+            {
+                "user_id": int(uid),
+                "discount_percent": int(disc or 0),
+                "created_at": created.isoformat() if created else None,
+                "tg_id": int(tg) if tg is not None else None,
+                "username": uname,
+            }
+            for uid, disc, created, tg, uname in res.all()
+        ]
 
     async def mark_tutorial_done(self, user_id: int) -> None:
         """Юзер прошёл (или скипнул) онбординг. Идемпотентно."""

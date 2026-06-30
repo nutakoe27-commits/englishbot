@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   createPayment,
+  checkPromo,
   fetchMe,
   fetchPaymentStatus,
   listPlans,
@@ -44,6 +45,11 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
   const [error, setError] = useState<string>("");
   const [askEmailFor, setAskEmailFor] = useState<Plan["key"] | null>(null);
   const [emailInput, setEmailInput] = useState<string>("");
+  // Промокод.
+  const [promoInput, setPromoInput] = useState<string>("");
+  const [promoApplied, setPromoApplied] = useState<{ code: string; pct: number } | null>(null);
+  const [promoMsg, setPromoMsg] = useState<string>("");
+  const [promoBusy, setPromoBusy] = useState<boolean>(false);
   const [returnPaymentId, setReturnPaymentId] = useState<number | null>(
     initialReturnPaymentId ?? null,
   );
@@ -101,6 +107,25 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
     return () => { cancelled = true; };
   }, [returnPaymentId, returnStatus, onPaid]);
 
+  const applyPromo = useCallback(async () => {
+    const code = promoInput.trim().toUpperCase();
+    if (!code || promoBusy) return;
+    setPromoBusy(true); setPromoMsg("");
+    try {
+      const r = await checkPromo(code);
+      if (!r) { setPromoMsg("Не удалось проверить промокод."); return; }
+      if (r.already_used) { setPromoApplied(null); setPromoMsg("Этот промокод ты уже использовал."); return; }
+      if (!r.valid) { setPromoApplied(null); setPromoMsg("Промокод недействителен."); return; }
+      setPromoApplied({ code, pct: r.discount_percent });
+      setPromoMsg(`Скидка ${r.discount_percent}% применена ко всем тарифам.`);
+    } finally { setPromoBusy(false); }
+  }, [promoInput, promoBusy]);
+
+  const _discounted = useCallback((amount: number): number => {
+    if (!promoApplied) return amount;
+    return Math.max(1, Math.round(amount * (100 - promoApplied.pct) / 100));
+  }, [promoApplied]);
+
   const launchPayment = useCallback(async (planKey: Plan["key"], emailOverride?: string) => {
     if (busy) return;
     setBusy(planKey); setError("");
@@ -110,7 +135,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
       amount_rub: planInfo?.amount_rub,
     });
     try {
-      const r = await createPayment(planKey, emailOverride);
+      const r = await createPayment(planKey, emailOverride, promoApplied?.code);
       if (r.ok && r.confirmation_url) {
         window.location.href = r.confirmation_url;
         return;
@@ -119,13 +144,19 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
         setAskEmailFor(planKey);
         return;
       }
-      if (r.error === "yookassa_not_configured") {
+      if (r.error === "promo_already_used") {
+        setPromoApplied(null);
+        setError("Этот промокод ты уже использовал.");
+      } else if (r.error === "promo_invalid") {
+        setPromoApplied(null);
+        setError("Промокод недействителен.");
+      } else if (r.error === "yookassa_not_configured") {
         setError("Оплата временно недоступна. Сообщи в @kmo_ai, разберёмся.");
       } else {
         setError("Не получилось создать платёж. Попробуй ещё раз.");
       }
     } finally { setBusy(null); }
-  }, [busy, plans]);
+  }, [busy, plans, promoApplied]);
 
   const submitEmail = (e: React.FormEvent) => {
     e.preventDefault();
@@ -230,9 +261,38 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
                 </p>
               )}
 
+              {/* Промокод */}
+              <div className="sub-promo">
+                <input
+                  className="sub-input"
+                  type="text"
+                  placeholder="Промокод (если есть)"
+                  value={promoInput}
+                  onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
+                  maxLength={32}
+                  style={{ textTransform: "uppercase", margin: 0 }}
+                  disabled={promoBusy}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void applyPromo()}
+                  disabled={promoBusy || !promoInput.trim()}
+                >
+                  {promoBusy ? "…" : "Применить"}
+                </Button>
+              </div>
+              {promoMsg && (
+                <p className={promoApplied ? "sub-promo-ok" : "sub-error"} style={{ margin: 0 }}>
+                  {promoMsg}
+                </p>
+              )}
+
               <div className="sub-plans-v2">
                 {plans.map((p) => {
                   const isRecommended = p.key === recommendedKey;
+                  const finalPrice = _discounted(p.amount_rub);
+                  const hasDiscount = !!promoApplied && finalPrice !== p.amount_rub;
                   return (
                     <button
                       key={p.key}
@@ -245,7 +305,10 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
                         <span className="sub-plan-v2__title">{p.title}</span>
                         {isRecommended && <span className="sub-plan-v2__badge">Рекомендуем</span>}
                       </div>
-                      <div className="sub-plan-v2__price">{p.amount_rub} ₽</div>
+                      <div className="sub-plan-v2__price">
+                        {hasDiscount && <s className="sub-plan-v2__old">{p.amount_rub} ₽</s>}
+                        {finalPrice} ₽
+                      </div>
                       <div className="sub-plan-v2__days">{p.days} {_daysWord(p.days)}</div>
                     </button>
                   );

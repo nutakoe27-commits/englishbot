@@ -754,6 +754,75 @@ async def payments_month_chart() -> dict:
         return await repo.revenue_month_chart()
 
 
+# ─── Промокоды ────────────────────────────────────────────────────────────────
+class _CreatePromoIn(BaseModel):
+    code: str
+    discount_percent: int
+
+
+class _TogglePromoIn(BaseModel):
+    active: bool
+
+
+@router.get("/promo", dependencies=[Depends(require_admin_token)])
+async def admin_list_promos() -> dict:
+    async with db_session() as s:
+        repo = Repo(s)
+        rows = await repo.list_promos()
+    return {"items": [
+        {
+            "code": p.code,
+            "discount_percent": p.discount_percent,
+            "active": bool(p.active),
+            "used_count": p.used_count,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        }
+        for p in rows
+    ]}
+
+
+@router.post("/promo", dependencies=[Depends(require_admin_token)])
+async def admin_create_promo(body: _CreatePromoIn) -> dict:
+    code = (body.code or "").strip().upper()
+    if not code or len(code) > 32:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_code")
+    pct = int(body.discount_percent)
+    if pct < 1 or pct > 100:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_discount")
+    async with db_session() as s:
+        repo = Repo(s)
+        if await repo.get_promo(code) is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "promo_exists")
+        p = await repo.create_promo(code, pct)
+        await s.commit()
+        return {
+            "code": p.code,
+            "discount_percent": p.discount_percent,
+            "active": bool(p.active),
+            "used_count": p.used_count,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        }
+
+
+@router.post("/promo/{code}/toggle", dependencies=[Depends(require_admin_token)])
+async def admin_toggle_promo(code: str, body: _TogglePromoIn) -> dict:
+    async with db_session() as s:
+        repo = Repo(s)
+        ok = await repo.set_promo_active(code, bool(body.active))
+        if not ok:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "promo_not_found")
+        await s.commit()
+    return {"ok": True, "code": code.strip().upper(), "active": bool(body.active)}
+
+
+@router.get("/promo/{code}/activations", dependencies=[Depends(require_admin_token)])
+async def admin_promo_activations(code: str) -> dict:
+    async with db_session() as s:
+        repo = Repo(s)
+        items = await repo.list_promo_activations(code)
+    return {"items": items, "total": len(items)}
+
+
 # ─── Admin v2: charts/retention/sessions ─────────────────────────────────────
 # Для дашборда с графиками. Метрики тяжёлые (агрегаты по datetime/group by),
 # поэтому держим в памяти 60-сек TTL-кеш. На single-worker'е этого хватает;
