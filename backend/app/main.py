@@ -568,7 +568,7 @@ async def me_level(
 async def leaderboard(
     init_data: str = "", authorization: Optional[str] = Header(None),
 ) -> dict:
-    """Топ-3 за текущий месяц + строка самого юзера (место + очки)."""
+    """Топ-5 за текущий месяц + строка самого юзера (место + очки)."""
     from datetime import date as _date
     from fastapi import HTTPException, status
     from .db import Repo
@@ -581,7 +581,7 @@ async def leaderboard(
     async with db_session() as session:
         repo = Repo(session)
         user = await resolve_user(repo, authorization=authorization, init_data=init_data)
-        top_rows = await repo.leaderboard_month(limit=3)
+        top_rows = await repo.leaderboard_month(limit=5)
         my_rank, my_points = await repo.user_month_rank(user.id)
 
     top = [
