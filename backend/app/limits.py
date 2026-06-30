@@ -25,7 +25,7 @@ from .db import Repo
 
 log = logging.getLogger(__name__)
 
-DEFAULT_FREE_SECONDS_PER_DAY = 900  # 15 минут
+DEFAULT_FREE_SECONDS_PER_DAY = 300  # 5 минут
 
 
 @dataclass
@@ -186,8 +186,8 @@ async def build_limits_context(
 
 # section → (mode в sessions, ключ квоты в settings_kv, дефолт)
 _SECTION_QUOTA = {
-    "listening": ("listening", "free_listening_per_day", 2),
-    "grammar": ("grammar", "free_grammar_per_day", 3),
+    "listening": ("listening", "free_listening_per_day", 1),
+    "grammar": ("grammar", "free_grammar_per_day", 1),
 }
 
 

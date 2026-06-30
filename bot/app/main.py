@@ -77,7 +77,7 @@ PRICE_TWOYEAR_RUB = int(os.getenv("SUBSCRIPTION_PRICE_TWOYEAR_RUB", "9999"))
 # Дневной лимит для free-тарифа (секунды). Источник истины — settings_kv
 # в backend (ключ free_seconds_per_day), здесь держим фолбэк-значение для
 # отображения в профиле.
-FREE_DAILY_SECONDS = int(os.getenv("FREE_DAILY_SECONDS", "900"))
+FREE_DAILY_SECONDS = int(os.getenv("FREE_DAILY_SECONDS", "300"))
 
 # ADMIN_IDS (через запятую) — эти tg_id минуют maintenance-гейт.
 _ADMIN_IDS: set[int] = {
@@ -641,8 +641,8 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
         lines.append(f"Практика: <b>{_fmt_minutes(used_today)}</b> — без лимитов")
     else:
         free_speaking = int(profile.get("free_seconds_per_day") or FREE_DAILY_SECONDS)
-        free_listening = int(profile.get("free_listening_per_day") or 2)
-        free_grammar = int(profile.get("free_grammar_per_day") or 3)
+        free_listening = int(profile.get("free_listening_per_day") or 1)
+        free_grammar = int(profile.get("free_grammar_per_day") or 1)
         limit_min = free_speaking // 60
         total_limit = free_speaking + bonus_today
         left_sec = max(0, total_limit - speaking_today)

@@ -170,9 +170,9 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId }: Pro
     void launchPayment(askEmailFor, v);
   };
 
-  // Recommended plan для дефолтного "sage-tinted" акцента — берём средний (monthly).
+  // Recommended plan — годовой (лучшее соотношение цена/срок).
   const recommendedKey: string | undefined =
-    plans.find((p) => p.key === "monthly")?.key ?? plans[1]?.key ?? plans[0]?.key;
+    plans.find((p) => p.key === "yearly")?.key ?? plans[1]?.key ?? plans[0]?.key;
 
   return (
     <div className="sub-screen">
