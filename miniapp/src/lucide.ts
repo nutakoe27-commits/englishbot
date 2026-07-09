@@ -20,13 +20,24 @@ declare global {
   }
 }
 
-/** Перерендерить все <i data-lucide> в SVG. Безопасно: no-op если lucide не загружен. */
+/** Перерендерить все <i data-lucide> в SVG. Безопасно: no-op если lucide не загружен.
+ *
+ *  Батчинг через requestAnimationFrame: createIcons() сканирует ВЕСЬ документ,
+ *  а на экране со списком каждый <Icon> зовёт renderIcons() на mount — без
+ *  батчинга N иконок дают N полных проходов по DOM (O(n²), сотни тысяч
+ *  операций на больших списках → зависание/краш мобильного WebView). */
+let _iconsScheduled = false;
 export function renderIcons(): void {
-  try {
-    window.lucide?.createIcons({ attrs: { "stroke-width": "1.75" } });
-  } catch {
-    /* lucide ещё не загружен — попробуем при следующем render */
-  }
+  if (_iconsScheduled) return;
+  _iconsScheduled = true;
+  requestAnimationFrame(() => {
+    _iconsScheduled = false;
+    try {
+      window.lucide?.createIcons({ attrs: { "stroke-width": "1.75" } });
+    } catch {
+      /* lucide ещё не загружен — попробуем при следующем render */
+    }
+  });
 }
 
 /** Hook: перерендеривает иконки после каждого commit'a компонента.
