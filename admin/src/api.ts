@@ -289,7 +289,57 @@ export const api = {
     request<{ items: PromoActivation[]; total: number }>(
       `/api/admin/promo/${encodeURIComponent(code)}/activations`,
     ),
+
+  // ─── B2B: школы ───────────────────────────────────────
+  listOrgs: () => request<{ items: OrgItem[] }>(`/api/admin/orgs`),
+  createOrg: (body: {
+    name: string; seats_total: number;
+    valid_until?: string; contact_email?: string;
+  }) =>
+    request<OrgItem>(`/api/admin/orgs`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateOrg: (id: number, body: {
+    name?: string; seats_total?: number;
+    valid_until?: string; active?: boolean;
+  }) =>
+    request<{ ok: boolean }>(`/api/admin/orgs/${id}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  orgMembers: (id: number) =>
+    request<{ items: OrgMemberItem[]; total: number }>(
+      `/api/admin/orgs/${id}/members`,
+    ),
+  orgMemberActive: (id: number, user_id: number, active: boolean) =>
+    request<{ ok: boolean }>(`/api/admin/orgs/${id}/member-active`, {
+      method: "POST",
+      body: JSON.stringify({ user_id, active }),
+    }),
 };
+
+export interface OrgItem {
+  id: number;
+  name: string;
+  invite_code: string;
+  invite_link: string;
+  seats_total: number;
+  seats_used: number;
+  valid_until: string | null;
+  active: boolean;
+  contact_email: string | null;
+  created_at: string | null;
+}
+export interface OrgMemberItem {
+  user_id: number;
+  tg_id: number | null;
+  first_name: string | null;
+  username: string | null;
+  role: string;
+  active: boolean;
+  joined_at: string | null;
+}
 
 export interface PromoItem {
   code: string;

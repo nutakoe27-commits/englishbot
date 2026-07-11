@@ -558,9 +558,192 @@ class Repo:
         return True
 
     async def has_active_subscription(self, user: User) -> bool:
-        if user.subscription_until is None:
+        """Личная подписка ИЛИ активное место ученика в активной школе (B2B).
+        Все пейволлы/лимиты/бот завязаны на эту функцию — org-доступ
+        подхватывается везде автоматически."""
+        if user.subscription_until is not None and user.subscription_until > utcnow():
+            return True
+        return await self.user_active_org(user.id) is not None
+
+    # ─── B2B: школы (миграция 0029) ────────────────────────────────────
+
+    async def user_active_org(self, user_id: int):
+        """Активная школа юзера-ученика (org.active, срок не истёк,
+        членство active, role='student'). None — юзер не школьник."""
+        from .models import Organization, OrgMember
+        res = await self.s.execute(
+            select(Organization)
+            .join(OrgMember, OrgMember.org_id == Organization.id)
+            .where(
+                OrgMember.user_id == user_id,
+                OrgMember.active.is_(True),
+                OrgMember.role == "student",
+                Organization.active.is_(True),
+                Organization.valid_until.is_not(None),
+                Organization.valid_until > utcnow(),
+            )
+            .limit(1)
+        )
+        return res.scalar_one_or_none()
+
+    async def get_org_by_invite(self, invite_code: str):
+        from .models import Organization
+        code = invite_code.strip().upper()
+        if not code:
+            return None
+        res = await self.s.execute(
+            select(Organization).where(Organization.invite_code == code)
+        )
+        return res.scalar_one_or_none()
+
+    async def org_seats_used(self, org_id: int) -> int:
+        from .models import OrgMember
+        res = await self.s.execute(
+            select(func.count()).select_from(OrgMember).where(
+                OrgMember.org_id == org_id,
+                OrgMember.role == "student",
+                OrgMember.active.is_(True),
+            )
+        )
+        return int(res.scalar() or 0)
+
+    async def join_org(self, invite_code: str, user_id: int) -> tuple[str, object]:
+        """Подключить юзера к школе по инвайт-коду.
+        Возвращает (status, org): 'ok' — подключён (или реактивирован),
+        'already' — уже участник, 'no_seats' — мест нет,
+        'invalid' — код не найден / школа неактивна / срок истёк (org=None
+        только для не найденного кода)."""
+        from .models import OrgMember
+        org = await self.get_org_by_invite(invite_code)
+        if org is None:
+            return "invalid", None
+        if not org.active or org.valid_until is None or org.valid_until <= utcnow():
+            return "invalid", org
+        res = await self.s.execute(
+            select(OrgMember).where(
+                OrgMember.org_id == org.id, OrgMember.user_id == user_id,
+            )
+        )
+        member = res.scalar_one_or_none()
+        if member is not None and member.active:
+            return "already", org
+        if await self.org_seats_used(org.id) >= org.seats_total:
+            return "no_seats", org
+        if member is not None:
+            member.active = True
+        else:
+            self.s.add(OrgMember(
+                org_id=org.id, user_id=user_id, role="student",
+                active=True, joined_at=utcnow(),
+            ))
+        await self.s.flush()
+        return "ok", org
+
+    @staticmethod
+    def _gen_invite_code() -> str:
+        # Без похожих символов (0/O, 1/I/L) — код диктуют вслух ученикам.
+        import secrets
+        alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+        return "".join(secrets.choice(alphabet) for _ in range(8))
+
+    async def create_org(
+        self, *, name: str, seats_total: int,
+        valid_until: Optional[datetime], contact_email: Optional[str],
+    ):
+        from .models import Organization
+        for _ in range(5):
+            code = self._gen_invite_code()
+            if await self.get_org_by_invite(code) is None:
+                break
+        org = Organization(
+            name=name.strip(), invite_code=code, seats_total=seats_total,
+            valid_until=valid_until, active=True,
+            contact_email=(contact_email or "").strip() or None,
+            created_at=utcnow(),
+        )
+        self.s.add(org)
+        await self.s.flush()
+        return org
+
+    async def list_orgs(self) -> list[dict]:
+        from .models import Organization, OrgMember
+        used = (
+            select(OrgMember.org_id, func.count().label("used"))
+            .where(OrgMember.role == "student", OrgMember.active.is_(True))
+            .group_by(OrgMember.org_id)
+            .subquery()
+        )
+        res = await self.s.execute(
+            select(Organization, func.coalesce(used.c.used, 0))
+            .outerjoin(used, used.c.org_id == Organization.id)
+            .order_by(Organization.created_at.desc())
+        )
+        out = []
+        for org, seats_used in res.all():
+            out.append({
+                "id": org.id, "name": org.name, "invite_code": org.invite_code,
+                "seats_total": org.seats_total, "seats_used": int(seats_used or 0),
+                "valid_until": org.valid_until, "active": org.active,
+                "contact_email": org.contact_email, "created_at": org.created_at,
+            })
+        return out
+
+    async def get_org(self, org_id: int):
+        from .models import Organization
+        return await self.s.get(Organization, org_id)
+
+    async def update_org(
+        self, org_id: int, *, name: Optional[str] = None,
+        seats_total: Optional[int] = None,
+        valid_until: Optional[datetime] = None,
+        active: Optional[bool] = None,
+    ) -> bool:
+        org = await self.get_org(org_id)
+        if org is None:
             return False
-        return user.subscription_until > utcnow()
+        if name is not None:
+            org.name = name.strip()
+        if seats_total is not None:
+            org.seats_total = seats_total
+        if valid_until is not None:
+            org.valid_until = valid_until
+        if active is not None:
+            org.active = active
+        await self.s.flush()
+        return True
+
+    async def list_org_members(self, org_id: int) -> list[dict]:
+        from .models import OrgMember
+        res = await self.s.execute(
+            select(OrgMember, User)
+            .join(User, User.id == OrgMember.user_id)
+            .where(OrgMember.org_id == org_id)
+            .order_by(OrgMember.joined_at.desc())
+        )
+        out = []
+        for m, u in res.all():
+            out.append({
+                "user_id": u.id, "tg_id": u.tg_id,
+                "first_name": u.first_name, "username": u.username,
+                "role": m.role, "active": m.active, "joined_at": m.joined_at,
+            })
+        return out
+
+    async def set_org_member_active(
+        self, org_id: int, user_id: int, active: bool,
+    ) -> bool:
+        from .models import OrgMember
+        res = await self.s.execute(
+            select(OrgMember).where(
+                OrgMember.org_id == org_id, OrgMember.user_id == user_id,
+            )
+        )
+        member = res.scalar_one_or_none()
+        if member is None:
+            return False
+        member.active = active
+        await self.s.flush()
+        return True
 
     # ─── веб-оплата (PR-8: ЮKassa) ─────────────────────────────────────
     async def create_pending_payment(
@@ -1622,9 +1805,23 @@ class Repo:
                 grammar_cnt += cnt
         return compute_points(speak_sec, listen_sec, grammar_cnt)
 
-    async def leaderboard_month(self, limit: int = 3) -> list[dict]:
+    def _org_students_subq(self, org_id: int):
+        """Подзапрос: user_id активных учеников школы (для org-лидерборда)."""
+        from .models import OrgMember
+        return (
+            select(OrgMember.user_id).where(
+                OrgMember.org_id == org_id,
+                OrgMember.role == "student",
+                OrgMember.active.is_(True),
+            )
+        )
+
+    async def leaderboard_month(
+        self, limit: int = 3, org_id: Optional[int] = None,
+    ) -> list[dict]:
         """Топ-N юзеров по очкам за текущий месяц.
-        [{user_id, first_name, points}], отсортировано по убыванию очков."""
+        [{user_id, first_name, points}], отсортировано по убыванию очков.
+        org_id — лидерборд только среди учеников школы (B2B)."""
         from ..points import GRAMMAR_POINTS
         first_utc, nxt_utc = self._month_bounds_utc()
         # Очки агрегируем прямо в SQL: minutes(speaking)+minutes(listening)+5·grammar.
@@ -1638,6 +1835,9 @@ class Repo:
         points_expr = (
             func.floor(speak / 60) + func.floor(listen / 60) + gram * GRAMMAR_POINTS
         )
+        conds = [SessionRow.started_at >= first_utc, SessionRow.started_at < nxt_utc]
+        if org_id is not None:
+            conds.append(SessionRow.user_id.in_(self._org_students_subq(org_id)))
         res = await self.s.execute(
             select(
                 SessionRow.user_id,
@@ -1645,7 +1845,7 @@ class Repo:
                 points_expr.label("points"),
             )
             .join(User, User.id == SessionRow.user_id)
-            .where(SessionRow.started_at >= first_utc, SessionRow.started_at < nxt_utc)
+            .where(*conds)
             .group_by(SessionRow.user_id, User.first_name)
             .having(points_expr > 0)
             .order_by(points_expr.desc())
@@ -1656,9 +1856,12 @@ class Repo:
             for uid, fn, pts in res.all()
         ]
 
-    async def user_month_rank(self, user_id: int) -> tuple[int, int]:
+    async def user_month_rank(
+        self, user_id: int, org_id: Optional[int] = None,
+    ) -> tuple[int, int]:
         """(rank, points) юзера в месячном лидерборде. rank = (кол-во юзеров
-        с очками строго больше) + 1. Если у юзера 0 очков — rank=0."""
+        с очками строго больше) + 1. Если у юзера 0 очков — rank=0.
+        org_id — место внутри школьного лидерборда (B2B)."""
         my_points = await self.user_points(user_id, month_only=True)
         if my_points <= 0:
             return 0, 0
@@ -1674,9 +1877,12 @@ class Repo:
         points_expr = (
             func.floor(speak / 60) + func.floor(listen / 60) + gram * GRAMMAR_POINTS
         )
+        conds = [SessionRow.started_at >= first_utc, SessionRow.started_at < nxt_utc]
+        if org_id is not None:
+            conds.append(SessionRow.user_id.in_(self._org_students_subq(org_id)))
         sub = (
             select(SessionRow.user_id, points_expr.label("p"))
-            .where(SessionRow.started_at >= first_utc, SessionRow.started_at < nxt_utc)
+            .where(*conds)
             .group_by(SessionRow.user_id)
             .subquery()
         )

@@ -810,7 +810,12 @@ async def _select_winback_users() -> list["_User"]:
                 ),
             )
         )
-        return list(res.scalars().all())
+        users = list(res.scalars().all())
+    # B2B: учеников школ не дёргаем winback'ом — их возвращает школа.
+    org_ids = await _org_student_user_ids()
+    if org_ids:
+        users = [u for u in users if int(u.id) not in org_ids]
+    return users
 
 
 async def _mark_winback_sent(tg_id: int) -> None:
@@ -960,8 +965,31 @@ async def _mark_discount_sent() -> None:
         await s.commit()
 
 
+async def _org_student_user_ids() -> set[int]:
+    """B2B: user_id активных учеников активных школ. Им доступ даёт школа —
+    из продающих рассылок (скидка, winback) их исключаем.
+    Пустое множество, если таблиц ещё нет (миграция 0029 не применена)."""
+    if not is_db_ready():
+        return set()
+    assert _SessionMaker is not None
+    try:
+        async with _SessionMaker() as s:
+            res = await s.execute(text(
+                "SELECT om.user_id FROM org_members om "
+                "JOIN organizations o ON o.id = om.org_id "
+                "WHERE om.active = 1 AND om.role = 'student' "
+                "  AND o.active = 1 AND o.valid_until IS NOT NULL "
+                "  AND o.valid_until > UTC_TIMESTAMP()"
+            ))
+            return {int(r[0]) for r in res.all()}
+    except Exception as exc:
+        logger.warning("[org] не удалось получить учеников школ: %s", exc)
+        return set()
+
+
 async def _select_non_subscribers() -> list["_User"]:
-    """Все не-подписчики с tg_id, не заблокированные."""
+    """Все не-подписчики с tg_id, не заблокированные.
+    Ученики школ (B2B) исключаются — им нечего покупать."""
     if not is_db_ready():
         return []
     assert _SessionMaker is not None
@@ -978,7 +1006,11 @@ async def _select_non_subscribers() -> list["_User"]:
                 ),
             )
         )
-        return list(res.scalars().all())
+        users = list(res.scalars().all())
+    org_ids = await _org_student_user_ids()
+    if org_ids:
+        users = [u for u in users if int(u.id) not in org_ids]
+    return users
 
 
 async def _send_discount_broadcast(bot: Bot, miniapp_url: str) -> None:

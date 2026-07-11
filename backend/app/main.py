@@ -568,7 +568,8 @@ async def me_level(
 async def leaderboard(
     init_data: str = "", authorization: Optional[str] = Header(None),
 ) -> dict:
-    """Топ-5 за текущий месяц + строка самого юзера (место + очки)."""
+    """Топ-5 за текущий месяц + строка самого юзера (место + очки).
+    Ученик школы (B2B) видит лидерборд только своей школы."""
     from datetime import date as _date
     from fastapi import HTTPException, status
     from .db import Repo
@@ -581,8 +582,11 @@ async def leaderboard(
     async with db_session() as session:
         repo = Repo(session)
         user = await resolve_user(repo, authorization=authorization, init_data=init_data)
-        top_rows = await repo.leaderboard_month(limit=5)
-        my_rank, my_points = await repo.user_month_rank(user.id)
+        org = await repo.user_active_org(user.id)
+        org_id = org.id if org is not None else None
+        org_name = org.name if org is not None else None
+        top_rows = await repo.leaderboard_month(limit=5, org_id=org_id)
+        my_rank, my_points = await repo.user_month_rank(user.id, org_id=org_id)
 
     top = [
         {
@@ -603,7 +607,34 @@ async def leaderboard(
         "top": top,
         "me": {"rank": my_rank, "points": my_points, "name": me_name},
         "total": len(top_rows),
+        # Школьный лидерборд (B2B): фронт показывает «Лидерборд школы N».
+        "org_name": org_name,
     }
+
+
+class _OrgJoinIn(BaseModel):
+    init_data: str = ""
+    invite_code: str
+
+
+@app.post("/api/org/join", tags=["Me"])
+async def org_join(
+    body: _OrgJoinIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """B2B: подключение к школе по инвайт-коду из мини-аппа (?school=CODE).
+    {status: ok|already|no_seats|invalid, org_name}."""
+    from fastapi import HTTPException, status
+    from .db import Repo
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await resolve_user(
+            repo, authorization=authorization, init_data=body.init_data,
+        )
+        status_str, org = await repo.join_org(body.invite_code, user.id)
+        await session.commit()
+    return {"status": status_str, "org_name": getattr(org, "name", None)}
 
 
 # Backfill достижений для существующих юзеров — единоразово при старте.

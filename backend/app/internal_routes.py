@@ -175,3 +175,41 @@ async def apply_cancel(
         await repo.mark_action_cancelled(body.token)
         await session.commit()
     return {"ok": True}
+
+
+# ─── B2B: подключение ученика к школе из бота (/start school_<code>) ──────
+
+class _OrgJoinIn(BaseModel):
+    invite_code: str
+    tg_id: int
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    username: Optional[str] = None
+    language_code: Optional[str] = None
+
+
+@router.post("/org/join")
+async def org_join(
+    body: _OrgJoinIn,
+    x_bot_secret: Optional[str] = Header(None, alias="X-Bot-Secret"),
+) -> dict:
+    """Бот вызывает после /start school_<invite_code>: find-or-create юзера
+    по tg_id и подключает к школе. {status: ok|already|no_seats|invalid,
+    org_name}."""
+    _check_bot_secret(x_bot_secret)
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.upsert_user(
+            tg_id=body.tg_id,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            username=body.username,
+            language_code=body.language_code,
+        )
+        status_str, org = await repo.join_org(body.invite_code, user.id)
+        await session.commit()
+    return {
+        "status": status_str,
+        "org_name": getattr(org, "name", None),
+    }

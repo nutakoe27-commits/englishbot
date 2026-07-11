@@ -213,6 +213,42 @@ class PromoActivation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class Organization(Base):
+    """B2B: школа английского (миграция 0029). Ученики школы получают полный
+    доступ, пока школа активна и valid_until в будущем — см.
+    Repo.has_active_subscription. settings — задел под white-label (фаза 4)."""
+
+    __tablename__ = "organizations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    invite_code: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    seats_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    valid_until: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    contact_email: Mapped[Optional[str]] = mapped_column(String(255))
+    settings: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class OrgMember(Base):
+    """Участник школы. role='student' занимает место (seat) и получает доступ;
+    teacher/admin — для кабинета школы (фаза 2). active=0 освобождает место."""
+
+    __tablename__ = "org_members"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    org_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    role: Mapped[str] = mapped_column(
+        SAEnum("student", "teacher", "admin", name="org_member_role"),
+        nullable=False, default="student",
+    )
+    group_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class SettingKV(Base):
     __tablename__ = "settings_kv"
 

@@ -27,6 +27,8 @@ interface LbData {
   top: Row[];
   me: { rank: number; points: number; name: string };
   total: number;
+  // B2B: имя школы — ученик видит лидерборд только своей школы.
+  org_name?: string | null;
 }
 
 const MEDALS = ["🥇", "🥈", "🥉"];
@@ -61,9 +63,12 @@ export function LeaderboardScreen() {
     <div className="lb">
       <header className="lb__top">
         <div className="lb__title-wrap">
-          <SerifH as="h1" size={28}>Лидерборд</SerifH>
+          <SerifH as="h1" size={28}>
+            {data?.org_name ? "Лидерборд школы" : "Лидерборд"}
+          </SerifH>
           {data && (
             <span className="lb__sub">
+              {data.org_name ? `${data.org_name} · ` : ""}
               {_monthLabel(data.month)} · обновляется 1 числа
             </span>
           )}

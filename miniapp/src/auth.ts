@@ -323,6 +323,17 @@ export async function createPayment(
   } catch { return { ok: false, error: "network" }; }
 }
 
+/** B2B: подключение к школе по инвайт-коду (?school=CODE из deep-link). */
+export async function joinOrg(
+  inviteCode: string,
+): Promise<{ status: string; org_name: string | null } | null> {
+  try {
+    const res = await _postJson("/api/org/join", { invite_code: inviteCode });
+    if (!res.ok) return null;
+    return await res.json() as { status: string; org_name: string | null };
+  } catch { return null; }
+}
+
 export interface PromoCheck {
   valid: boolean;
   discount_percent: number;

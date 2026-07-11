@@ -23,7 +23,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import httpx
@@ -821,6 +821,132 @@ async def admin_promo_activations(code: str) -> dict:
         repo = Repo(s)
         items = await repo.list_promo_activations(code)
     return {"items": items, "total": len(items)}
+
+
+# ─── B2B: школы (миграция 0029) ──────────────────────────────────────────────
+class _CreateOrgIn(BaseModel):
+    name: str
+    seats_total: int
+    valid_until: Optional[str] = None      # ISO date/datetime
+    contact_email: Optional[str] = None
+
+
+class _UpdateOrgIn(BaseModel):
+    name: Optional[str] = None
+    seats_total: Optional[int] = None
+    valid_until: Optional[str] = None      # ISO date/datetime
+    active: Optional[bool] = None
+
+
+class _OrgMemberActiveIn(BaseModel):
+    user_id: int
+    active: bool
+
+
+def _parse_org_until(raw: Optional[str]) -> Optional[datetime]:
+    """'2026-09-01' / ISO datetime → naive UTC datetime (конец дня для даты)."""
+    if not raw or not raw.strip():
+        return None
+    s = raw.strip()
+    try:
+        if len(s) == 10:  # YYYY-MM-DD — доступ до конца этого дня
+            return datetime.fromisoformat(s) + timedelta(hours=23, minutes=59)
+        dt = datetime.fromisoformat(s)
+        return dt.replace(tzinfo=None)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_valid_until")
+
+
+def _org_invite_link(code: str) -> str:
+    return f"https://t.me/{settings.BOT_USERNAME}?start=school_{code}"
+
+
+def _org_to_dict(o: dict) -> dict:
+    return {
+        **o,
+        "valid_until": o["valid_until"].isoformat() if o["valid_until"] else None,
+        "created_at": o["created_at"].isoformat() if o["created_at"] else None,
+        "active": bool(o["active"]),
+        "invite_link": _org_invite_link(o["invite_code"]),
+    }
+
+
+@router.get("/orgs", dependencies=[Depends(require_admin_token)])
+async def admin_list_orgs() -> dict:
+    async with db_session() as s:
+        repo = Repo(s)
+        rows = await repo.list_orgs()
+    return {"items": [_org_to_dict(o) for o in rows]}
+
+
+@router.post("/orgs", dependencies=[Depends(require_admin_token)])
+async def admin_create_org(body: _CreateOrgIn) -> dict:
+    name = (body.name or "").strip()
+    if not name or len(name) > 128:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_name")
+    seats = int(body.seats_total)
+    if seats < 1 or seats > 10000:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_seats")
+    until = _parse_org_until(body.valid_until)
+    async with db_session() as s:
+        repo = Repo(s)
+        org = await repo.create_org(
+            name=name, seats_total=seats,
+            valid_until=until, contact_email=body.contact_email,
+        )
+        await s.commit()
+        return {
+            "id": org.id, "name": org.name, "invite_code": org.invite_code,
+            "seats_total": org.seats_total, "seats_used": 0,
+            "valid_until": org.valid_until.isoformat() if org.valid_until else None,
+            "active": bool(org.active), "contact_email": org.contact_email,
+            "created_at": org.created_at.isoformat() if org.created_at else None,
+            "invite_link": _org_invite_link(org.invite_code),
+        }
+
+
+@router.post("/orgs/{org_id}", dependencies=[Depends(require_admin_token)])
+async def admin_update_org(org_id: int, body: _UpdateOrgIn) -> dict:
+    until = _parse_org_until(body.valid_until) if body.valid_until is not None else None
+    async with db_session() as s:
+        repo = Repo(s)
+        ok = await repo.update_org(
+            org_id,
+            name=(body.name.strip() if body.name else None),
+            seats_total=(int(body.seats_total) if body.seats_total is not None else None),
+            valid_until=until,
+            active=body.active,
+        )
+        if not ok:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "org_not_found")
+        await s.commit()
+    return {"ok": True}
+
+
+@router.get("/orgs/{org_id}/members", dependencies=[Depends(require_admin_token)])
+async def admin_org_members(org_id: int) -> dict:
+    async with db_session() as s:
+        repo = Repo(s)
+        items = await repo.list_org_members(org_id)
+    return {"items": [
+        {
+            **m,
+            "active": bool(m["active"]),
+            "joined_at": m["joined_at"].isoformat() if m["joined_at"] else None,
+        }
+        for m in items
+    ], "total": len(items)}
+
+
+@router.post("/orgs/{org_id}/member-active", dependencies=[Depends(require_admin_token)])
+async def admin_org_member_active(org_id: int, body: _OrgMemberActiveIn) -> dict:
+    async with db_session() as s:
+        repo = Repo(s)
+        ok = await repo.set_org_member_active(org_id, int(body.user_id), bool(body.active))
+        if not ok:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "member_not_found")
+        await s.commit()
+    return {"ok": True}
 
 
 # ─── Admin v2: charts/retention/sessions ─────────────────────────────────────

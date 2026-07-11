@@ -217,6 +217,55 @@ def _ru_providers(providers: list[str]) -> str:
     return ", ".join(parts[:-1]) + " и " + parts[-1]
 
 
+async def _handle_school_deeplink(message: Message, invite_code: str) -> None:
+    """B2B: юзер пришёл по t.me/<bot>?start=school_<invite_code> —
+    подключаем его к школе через backend (место ученика = полный доступ)."""
+    if not message.from_user:
+        return
+    code, data = await _post_backend("/api/internal/org/join", {
+        "invite_code": invite_code,
+        "tg_id": message.from_user.id,
+        "first_name": message.from_user.first_name,
+        "last_name": message.from_user.last_name,
+        "username": message.from_user.username,
+        "language_code": message.from_user.language_code,
+    })
+    if code != 200 or not isinstance(data, dict):
+        await message.answer(
+            "⚠️ Не получилось подключиться к школе — попробуй ещё раз чуть позже.",
+        )
+        return
+    status = data.get("status")
+    org_name = data.get("org_name") or "твоя школа"
+    if status in ("ok", "already"):
+        prefix = (
+            f"🎓 Ты подключён к школе <b>{org_name}</b>!"
+            if status == "ok"
+            else f"🎓 Ты уже ученик школы <b>{org_name}</b>."
+        )
+        await message.answer(
+            f"{prefix}\n\n"
+            "Тебе открыт полный доступ без лимитов: разговоры с AI-репетитором, "
+            "подкасты, грамматика и словарь. Внутри школы — свой лидерборд, "
+            "соревнуйся с одногруппниками. 🏆\n\n"
+            "Жми кнопку и начинай заниматься!",
+            parse_mode="HTML",
+            reply_markup=_miniapp_keyboard(),
+        )
+        return
+    if status == "no_seats":
+        await message.answer(
+            f"😔 В школе <b>{org_name}</b> закончились свободные места.\n"
+            "Сообщи администратору школы — он сможет расширить пакет.",
+            parse_mode="HTML",
+        )
+        return
+    await message.answer(
+        "⚠️ Код приглашения недействителен или срок доступа школы истёк. "
+        "Проверь ссылку у администратора школы.",
+    )
+
+
 async def _handle_auth_deeplink(message: Message, token: str) -> None:
     """Юзер пришёл по t.me/<bot>?start=<login|link|auth>_<token>.
 
@@ -344,6 +393,11 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
             token = payload_raw[len(prefix):]
             await _handle_auth_deeplink(message, token)
             return
+
+    # B2B: приглашение в школу — t.me/<bot>?start=school_<invite_code>.
+    if payload_raw.lower().startswith("school_"):
+        await _handle_school_deeplink(message, payload_raw[len("school_"):])
+        return
 
     # Deep-link /start subscribe убран: подписка теперь оформляется внутри
     # мини-аппа через SubscribeScreen → ЮKassa. На случай если старый

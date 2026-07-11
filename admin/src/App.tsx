@@ -17,6 +17,8 @@ import {
   type PaymentsMonthChart,
   type PromoItem,
   type PromoActivation,
+  type OrgItem,
+  type OrgMemberItem,
 } from "./api";
 import {
   ResponsiveContainer,
@@ -228,6 +230,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     view = <PaymentsPage />;
   } else if (route === "/promo") {
     view = <PromosPage />;
+  } else if (route === "/orgs") {
+    view = <OrgsPage />;
   } else if (route === "/broadcast") {
     view = <BroadcastPage />;
   } else if (route === "/settings") {
@@ -289,6 +293,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           {navBtn("/users", "Пользователи")}
           {navBtn("/payments", "Платежи")}
           {navBtn("/promo", "Промокоды")}
+          {navBtn("/orgs", "Школы")}
           {navBtn("/broadcast", "Массовые")}
           {navBtn("/settings", "Настройки")}
         </nav>
@@ -2050,6 +2055,278 @@ function PromosPage() {
                                   {a.tg_id ? ` · tg ${a.tg_id}` : ""}
                                   {" · "}{a.discount_percent}%
                                   {" · "}{a.created_at ? fmtDate(a.created_at) : ""}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── B2B: школы ──────────────────────────────────────────────────────────────
+function OrgsPage() {
+  const isMobile = useIsMobile();
+  const [items, setItems] = useState<OrgItem[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [name, setName] = useState<string>("");
+  const [seats, setSeats] = useState<string>("10");
+  const [until, setUntil] = useState<string>("");
+  const [email, setEmail] = useState<string>("");
+  const [busy, setBusy] = useState<boolean>(false);
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [members, setMembers] = useState<Record<number, OrgMemberItem[]>>({});
+  const [copied, setCopied] = useState<number | null>(null);
+
+  const reload = () => {
+    setItems(null);
+    api.listOrgs()
+      .then((r) => setItems(r.items))
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  };
+  useEffect(reload, []);
+
+  const create = async () => {
+    const n = name.trim();
+    const s = parseInt(seats, 10);
+    if (!n) { setErr("Введите название школы"); return; }
+    if (isNaN(s) || s < 1) { setErr("Мест — минимум 1"); return; }
+    if (!until) { setErr("Укажите срок действия"); return; }
+    setBusy(true); setErr(null);
+    try {
+      await api.createOrg({
+        name: n, seats_total: s, valid_until: until,
+        contact_email: email.trim() || undefined,
+      });
+      setName(""); setSeats("10"); setUntil(""); setEmail("");
+      reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  };
+
+  const toggle = async (o: OrgItem) => {
+    try {
+      await api.updateOrg(o.id, { active: !o.active });
+      reload();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const extend = async (o: OrgItem) => {
+    const v = window.prompt(
+      `Новый срок действия для «${o.name}» (ГГГГ-ММ-ДД):`,
+      o.valid_until ? o.valid_until.slice(0, 10) : "",
+    );
+    if (!v) return;
+    try {
+      await api.updateOrg(o.id, { valid_until: v.trim() });
+      reload();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const resize = async (o: OrgItem) => {
+    const v = window.prompt(`Количество мест для «${o.name}»:`, String(o.seats_total));
+    if (!v) return;
+    const n = parseInt(v, 10);
+    if (isNaN(n) || n < 1) { setErr("Мест — минимум 1"); return; }
+    try {
+      await api.updateOrg(o.id, { seats_total: n });
+      reload();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const copyLink = async (o: OrgItem) => {
+    try {
+      await navigator.clipboard.writeText(o.invite_link);
+      setCopied(o.id);
+      setTimeout(() => setCopied(null), 1500);
+    } catch { /* clipboard недоступен */ }
+  };
+
+  const showMembers = async (id: number) => {
+    if (expanded === id) { setExpanded(null); return; }
+    setExpanded(id);
+    try {
+      const r = await api.orgMembers(id);
+      setMembers((m) => ({ ...m, [id]: r.items }));
+    } catch { /* ignore */ }
+  };
+
+  const memberToggle = async (orgId: number, m: OrgMemberItem) => {
+    try {
+      await api.orgMemberActive(orgId, m.user_id, !m.active);
+      const r = await api.orgMembers(orgId);
+      setMembers((mm) => ({ ...mm, [orgId]: r.items }));
+      reload();  // seats_used изменился
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <h2 style={S.h2}>🎓 Школы</h2>
+
+      {/* Создание */}
+      <div style={S.card}>
+        <h3 style={S.h3}>Подключить школу</h3>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 12, color: colors.textMuted }}>Название</span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Skyrocket English"
+              style={{ ...S.input, minWidth: 200 }}
+              maxLength={128}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 12, color: colors.textMuted }}>Мест</span>
+            <input
+              type="number"
+              value={seats}
+              onChange={(e) => setSeats(e.target.value)}
+              min={1}
+              style={{ ...S.input, maxWidth: 90 }}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 12, color: colors.textMuted }}>Доступ до</span>
+            <input
+              type="date"
+              value={until}
+              onChange={(e) => setUntil(e.target.value)}
+              style={{ ...S.input, maxWidth: 170 }}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 12, color: colors.textMuted }}>Email (опц.)</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="admin@school.ru"
+              style={{ ...S.input, minWidth: 180 }}
+            />
+          </label>
+          <button style={S.btn} onClick={create} disabled={busy}>
+            {busy ? "…" : "Создать"}
+          </button>
+        </div>
+        {err && <div style={{ ...S.error, marginTop: 12 }}>{err}</div>}
+      </div>
+
+      {/* Список */}
+      <div style={S.card}>
+        {!items && <div style={{ color: colors.textMuted }}>Загрузка…</div>}
+        {items && items.length === 0 && (
+          <div style={{ color: colors.textMuted }}>
+            Школ пока нет. Создай первую и отправь администратору школы
+            ссылку-приглашение — ученики подключатся по ней сами.
+          </div>
+        )}
+        {items && items.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table style={tableStyle(isMobile)}>
+              <thead>
+                <tr>
+                  <th style={S.th}>Школа</th>
+                  <th style={S.th}>Приглашение</th>
+                  <th style={S.th}>Места</th>
+                  <th style={S.th}>Доступ до</th>
+                  <th style={S.th}>Статус</th>
+                  <th style={S.th}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((o) => (
+                  <>
+                    <tr key={o.id}>
+                      <td style={{ ...S.td, fontWeight: 600 }}>
+                        {o.name}
+                        {o.contact_email && (
+                          <div style={{ fontSize: 11, color: colors.textMuted, fontWeight: 400 }}>
+                            {o.contact_email}
+                          </div>
+                        )}
+                      </td>
+                      <td style={S.td}>
+                        <button
+                          onClick={() => copyLink(o)}
+                          title={o.invite_link}
+                          style={{ background: "transparent", border: 0, color: colors.primary, cursor: "pointer", padding: 0, font: "inherit" }}
+                        >
+                          {copied === o.id ? "скопировано ✓" : `${o.invite_code} ⧉`}
+                        </button>
+                      </td>
+                      <td style={S.td}>
+                        <button
+                          onClick={() => showMembers(o.id)}
+                          style={{ background: "transparent", border: 0, color: colors.primary, cursor: "pointer", padding: 0, font: "inherit" }}
+                        >
+                          {o.seats_used}/{o.seats_total} {expanded === o.id ? "▲" : "▼"}
+                        </button>
+                      </td>
+                      <td style={{ ...S.td, fontSize: 12 }}>
+                        {o.valid_until ? fmtDate(o.valid_until) : "—"}
+                      </td>
+                      <td style={S.td}>
+                        <button
+                          onClick={() => toggle(o)}
+                          style={{
+                            ...S.btnSecondary,
+                            padding: "4px 10px",
+                            fontSize: 12,
+                            color: o.active ? colors.success : colors.textMuted,
+                          }}
+                        >
+                          {o.active ? "вкл" : "выкл"}
+                        </button>
+                      </td>
+                      <td style={{ ...S.td, whiteSpace: "nowrap" }}>
+                        <button style={{ ...S.btnSecondary, padding: "4px 10px", fontSize: 12 }} onClick={() => extend(o)}>
+                          продлить
+                        </button>{" "}
+                        <button style={{ ...S.btnSecondary, padding: "4px 10px", fontSize: 12 }} onClick={() => resize(o)}>
+                          места
+                        </button>
+                      </td>
+                    </tr>
+                    {expanded === o.id && (
+                      <tr key={o.id + "-members"}>
+                        <td colSpan={6} style={{ ...S.td, background: colors.bg }}>
+                          {!members[o.id] && <span style={{ color: colors.textMuted }}>Загрузка…</span>}
+                          {members[o.id] && members[o.id].length === 0 && (
+                            <span style={{ color: colors.textMuted }}>
+                              Учеников пока нет — отправь школе ссылку-приглашение.
+                            </span>
+                          )}
+                          {members[o.id] && members[o.id].length > 0 && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              {members[o.id].map((m) => (
+                                <div key={m.user_id} style={{ fontSize: 13, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                  <span style={{ opacity: m.active ? 1 : 0.5 }}>
+                                    {m.first_name || "—"}
+                                    {m.username ? ` (@${m.username})` : ""}
+                                    {m.tg_id ? ` · tg ${m.tg_id}` : ""}
+                                    {" · "}{m.role}
+                                    {" · с "}{m.joined_at ? fmtDate(m.joined_at) : "—"}
+                                    {!m.active && " · отключён"}
+                                  </span>
+                                  <button
+                                    onClick={() => memberToggle(o.id, m)}
+                                    style={{ ...S.btnSecondary, padding: "2px 8px", fontSize: 11 }}
+                                  >
+                                    {m.active ? "отключить" : "вернуть"}
+                                  </button>
                                 </div>
                               ))}
                             </div>

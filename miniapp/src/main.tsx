@@ -28,6 +28,7 @@ import {
   extractYandexCallback,
   installFetchAuth,
   getToken,
+  joinOrg,
   loginTelegramInitData,
   verifySession,
 } from "./auth";
@@ -121,6 +122,20 @@ function Root() {
       return v;
     } catch { return ""; }
   });
+  // B2B deep-link: ?school=CODE — после входа подключаем юзера к школе.
+  const [schoolParam] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const v = (p.get("school") || "").trim();
+      if (v) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("school");
+        window.history.replaceState(null, "", url.pathname + (url.search || "") + url.hash);
+      }
+      return v;
+    } catch { return ""; }
+  });
   // На вебе для не-залогиненных показываем сначала Landing, по клику
   // CTA — LoginScreen. Внутри Telegram Mini App initData аутентифицирует
   // юзера автоматически (см. ниже), Landing не появляется.
@@ -195,6 +210,7 @@ function Root() {
           : null
       }
       initialPromo={promoParam}
+      initialSchool={schoolParam}
       onLoggedOut={() => { setShowLogin(false); setAuth("login"); }}
     />
   );
@@ -204,11 +220,13 @@ function TabShell({
   initialTab,
   initialMode,
   initialPromo,
+  initialSchool,
   onLoggedOut,
 }: {
   initialTab?: TabKey;
   initialMode?: Mode | null;
   initialPromo?: string;
+  initialSchool?: string;
   onLoggedOut: () => void;
 }) {
   // mode != null → юзер в тренировочном экране (Speaking/Listening/Grammar).
@@ -222,6 +240,32 @@ function TabShell({
     !!(initialPromo && initialPromo.trim()),
   );
   const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
+  // B2B: ?school=CODE — подключаем к школе и показываем результат тостом.
+  const [orgToast, setOrgToast] = useState<string>("");
+
+  useEffect(() => {
+    const code = (initialSchool || "").trim();
+    if (!code) return;
+    let alive = true;
+    void (async () => {
+      const r = await joinOrg(code);
+      if (!alive) return;
+      const name = r?.org_name || "школа";
+      if (!r) {
+        setOrgToast("⚠️ Не получилось подключиться к школе. Попробуй позже.");
+      } else if (r.status === "ok") {
+        setOrgToast(`🎓 Ты подключён к школе «${name}» — полный доступ открыт!`);
+      } else if (r.status === "already") {
+        setOrgToast(`🎓 Ты уже ученик школы «${name}».`);
+      } else if (r.status === "no_seats") {
+        setOrgToast(`😔 В школе «${name}» нет свободных мест — сообщи администратору.`);
+      } else {
+        setOrgToast("⚠️ Код приглашения недействителен или срок доступа истёк.");
+      }
+      setTimeout(() => { if (alive) setOrgToast(""); }, 8000);
+    })();
+    return () => { alive = false; };
+  }, [initialSchool]);
 
   const switchTab = (next: TabKey) => {
     setMode(null);
@@ -267,6 +311,21 @@ function TabShell({
 
   return (
     <div className="app-shell">
+      {orgToast && (
+        <div
+          role="status"
+          style={{
+            position: "fixed", top: 12, left: 12, right: 12, zIndex: 60,
+            padding: "12px 16px", borderRadius: 14,
+            background: "var(--bg-2, #fff)", color: "var(--text, #222)",
+            border: "1px solid var(--border, rgba(0,0,0,0.12))",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+            fontSize: 14, lineHeight: 1.4, textAlign: "center",
+          }}
+        >
+          {orgToast}
+        </div>
+      )}
       <div className="app-shell__body">{body}</div>
       <BottomNav active={activeForNav as TabKey} onChange={switchTab} />
       {subscribeOpen && (
