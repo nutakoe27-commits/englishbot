@@ -861,6 +861,12 @@ def _org_invite_link(code: str) -> str:
     return f"https://t.me/{settings.BOT_USERNAME}?start=school_{code}"
 
 
+def _org_invite_link_web(code: str) -> str:
+    # Активация через сайт — для учеников без Telegram. Мини-апп читает
+    # ?school= и подключает после входа (email/Яндекс).
+    return f"{settings.MINIAPP_URL.rstrip('/')}/?school={code}"
+
+
 def _org_to_dict(o: dict) -> dict:
     return {
         **o,
@@ -868,6 +874,7 @@ def _org_to_dict(o: dict) -> dict:
         "created_at": o["created_at"].isoformat() if o["created_at"] else None,
         "active": bool(o["active"]),
         "invite_link": _org_invite_link(o["invite_code"]),
+        "invite_link_web": _org_invite_link_web(o["invite_code"]),
     }
 
 
@@ -902,6 +909,7 @@ async def admin_create_org(body: _CreateOrgIn) -> dict:
             "active": bool(org.active), "contact_email": org.contact_email,
             "created_at": org.created_at.isoformat() if org.created_at else None,
             "invite_link": _org_invite_link(org.invite_code),
+            "invite_link_web": _org_invite_link_web(org.invite_code),
         }
 
 

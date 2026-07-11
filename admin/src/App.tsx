@@ -2085,7 +2085,8 @@ function OrgsPage() {
   const [busy, setBusy] = useState<boolean>(false);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [members, setMembers] = useState<Record<number, OrgMemberItem[]>>({});
-  const [copied, setCopied] = useState<number | null>(null);
+  // "<id>:tg" | "<id>:web" — какая из двух ссылок школы только что скопирована.
+  const [copied, setCopied] = useState<string | null>(null);
 
   const reload = () => {
     setItems(null);
@@ -2144,10 +2145,12 @@ function OrgsPage() {
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   };
 
-  const copyLink = async (o: OrgItem) => {
+  const copyLink = async (o: OrgItem, kind: "tg" | "web") => {
     try {
-      await navigator.clipboard.writeText(o.invite_link);
-      setCopied(o.id);
+      await navigator.clipboard.writeText(
+        kind === "tg" ? o.invite_link : o.invite_link_web,
+      );
+      setCopied(`${o.id}:${kind}`);
       setTimeout(() => setCopied(null), 1500);
     } catch { /* clipboard недоступен */ }
   };
@@ -2259,13 +2262,25 @@ function OrgsPage() {
                         )}
                       </td>
                       <td style={S.td}>
-                        <button
-                          onClick={() => copyLink(o)}
-                          title={o.invite_link}
-                          style={{ background: "transparent", border: 0, color: colors.primary, cursor: "pointer", padding: 0, font: "inherit" }}
-                        >
-                          {copied === o.id ? "скопировано ✓" : `${o.invite_code} ⧉`}
-                        </button>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                          <span style={{ fontWeight: 600, fontSize: 12 }}>{o.invite_code}</span>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                              onClick={() => copyLink(o, "tg")}
+                              title={o.invite_link}
+                              style={{ background: "transparent", border: 0, color: colors.primary, cursor: "pointer", padding: 0, font: "inherit", fontSize: 12 }}
+                            >
+                              {copied === `${o.id}:tg` ? "✓" : "TG ⧉"}
+                            </button>
+                            <button
+                              onClick={() => copyLink(o, "web")}
+                              title={o.invite_link_web}
+                              style={{ background: "transparent", border: 0, color: colors.primary, cursor: "pointer", padding: 0, font: "inherit", fontSize: 12 }}
+                            >
+                              {copied === `${o.id}:web` ? "✓" : "Сайт ⧉"}
+                            </button>
+                          </div>
+                        </div>
                       </td>
                       <td style={S.td}>
                         <button

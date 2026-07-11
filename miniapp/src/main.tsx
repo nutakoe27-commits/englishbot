@@ -99,6 +99,10 @@ function parseBattle(param: string): { id: number; side: "a" | "b" } | null {
 
 type AuthState = "loading" | "authed" | "login";
 
+// B2B: код школы из ?school= переживает OAuth-redirect через localStorage
+// (конвенция ключей et_* — как et_theme и токен в auth.ts).
+const SCHOOL_CODE_KEY = "et_school_code";
+
 function Root() {
   // Хуки всегда первыми, до условных return — иначе React 18 в проде может
   // выкинуть «rendered fewer hooks than expected».
@@ -123,12 +127,16 @@ function Root() {
     } catch { return ""; }
   });
   // B2B deep-link: ?school=CODE — после входа подключаем юзера к школе.
+  // Код дублируем в localStorage: вход через Яндекс OAuth делает полный
+  // redirect с сайта и обратно — query и React-state теряются, а код
+  // должен пережить логин. Потребляется (и чистится) в TabShell.
   const [schoolParam] = useState<string>(() => {
     if (typeof window === "undefined") return "";
     try {
       const p = new URLSearchParams(window.location.search);
       const v = (p.get("school") || "").trim();
       if (v) {
+        try { localStorage.setItem(SCHOOL_CODE_KEY, v); } catch { /* private mode */ }
         const url = new URL(window.location.href);
         url.searchParams.delete("school");
         window.history.replaceState(null, "", url.pathname + (url.search || "") + url.hash);
@@ -244,11 +252,19 @@ function TabShell({
   const [orgToast, setOrgToast] = useState<string>("");
 
   useEffect(() => {
-    const code = (initialSchool || "").trim();
+    // Код школы: из пропа (обычный заход) или из localStorage (веб-юзер
+    // прошёл через Яндекс OAuth redirect — query потерян, код сохранён).
+    let code = (initialSchool || "").trim();
+    if (!code) {
+      try { code = (localStorage.getItem(SCHOOL_CODE_KEY) || "").trim(); } catch { /* private mode */ }
+    }
     if (!code) return;
     let alive = true;
     void (async () => {
       const r = await joinOrg(code);
+      // Один заход — одна попытка: чистим сразу после ответа, чтобы не
+      // переподключать юзера на каждом старте приложения.
+      try { localStorage.removeItem(SCHOOL_CODE_KEY); } catch { /* private mode */ }
       if (!alive) return;
       const name = r?.org_name || "школа";
       if (!r) {

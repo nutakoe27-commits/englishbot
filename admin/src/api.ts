@@ -324,6 +324,7 @@ export interface OrgItem {
   name: string;
   invite_code: string;
   invite_link: string;
+  invite_link_web: string;
   seats_total: number;
   seats_used: number;
   valid_until: string | null;
