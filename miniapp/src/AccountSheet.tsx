@@ -21,6 +21,7 @@ import {
   type MeInfo,
 } from "./auth";
 import { ThemeToggle } from "./ThemeToggle";
+import { SchoolCabinetScreen } from "./SchoolCabinetScreen";
 
 interface Props {
   onLoggedOut: () => void;
@@ -46,6 +47,8 @@ const PENDING_TG_KEY = "englishbot_tg_link_pending";
 export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTutorial, embedded = false }: Props) {
   const [me, setMe] = useState<MeInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  // B2B: кабинет школы (fullscreen-popover), только для teacher/admin.
+  const [cabinetOpen, setCabinetOpen] = useState(false);
   const [msg, setMsg] = useState<string>("");
   const [tgPending, setTgPending] = useState<{ token: string; url: string } | null>(null);
   const [tgBusy, setTgBusy] = useState<boolean>(false);
@@ -258,6 +261,23 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
                 </div>
               )}
 
+              {/* B2B: кабинет школы для учителя/админа школы. */}
+              {me?.org && (me.org.role === "teacher" || me.org.role === "admin") && (
+                <div className="acc-link-block">
+                  <div className="acc-link-title">🏫 {me.org.name}</div>
+                  <button
+                    type="button"
+                    className="btn btn--primary acc-link-btn"
+                    onClick={() => setCabinetOpen(true)}
+                  >
+                    Кабинет школы
+                  </button>
+                </div>
+              )}
+              {me?.org && me.org.role === "student" && (
+                <p className="acc-hint">🏫 Ты ученик школы «{me.org.name}» — полный доступ открыт школой.</p>
+              )}
+
               <div className="acc-list">
                 {(["telegram", "native", "yandex"] as const).map((p) => {
                   const id = me?.identities.find((i) => i.provider === p);
@@ -423,6 +443,9 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
           )}
         </footer>
       </div>
+      {cabinetOpen && (
+        <SchoolCabinetScreen onClose={() => setCabinetOpen(false)} />
+      )}
     </div>
   );
 }

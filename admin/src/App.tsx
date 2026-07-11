@@ -2173,6 +2173,17 @@ function OrgsPage() {
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   };
 
+  const memberRole = async (orgId: number, m: OrgMemberItem) => {
+    // student ↔ teacher; учитель получает кабинет школы и не занимает место.
+    const next = m.role === "teacher" ? "student" : "teacher";
+    try {
+      await api.orgMemberRole(orgId, m.user_id, next);
+      const r = await api.orgMembers(orgId);
+      setMembers((mm) => ({ ...mm, [orgId]: r.items }));
+      reload();  // seats_used изменился
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <h2 style={S.h2}>🎓 Школы</h2>
@@ -2341,6 +2352,13 @@ function OrgsPage() {
                                     style={{ ...S.btnSecondary, padding: "2px 8px", fontSize: 11 }}
                                   >
                                     {m.active ? "отключить" : "вернуть"}
+                                  </button>
+                                  <button
+                                    onClick={() => memberRole(o.id, m)}
+                                    title="Учитель видит кабинет школы и не занимает место"
+                                    style={{ ...S.btnSecondary, padding: "2px 8px", fontSize: 11 }}
+                                  >
+                                    {m.role === "teacher" ? "→ ученик" : "→ учитель"}
                                   </button>
                                 </div>
                               ))}

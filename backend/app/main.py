@@ -637,6 +637,143 @@ async def org_join(
     return {"status": status_str, "org_name": getattr(org, "name", None)}
 
 
+# ─── B2B фаза 2: кабинет школы (учитель/админ школы) ─────────────────────────
+
+async def _resolve_org_staff(repo, *, authorization: Optional[str], init_data: str):
+    """resolve_user + гейт кабинета: активный участник активной школы с
+    ролью teacher/admin. Возвращает (user, org). 403 иначе."""
+    from fastapi import HTTPException, status
+    user = await resolve_user(repo, authorization=authorization, init_data=init_data)
+    mem = await repo.user_org_membership(user.id)
+    if mem is None or mem[1] not in ("teacher", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not_org_staff")
+    return user, mem[0]
+
+
+def _cabinet_students(rows: list[dict]) -> list[dict]:
+    return [
+        {
+            **r,
+            "joined_at": r["joined_at"].isoformat() if r["joined_at"] else None,
+            "last_practice_date": (
+                r["last_practice_date"].isoformat() if r["last_practice_date"] else None
+            ),
+        }
+        for r in rows
+    ]
+
+
+@app.get("/api/org/cabinet", tags=["Org"])
+async def org_cabinet(
+    init_data: str = "", authorization: Optional[str] = Header(None),
+) -> dict:
+    """Кабинет школы: сводка + статистика учеников за текущий месяц."""
+    from fastapi import HTTPException, status
+    from .db import Repo
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+    async with db_session() as session:
+        repo = Repo(session)
+        _user, org = await _resolve_org_staff(
+            repo, authorization=authorization, init_data=init_data,
+        )
+        seats_used = await repo.org_seats_used(org.id)
+        students = await repo.org_students_stats(org.id)
+    return {
+        "org": {
+            "name": org.name,
+            "seats_total": org.seats_total,
+            "seats_used": seats_used,
+            "valid_until": org.valid_until.isoformat() if org.valid_until else None,
+        },
+        "students": _cabinet_students(students),
+    }
+
+
+@app.get("/api/org/cabinet/student/{student_id}", tags=["Org"])
+async def org_cabinet_student(
+    student_id: int,
+    init_data: str = "",
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Детали ученика для учителя: топ частых ошибок + уровень."""
+    from fastapi import HTTPException, status
+    from .db import Repo
+    from .points import level_info
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+    async with db_session() as session:
+        repo = Repo(session)
+        _user, org = await _resolve_org_staff(
+            repo, authorization=authorization, init_data=init_data,
+        )
+        # Ученик должен быть участником ЭТОЙ школы — чужих не показываем.
+        rows = await repo.org_students_stats(org.id)
+        base = next((r for r in rows if int(r["user_id"]) == int(student_id)), None)
+        if base is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "student_not_found")
+        mistakes = await repo.get_recent_mistakes(student_id, limit=10, days=30)
+        lifetime = await repo.user_points(student_id, month_only=False)
+    return {
+        "student": _cabinet_students([base])[0],
+        "level": level_info(lifetime),
+        "mistakes": [
+            {
+                "category": m.get("category"),
+                "bad": m.get("bad"),
+                "good": m.get("good"),
+            }
+            for m in mistakes
+        ],
+    }
+
+
+@app.get("/api/org/cabinet/report.csv", tags=["Org"])
+async def org_cabinet_report(
+    init_data: str = "", authorization: Optional[str] = Header(None),
+):
+    """CSV-отчёт по ученикам за текущий месяц (UTF-8 BOM — для Excel)."""
+    import csv
+    import io
+    from datetime import date as _date
+    from fastapi import HTTPException, status
+    from fastapi.responses import Response as FastResponse
+    from .db import Repo
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+    async with db_session() as session:
+        repo = Repo(session)
+        _user, org = await _resolve_org_staff(
+            repo, authorization=authorization, init_data=init_data,
+        )
+        students = await repo.org_students_stats(org.id)
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow([
+        "Ученик", "Username", "Разговор (мин)", "Подкасты (мин)",
+        "Уроки грамматики", "Очки за месяц", "Стрик (дней)",
+        "Последняя активность", "Подключён", "Статус",
+    ])
+    for r in students:
+        w.writerow([
+            r["first_name"] or "—",
+            f"@{r['username']}" if r["username"] else "—",
+            r["speaking_min"], r["listening_min"], r["grammar_lessons"],
+            r["points_month"], r["streak_days"],
+            r["last_practice_date"].isoformat() if r["last_practice_date"] else "—",
+            r["joined_at"].date().isoformat() if r["joined_at"] else "—",
+            "активен" if r["active"] else "отключён",
+        ])
+    today = _date.today()
+    fname = f"report-{today.year:04d}-{today.month:02d}.csv"
+    # BOM — чтобы Excel корректно открыл кириллицу в UTF-8.
+    return FastResponse(
+        content="\ufeff" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 # Backfill достижений для существующих юзеров — единоразово при старте.
 # Иначе при первой же сессии каждый активный юзер получит burst из 5+
 # push'ей. Маркер хранится в settings_kv['achievements_backfilled'].

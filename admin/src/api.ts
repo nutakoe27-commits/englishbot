@@ -317,6 +317,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ user_id, active }),
     }),
+  orgMemberRole: (id: number, user_id: number, role: string) =>
+    request<{ ok: boolean }>(`/api/admin/orgs/${id}/member-role`, {
+      method: "POST",
+      body: JSON.stringify({ user_id, role }),
+    }),
 };
 
 export interface OrgItem {

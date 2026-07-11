@@ -443,12 +443,18 @@ async def auth_me(authorization: Optional[str] = Header(None)) -> dict:
         user = await auth_lib.resolve_user(repo, authorization=authorization)
         identities = await repo.list_identities(user.id)
         has_sub = await repo.has_active_subscription(user)
+        org_mem = await repo.user_org_membership(user.id)
     out = _user_summary(user, identities)
     out["has_subscription"] = has_sub
     out["subscription_until"] = (
         user.subscription_until.isoformat() if user.subscription_until else None
     )
     out["tutorial_done"] = user.tutorial_done_at is not None
+    # B2B: школа юзера (любая роль). По role='teacher'/'admin' фронт
+    # показывает кнопку «Кабинет школы» в Профиле.
+    out["org"] = (
+        {"name": org_mem[0].name, "role": org_mem[1]} if org_mem else None
+    )
     return out
 
 

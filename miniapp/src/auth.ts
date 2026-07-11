@@ -384,6 +384,87 @@ export interface MeInfo {
   has_subscription?: boolean;
   subscription_until?: string | null;
   tutorial_done?: boolean;
+  // B2B: школа юзера. role teacher/admin → в Профиле кнопка «Кабинет школы».
+  org?: { name: string; role: "student" | "teacher" | "admin" } | null;
+}
+
+// ─── B2B: кабинет школы (для role teacher/admin) ─────────────────────
+
+export interface OrgStudentRow {
+  user_id: number;
+  first_name: string | null;
+  username: string | null;
+  active: boolean;
+  joined_at: string | null;
+  speaking_min: number;
+  listening_min: number;
+  grammar_lessons: number;
+  points_month: number;
+  streak_days: number;
+  last_practice_date: string | null;
+}
+
+export interface OrgCabinet {
+  org: {
+    name: string;
+    seats_total: number;
+    seats_used: number;
+    valid_until: string | null;
+  };
+  students: OrgStudentRow[];
+}
+
+export interface OrgStudentDetail {
+  student: OrgStudentRow;
+  level: { level: number; lifetime_points: number };
+  mistakes: { category: string | null; bad: string | null; good: string | null }[];
+}
+
+function _authHeaders(): HeadersInit {
+  const tok = getToken();
+  return tok ? { Authorization: `Bearer ${tok}` } : {};
+}
+
+export async function fetchOrgCabinet(): Promise<OrgCabinet | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/org/cabinet`, { headers: _authHeaders() });
+    if (!res.ok) return null;
+    return (await res.json()) as OrgCabinet;
+  } catch { return null; }
+}
+
+export async function fetchOrgStudent(userId: number): Promise<OrgStudentDetail | null> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/org/cabinet/student/${userId}`,
+      { headers: _authHeaders() },
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as OrgStudentDetail;
+  } catch { return null; }
+}
+
+/** Скачать CSV-отчёт: fetch с Bearer → blob → программный клик по ссылке. */
+export async function downloadOrgReport(): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/org/cabinet/report.csv`,
+      { headers: _authHeaders() },
+    );
+    if (!res.ok) return false;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = cd.match(/filename="?([^";]+)"?/);
+    a.download = m ? m[1] : "report.csv";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch { return false; }
 }
 
 /** Пометить онбординг пройденным (или скипнутым). Идемпотентно. */

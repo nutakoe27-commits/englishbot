@@ -745,6 +745,103 @@ class Repo:
         await self.s.flush()
         return True
 
+    async def set_org_member_role(
+        self, org_id: int, user_id: int, role: str,
+    ) -> bool:
+        """student ↔ teacher ↔ admin. teacher/admin не занимают место
+        (org_seats_used считает только student)."""
+        from .models import OrgMember
+        if role not in ("student", "teacher", "admin"):
+            return False
+        res = await self.s.execute(
+            select(OrgMember).where(
+                OrgMember.org_id == org_id, OrgMember.user_id == user_id,
+            )
+        )
+        member = res.scalar_one_or_none()
+        if member is None:
+            return False
+        member.role = role
+        await self.s.flush()
+        return True
+
+    async def user_org_membership(self, user_id: int):
+        """(Organization, role) активного участника активной непросроченной
+        школы — любая роль. None — юзер не в школе. Для /api/auth/me и
+        гейта кабинета (кабинет — только role teacher/admin)."""
+        from .models import Organization, OrgMember
+        res = await self.s.execute(
+            select(Organization, OrgMember.role)
+            .join(OrgMember, OrgMember.org_id == Organization.id)
+            .where(
+                OrgMember.user_id == user_id,
+                OrgMember.active.is_(True),
+                Organization.active.is_(True),
+                Organization.valid_until.is_not(None),
+                Organization.valid_until > utcnow(),
+            )
+            .limit(1)
+        )
+        row = res.first()
+        return (row[0], row[1]) if row is not None else None
+
+    async def org_students_stats(self, org_id: int) -> list[dict]:
+        """Статистика учеников школы для кабинета учителя: минуты по режимам
+        и очки за текущий МСК-месяц + стрик/последняя активность из users.
+        Один агрегатный запрос по sessions, без per-user циклов."""
+        from .models import OrgMember
+        from ..points import compute_points
+        # 1) Все ученики школы (включая отключённых — с флагом active).
+        res = await self.s.execute(
+            select(OrgMember, User)
+            .join(User, User.id == OrgMember.user_id)
+            .where(OrgMember.org_id == org_id, OrgMember.role == "student")
+            .order_by(OrgMember.joined_at.desc())
+        )
+        members = res.all()
+        if not members:
+            return []
+        ids = [u.id for _, u in members]
+        # 2) Агрегат сессий за месяц одним запросом.
+        first_utc, nxt_utc = self._month_bounds_utc()
+        speak = func.sum(
+            case((SessionRow.mode.in_(("voice", "chat")), SessionRow.used_seconds), else_=0)
+        )
+        listen = func.sum(
+            case((SessionRow.mode == "listening", SessionRow.used_seconds), else_=0)
+        )
+        gram = func.sum(case((SessionRow.mode == "grammar", 1), else_=0))
+        agg = await self.s.execute(
+            select(SessionRow.user_id, speak, listen, gram)
+            .where(
+                SessionRow.user_id.in_(ids),
+                SessionRow.started_at >= first_utc,
+                SessionRow.started_at < nxt_utc,
+            )
+            .group_by(SessionRow.user_id)
+        )
+        by_user = {
+            int(uid): (int(sp or 0), int(li or 0), int(gr or 0))
+            for uid, sp, li, gr in agg.all()
+        }
+        out = []
+        for m, u in members:
+            sp, li, gr = by_user.get(int(u.id), (0, 0, 0))
+            out.append({
+                "user_id": u.id,
+                "first_name": u.first_name,
+                "username": u.username,
+                "active": bool(m.active),
+                "joined_at": m.joined_at,
+                "speaking_min": sp // 60,
+                "listening_min": li // 60,
+                "grammar_lessons": gr,
+                "points_month": compute_points(sp, li, gr),
+                "streak_days": int(u.streak_days or 0),
+                "last_practice_date": u.last_practice_date,
+            })
+        return out
+
     # ─── веб-оплата (PR-8: ЮKassa) ─────────────────────────────────────
     async def create_pending_payment(
         self,

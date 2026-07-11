@@ -957,6 +957,26 @@ async def admin_org_member_active(org_id: int, body: _OrgMemberActiveIn) -> dict
     return {"ok": True}
 
 
+class _OrgMemberRoleIn(BaseModel):
+    user_id: int
+    role: str          # student | teacher | admin
+
+
+@router.post("/orgs/{org_id}/member-role", dependencies=[Depends(require_admin_token)])
+async def admin_org_member_role(org_id: int, body: _OrgMemberRoleIn) -> dict:
+    """Роль участника школы. teacher/admin получают кабинет школы и
+    не занимают место (места считаются только по student)."""
+    if body.role not in ("student", "teacher", "admin"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_role")
+    async with db_session() as s:
+        repo = Repo(s)
+        ok = await repo.set_org_member_role(org_id, int(body.user_id), body.role)
+        if not ok:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "member_not_found")
+        await s.commit()
+    return {"ok": True}
+
+
 # ─── Admin v2: charts/retention/sessions ─────────────────────────────────────
 # Для дашборда с графиками. Метрики тяжёлые (агрегаты по datetime/group by),
 # поэтому держим в памяти 60-сек TTL-кеш. На single-worker'е этого хватает;
