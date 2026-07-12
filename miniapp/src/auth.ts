@@ -410,6 +410,8 @@ export interface OrgCabinet {
     seats_total: number;
     seats_used: number;
     valid_until: string | null;
+    invite_link: string;
+    invite_link_web: string;
   };
   students: OrgStudentRow[];
 }
@@ -423,6 +425,27 @@ export interface OrgStudentDetail {
 function _authHeaders(): HeadersInit {
   const tok = getToken();
   return tok ? { Authorization: `Bearer ${tok}` } : {};
+}
+
+/** Выход из школы по инициативе юзера (место освобождается). */
+export async function leaveOrg(): Promise<{ ok: boolean; org_name?: string } | null> {
+  try {
+    const res = await _postJson("/api/org/leave", {});
+    if (!res.ok) return null;
+    return await res.json() as { ok: boolean; org_name?: string };
+  } catch { return null; }
+}
+
+/** Учитель исключает/возвращает ученика своей школы. */
+export async function setOrgStudentActive(
+  userId: number, active: boolean,
+): Promise<boolean> {
+  try {
+    const res = await _postJson(
+      `/api/org/cabinet/student/${userId}/active`, { active },
+    );
+    return res.ok;
+  } catch { return false; }
 }
 
 export async function fetchOrgCabinet(): Promise<OrgCabinet | null> {

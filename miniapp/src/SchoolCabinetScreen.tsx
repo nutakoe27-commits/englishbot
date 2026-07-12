@@ -18,6 +18,7 @@ import {
   downloadOrgReport,
   fetchOrgCabinet,
   fetchOrgStudent,
+  setOrgStudentActive,
   type OrgCabinet,
   type OrgStudentDetail,
   type OrgStudentRow,
@@ -54,6 +55,9 @@ export function SchoolCabinetScreen({ onClose }: Props) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [details, setDetails] = useState<Record<number, OrgStudentDetail | null>>({});
   const [csvBusy, setCsvBusy] = useState(false);
+  // Какая инвайт-ссылка только что скопирована: "tg" | "web".
+  const [copied, setCopied] = useState<string | null>(null);
+  const [memberBusy, setMemberBusy] = useState(false);
 
   useLucide(`cab-${data ? data.students.length : "load"}-${expanded}`);
 
@@ -86,6 +90,40 @@ export function SchoolCabinetScreen({ onClose }: Props) {
     } finally { setCsvBusy(false); }
   };
 
+  const copyInvite = async (kind: "tg" | "web") => {
+    if (!data) return;
+    try {
+      await navigator.clipboard.writeText(
+        kind === "tg" ? data.org.invite_link : data.org.invite_link_web,
+      );
+      setCopied(kind);
+      setTimeout(() => setCopied(null), 1500);
+    } catch { /* clipboard недоступен (старый WebView) */ }
+  };
+
+  const reloadCabinet = async () => {
+    const r = await fetchOrgCabinet();
+    if (r) setData(r);
+  };
+
+  // Исключение/возврат ученика учителем. Место освобождается/занимается.
+  const toggleStudentActive = async (s: OrgStudentRow) => {
+    if (memberBusy) return;
+    const sure = s.active
+      ? window.confirm(
+          `Исключить «${_name(s)}» из школы? Доступ у ученика пропадёт, ` +
+          "место освободится. Вернуть можно в любой момент.",
+        )
+      : true;
+    if (!sure) return;
+    setMemberBusy(true);
+    try {
+      const ok = await setOrgStudentActive(s.user_id, !s.active);
+      if (!ok) { setError("Не получилось изменить статус ученика."); return; }
+      await reloadCabinet();
+    } finally { setMemberBusy(false); }
+  };
+
   return (
     <div className="sub-screen">
       <div className="sub-screen__inner">
@@ -109,6 +147,28 @@ export function SchoolCabinetScreen({ onClose }: Props) {
                   </span>
                 </div>
               </NoteCard>
+
+              {/* Инвайт-ссылки — школа рассылает приглашения сама. */}
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button
+                  variant="secondary"
+                  fullWidth
+                  onClick={() => void copyInvite("tg")}
+                >
+                  {copied === "tg" ? "Скопировано ✓" : "🔗 Ссылка (Telegram)"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  fullWidth
+                  onClick={() => void copyInvite("web")}
+                >
+                  {copied === "web" ? "Скопировано ✓" : "🔗 Ссылка (сайт)"}
+                </Button>
+              </div>
+              <p className="sub-hint" style={{ margin: 0 }}>
+                Отправь ученику любую из ссылок — он подключится сам и займёт
+                свободное место. Ссылка для сайта — если Telegram недоступен.
+              </p>
 
               <Button
                 variant="secondary"
@@ -175,6 +235,17 @@ export function SchoolCabinetScreen({ onClose }: Props) {
                                   Уровень <b>{det.level.level}</b> · всего очков:{" "}
                                   <b>{det.level.lifetime_points}</b>
                                 </div>
+                                <Button
+                                  variant="ghost"
+                                  onClick={() => void toggleStudentActive(s)}
+                                  disabled={memberBusy}
+                                >
+                                  {memberBusy
+                                    ? "…"
+                                    : s.active
+                                      ? "🚪 Исключить из школы"
+                                      : "↩️ Вернуть в школу"}
+                                </Button>
                                 {det.mistakes.length === 0 ? (
                                   <span style={{ fontSize: 13, opacity: 0.7 }}>
                                     Свежих ошибок нет — либо мало занимался, либо молодец. 🙂

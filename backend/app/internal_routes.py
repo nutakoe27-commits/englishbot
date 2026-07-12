@@ -209,6 +209,11 @@ async def org_join(
         )
         status_str, org = await repo.join_org(body.invite_code, user.id)
         await session.commit()
+    if status_str == "no_seats":
+        # Владелец узнаёт о нехватке мест сразу — повод расширить пакет.
+        # Импорт внутри функции — main импортирует этот модуль на старте.
+        from .main import notify_admins_org_no_seats
+        notify_admins_org_no_seats(org, user)
     return {
         "status": status_str,
         "org_name": getattr(org, "name", None),

@@ -670,10 +670,14 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
         lines.append(streak_line)
         lines.append("")
 
-    # Подписка
+    # Подписка / школа (B2B)
+    org_name = profile.get("org_name")
     if FREE_PERIOD:
         lines.append("<b>🎁 Бесплатный период</b>")
         lines.append("Все возможности открыты — без лимитов и без подписки.")
+    elif org_name and not profile["has_subscription"]:
+        lines.append("<b>🏫 Школа</b>")
+        lines.append(f"Полный доступ открыт школой «{org_name}» — без лимитов.")
     else:
         lines.append("<b>⭐ Подписка</b>")
         if profile["has_subscription"]:
@@ -691,7 +695,7 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
     bonus_today = int(profile.get("bonus_seconds_today") or 0)
     speaking_today = int(profile.get("speaking_seconds_today") or 0)
     lines.append("<b>⏱ Сегодня</b>")
-    if FREE_PERIOD or profile["has_subscription"]:
+    if FREE_PERIOD or profile["has_subscription"] or org_name:
         lines.append(f"Практика: <b>{_fmt_minutes(used_today)}</b> — без лимитов")
     else:
         free_speaking = int(profile.get("free_seconds_per_day") or FREE_DAILY_SECONDS)
@@ -1247,6 +1251,10 @@ async def main() -> None:
         from .reminders import discount_broadcast_loop
         asyncio.create_task(discount_broadcast_loop(bot, MINIAPP_URL))
         logger.info("Starting discount broadcast loop (DB ready)")
+        # B2B: ежедневный отчёт владельцу об истекающих школах.
+        from .reminders import org_expiry_loop
+        asyncio.create_task(org_expiry_loop(bot))
+        logger.info("Starting org expiry loop (DB ready)")
     else:
         logger.warning(
             "Reminders loop NOT started — DATABASE_URL not set or DB not reachable"

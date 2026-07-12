@@ -408,6 +408,24 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
                 delta = u.subscription_until - now_utc
                 days_left = max(0, delta.days)
 
+            # B2B: активная школа юзера — профиль показывает «доступ открыт
+            # школой» вместо «подписки нет» + free-лимитов. Таблиц может не
+            # быть (миграция 0029 не накатана) — тогда молча None.
+            org_name = None
+            try:
+                r_org = await s.execute(text(
+                    "SELECT o.name FROM org_members om "
+                    "JOIN organizations o ON o.id = om.org_id "
+                    "WHERE om.user_id = :uid AND om.active = 1 "
+                    "  AND om.role = 'student' AND o.active = 1 "
+                    "  AND o.valid_until IS NOT NULL "
+                    "  AND o.valid_until > UTC_TIMESTAMP() LIMIT 1"
+                ), {"uid": u.id})
+                row_org = r_org.first()
+                org_name = row_org[0] if row_org else None
+            except Exception:
+                pass
+
             # Использование сегодня
             today = _msk_today()
             r_today = await s.execute(
@@ -527,6 +545,7 @@ async def get_user_profile(tg_id: int) -> Optional[dict]:
                 "subscription_until": u.subscription_until,
                 "has_subscription": has_sub,
                 "days_left": days_left,
+                "org_name": org_name,
                 "reminder_enabled": bool(u.reminder_enabled),
                 "reminder_hour": int(u.reminder_time.hour if u.reminder_time else 19),
                 "used_seconds_today": used_today,
@@ -1065,4 +1084,83 @@ async def discount_broadcast_loop(bot: Bot, miniapp_url: str) -> None:
             raise
         except Exception as exc:
             logger.error("[discount] ошибка в цикле: %s", exc, exc_info=True)
+            await asyncio.sleep(60)
+
+
+# ─── B2B: напоминание владельцу об истекающих школах ─────────────────────────
+
+ORG_EXPIRY_WARN_DAYS = 3              # предупреждать за N дней
+ORG_EXPIRY_PUSH_HOURS_MSK = {11}      # 11:00 МСК
+_ORG_ADMIN_IDS: set[int] = {
+    int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()
+}
+
+
+async def _select_expiring_orgs() -> list[tuple[str, datetime, int]]:
+    """[(name, valid_until, учеников)] активных школ, истекающих в ближайшие
+    ORG_EXPIRY_WARN_DAYS дней. Пусто, если таблиц нет (0029 не накатана)."""
+    if not is_db_ready():
+        return []
+    assert _SessionMaker is not None
+    try:
+        async with _SessionMaker() as s:
+            res = await s.execute(text(
+                "SELECT o.name, o.valid_until, "
+                "  (SELECT COUNT(*) FROM org_members om "
+                "    WHERE om.org_id = o.id AND om.role = 'student' "
+                "      AND om.active = 1) AS students "
+                "FROM organizations o "
+                "WHERE o.active = 1 AND o.valid_until IS NOT NULL "
+                "  AND o.valid_until > UTC_TIMESTAMP() "
+                "  AND o.valid_until <= UTC_TIMESTAMP() + INTERVAL :days DAY "
+                "ORDER BY o.valid_until"
+            ), {"days": ORG_EXPIRY_WARN_DAYS})
+            return [(r[0], r[1], int(r[2] or 0)) for r in res.all()]
+    except Exception as exc:
+        logger.warning("[org-expiry] не удалось получить школы: %s", exc)
+        return []
+
+
+async def _send_org_expiry_report(bot: Bot) -> None:
+    """Одно сообщение владельцу (ADMIN_IDS) со списком истекающих школ."""
+    if not _ORG_ADMIN_IDS:
+        logger.warning("[org-expiry] ADMIN_IDS пуст — уведомления некому слать")
+        return
+    orgs = await _select_expiring_orgs()
+    if not orgs:
+        return
+    lines = ["⏳ <b>Истекает доступ школ:</b>", ""]
+    for name, until, students in orgs:
+        until_msk = until.replace(tzinfo=timezone.utc).astimezone(MSK)
+        lines.append(
+            f"• «{name}» — до {until_msk.strftime('%d.%m.%Y')} "
+            f"({students} уч.)"
+        )
+    lines += ["", "Свяжись со школой насчёт продления."]
+    text_msg = "\n".join(lines)
+    for admin_id in _ORG_ADMIN_IDS:
+        try:
+            await bot.send_message(chat_id=admin_id, text=text_msg, parse_mode="HTML")
+        except Exception as exc:
+            logger.warning("[org-expiry] не отправлено admin=%s: %s", admin_id, exc)
+        await asyncio.sleep(0.05)
+    logger.info("[org-expiry] отчёт отправлен: %d школ(ы)", len(orgs))
+
+
+async def org_expiry_loop(bot: Bot) -> None:
+    """Раз в день в 11:00 МСК — отчёт владельцу об истекающих школах.
+    Максимум ORG_EXPIRY_WARN_DAYS напоминаний на школу (без дедуп-ключей)."""
+    logger.info("[org-expiry] цикл запущен (hour=%s, warn=%dд)",
+                sorted(ORG_EXPIRY_PUSH_HOURS_MSK), ORG_EXPIRY_WARN_DAYS)
+    await asyncio.sleep(25)
+    while True:
+        try:
+            await asyncio.sleep(_seconds_until_next_msk_hour())
+            if datetime.now(MSK).hour in ORG_EXPIRY_PUSH_HOURS_MSK:
+                await _send_org_expiry_report(bot)
+        except asyncio.CancelledError:
+            logger.info("[org-expiry] цикл остановлен")
+            raise
+        except Exception as exc:
+            logger.error("[org-expiry] ошибка в цикле: %s", exc, exc_info=True)
             await asyncio.sleep(60)

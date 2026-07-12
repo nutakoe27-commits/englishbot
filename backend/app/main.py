@@ -617,6 +617,26 @@ class _OrgJoinIn(BaseModel):
     invite_code: str
 
 
+def notify_admins_org_no_seats(org, joiner) -> None:
+    """B2B: сообщить владельцу (ADMIN_IDS) в TG, что ученик не смог
+    подключиться — места кончились. Сигнал продать расширение пакета.
+    Fire-and-forget: ошибки только логируются."""
+    from .auth import send_bot_message
+    if org is None:
+        return
+    who = (getattr(joiner, "first_name", None) or "").strip() or "Ученик"
+    username = getattr(joiner, "username", None)
+    if username:
+        who += f" (@{username})"
+    text = (
+        f"⚠️ Школа «{org.name}»: свободных мест нет "
+        f"({org.seats_total}/{org.seats_total}).\n"
+        f"{who} не смог подключиться. Возможно, школе пора расширить пакет."
+    )
+    for admin_id in settings.admin_ids_list:
+        asyncio.create_task(send_bot_message(admin_id, text))
+
+
 @app.post("/api/org/join", tags=["Me"])
 async def org_join(
     body: _OrgJoinIn, authorization: Optional[str] = Header(None),
@@ -634,7 +654,37 @@ async def org_join(
         )
         status_str, org = await repo.join_org(body.invite_code, user.id)
         await session.commit()
+    if status_str == "no_seats":
+        notify_admins_org_no_seats(org, user)
     return {"status": status_str, "org_name": getattr(org, "name", None)}
+
+
+class _OrgLeaveIn(BaseModel):
+    init_data: str = ""
+
+
+@app.post("/api/org/leave", tags=["Me"])
+async def org_leave(
+    body: _OrgLeaveIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """B2B: выход из школы по инициативе самого юзера (любая роль).
+    Место освобождается; повторный переход по инвайт-ссылке вернёт."""
+    from fastapi import HTTPException, status
+    from .db import Repo
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await resolve_user(
+            repo, authorization=authorization, init_data=body.init_data,
+        )
+        mem = await repo.user_org_membership(user.id)
+        if mem is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not_org_member")
+        org = mem[0]
+        await repo.set_org_member_active(org.id, user.id, False)
+        await session.commit()
+    return {"ok": True, "org_name": org.name}
 
 
 # ─── B2B фаза 2: кабинет школы (учитель/админ школы) ─────────────────────────
@@ -672,6 +722,8 @@ async def org_cabinet(
     from .db import Repo
     if not settings.DATABASE_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+    # Инвайт-ссылки — чтобы школа рассылала приглашения сама, без владельца.
+    from .admin import _org_invite_link, _org_invite_link_web
     async with db_session() as session:
         repo = Repo(session)
         _user, org = await _resolve_org_staff(
@@ -685,6 +737,8 @@ async def org_cabinet(
             "seats_total": org.seats_total,
             "seats_used": seats_used,
             "valid_until": org.valid_until.isoformat() if org.valid_until else None,
+            "invite_link": _org_invite_link(org.invite_code),
+            "invite_link_web": _org_invite_link_web(org.invite_code),
         },
         "students": _cabinet_students(students),
     }
@@ -726,6 +780,37 @@ async def org_cabinet_student(
             for m in mistakes
         ],
     }
+
+
+class _CabinetStudentActiveIn(BaseModel):
+    init_data: str = ""
+    active: bool
+
+
+@app.post("/api/org/cabinet/student/{student_id}/active", tags=["Org"])
+async def org_cabinet_student_active(
+    student_id: int,
+    body: _CabinetStudentActiveIn,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Учитель исключает/возвращает ученика своей школы. Исключение
+    освобождает место. Только учеников (teacher/admin трогать нельзя)."""
+    from fastapi import HTTPException, status
+    from .db import Repo
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+    async with db_session() as session:
+        repo = Repo(session)
+        _user, org = await _resolve_org_staff(
+            repo, authorization=authorization, init_data=body.init_data,
+        )
+        # Менять можно только учеников СВОЕЙ школы.
+        rows = await repo.org_students_stats(org.id)
+        if not any(int(r["user_id"]) == int(student_id) for r in rows):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "student_not_found")
+        await repo.set_org_member_active(org.id, int(student_id), bool(body.active))
+        await session.commit()
+    return {"ok": True, "active": bool(body.active)}
 
 
 @app.get("/api/org/cabinet/report.csv", tags=["Org"])

@@ -11,6 +11,7 @@ import WebApp from "@twa-dev/sdk";
 import {
   extractYandexCallback,
   fetchMe,
+  leaveOrg,
   logout,
   pollAuth,
   requestUnlinkNative,
@@ -62,6 +63,20 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
     setMe(await fetchMe());
     setLoading(false);
   }, []);
+
+  // B2B: выход из школы по инициативе ученика. Место освобождается,
+  // повторный переход по инвайт-ссылке подключит обратно.
+  const handleLeaveOrg = useCallback(async () => {
+    const name = me?.org?.name || "школы";
+    const sure = window.confirm(
+      `Выйти из школы «${name}»? Доступ, открытый школой, пропадёт. ` +
+      "Вернуться можно по ссылке-приглашению.",
+    );
+    if (!sure) return;
+    const r = await leaveOrg();
+    setMsg(r ? "Ты вышел из школы." : "Не получилось выйти. Попробуй позже.");
+    void reload();
+  }, [me, reload]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -275,7 +290,18 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
                 </div>
               )}
               {me?.org && me.org.role === "student" && (
-                <p className="acc-hint">🏫 Ты ученик школы «{me.org.name}» — полный доступ открыт школой.</p>
+                <div className="acc-link-block">
+                  <div className="acc-link-title">
+                    🏫 Ты ученик школы «{me.org.name}» — полный доступ открыт школой.
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn--ghost acc-link-btn"
+                    onClick={() => void handleLeaveOrg()}
+                  >
+                    Выйти из школы
+                  </button>
+                </div>
               )}
 
               <div className="acc-list">
