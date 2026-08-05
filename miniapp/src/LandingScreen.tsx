@@ -88,6 +88,7 @@ function Header({ onLogin, onCta }: { onLogin: () => void; onCta: () => void }) 
         </div>
         <nav className="lp-nav">
           <ThemeToggle />
+          <a className="lp-nav__link" href="/schools">Для школ</a>
           <button type="button" className="lp-nav__link" onClick={onLogin}>
             Войти
           </button>
@@ -472,6 +473,7 @@ function Footer() {
           <span>English Tutor</span>
         </div>
         <div className="lp-footer__links">
+          <a href="/schools">Для школ английского</a>
           <a href="/oferta.html" target="_blank" rel="noreferrer">Публичная оферта</a>
           <a href="https://t.me/kmo_ai" target="_blank" rel="noreferrer">Канал @kmo_ai</a>
           <a href="https://t.me/kmo_ai_english_bot" target="_blank" rel="noreferrer">Telegram-бот</a>

@@ -172,8 +172,9 @@ class Payment(Base):
     )
     amount_rub: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     plan: Mapped[str] = mapped_column(
+        # 'org' — оплата пакета мест школой (B2B), личную подписку не продлевает.
         SAEnum("trial3", "monthly", "yearly", "twoyear", "gift", "admin_grant", "manual_pay",
-               name="payment_plan"),
+               "org", name="payment_plan"),
         nullable=False,
     )
     status: Mapped[str] = mapped_column(
@@ -228,6 +229,29 @@ class Organization(Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     contact_email: Mapped[Optional[str]] = mapped_column(String(255))
     settings: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class OrgOrder(Base):
+    """Заявка школы на подключение (миграция 0030). Создаётся до оплаты,
+    после успешного платежа превращается в Organization (org_id)."""
+
+    __tablename__ = "org_orders"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    payment_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    school_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    contact_person: Mapped[Optional[str]] = mapped_column(String(128))
+    contact_email: Mapped[Optional[str]] = mapped_column(String(255))
+    seats: Mapped[int] = mapped_column(Integer, nullable=False)
+    months: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount_rub: Mapped[int] = mapped_column(Integer, nullable=False)
+    org_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(
+        SAEnum("pending", "done", "failed", name="org_order_status"),
+        nullable=False, default="pending",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 

@@ -639,6 +639,65 @@ class Repo:
         await self.s.flush()
         return "ok", org
 
+    # ─── B2B self-service: заказы школ (миграция 0030) ─────────────────
+
+    async def create_org_order(
+        self, *, payment_id: int, user_id: int, school_name: str,
+        contact_person: Optional[str], contact_email: Optional[str],
+        seats: int, months: int, amount_rub: int,
+    ):
+        from .models import OrgOrder
+        order = OrgOrder(
+            payment_id=payment_id, user_id=user_id,
+            school_name=school_name.strip()[:128],
+            contact_person=(contact_person or "").strip()[:128] or None,
+            contact_email=(contact_email or "").strip()[:255] or None,
+            seats=seats, months=months, amount_rub=amount_rub,
+            status="pending", created_at=utcnow(),
+        )
+        self.s.add(order)
+        await self.s.flush()
+        return order
+
+    async def get_org_order_by_payment(self, payment_id: int):
+        from .models import OrgOrder
+        res = await self.s.execute(
+            select(OrgOrder).where(OrgOrder.payment_id == payment_id)
+        )
+        return res.scalar_one_or_none()
+
+    async def fulfill_org_order(self, payment_id: int) -> Optional[int]:
+        """Оплата школы прошла: создаём организацию и делаем плательщика её
+        админом. Идемпотентно — повторный вызов вебхука ничего не дублирует.
+        Возвращает org_id либо None."""
+        from .models import OrgMember, Payment
+        order = await self.get_org_order_by_payment(payment_id)
+        if order is None:
+            return None
+        if order.status == "done" and order.org_id:
+            return int(order.org_id)          # уже выдано
+
+        org = await self.create_org(
+            name=order.school_name,
+            seats_total=int(order.seats),
+            valid_until=utcnow() + timedelta(days=int(order.months) * 30),
+            contact_email=order.contact_email,
+        )
+        # Плательщик становится админом школы: у него сразу появляется кабинет.
+        self.s.add(OrgMember(
+            org_id=org.id, user_id=int(order.user_id), role="admin",
+            active=True, joined_at=utcnow(),
+        ))
+        order.org_id = org.id
+        order.status = "done"
+        # Платёж помечаем succeeded — личную подписку при этом НЕ трогаем.
+        payment = await self.s.get(Payment, int(payment_id))
+        if payment is not None:
+            payment.status = "succeeded"
+            payment.updated_at = utcnow()
+        await self.s.flush()
+        return int(org.id)
+
     @staticmethod
     def _gen_invite_code() -> str:
         # Без похожих символов (0/O, 1/I/L) — код диктуют вслух ученикам.

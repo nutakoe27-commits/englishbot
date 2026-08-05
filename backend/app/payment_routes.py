@@ -283,12 +283,22 @@ async def yookassa_webhook(request: Request) -> dict:
             return {"ok": True}
 
         if real_status == "succeeded":
-            await repo.credit_subscription_for_payment(int(payment.id))
-            await session.commit()
-            logger.info(
-                "[yookassa/webhook] credited user_id=%s plan=%s days=%s amount=%s",
-                payment.user_id, payment.plan, payment.days_granted, payment.amount_rub,
-            )
+            if payment.plan == "org":
+                # B2B: создаём школу и делаем плательщика её админом.
+                # Личную подписку такой платёж не продлевает.
+                org_id = await repo.fulfill_org_order(int(payment.id))
+                await session.commit()
+                logger.info(
+                    "[yookassa/webhook] org fulfilled payment_id=%s org_id=%s amount=%s",
+                    payment.id, org_id, payment.amount_rub,
+                )
+            else:
+                await repo.credit_subscription_for_payment(int(payment.id))
+                await session.commit()
+                logger.info(
+                    "[yookassa/webhook] credited user_id=%s plan=%s days=%s amount=%s",
+                    payment.user_id, payment.plan, payment.days_granted, payment.amount_rub,
+                )
         elif real_status == "canceled":
             if payment.status != "succeeded":  # не отменяем то, что уже зачтено
                 await repo.mark_payment_status(int(payment.id), "canceled")
@@ -301,3 +311,189 @@ async def yookassa_webhook(request: Request) -> dict:
             )
 
     return {"ok": True}
+
+
+# ─── B2B: самостоятельное подключение школы (миграция 0030) ──────────────────
+
+@router.get("/org/pricing")
+async def org_pricing_limits() -> dict:
+    """Параметры тарификации для калькулятора на лендинге. Без авторизации."""
+    from . import org_pricing
+    return org_pricing.limits()
+
+
+class _OrgQuoteIn(BaseModel):
+    seats: int
+    months: int
+
+
+@router.post("/org/quote")
+async def org_quote(body: _OrgQuoteIn) -> dict:
+    """Расчёт стоимости пакета. Публичный — используется калькулятором."""
+    from . import org_pricing
+    try:
+        return org_pricing.quote(body.seats, body.months)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+class _OrgCheckoutIn(BaseModel):
+    school_name: str
+    seats: int
+    months: int
+    contact_person: Optional[str] = None
+    email: Optional[str] = None        # для чека 54-ФЗ и связи со школой
+
+
+@router.post("/org/checkout")
+async def org_checkout(
+    body: _OrgCheckoutIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Оформление пакета мест: заказ + платёж ЮKassa.
+
+    Сумма считается на сервере (org_pricing) — значение из браузера не
+    принимается. После успешной оплаты вебхук создаёт школу и делает
+    плательщика её администратором.
+    """
+    _require_db()
+    from . import org_pricing
+
+    school_name = (body.school_name or "").strip()
+    if not school_name or len(school_name) > 128:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_school_name")
+    try:
+        calc = org_pricing.quote(body.seats, body.months)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    if not settings.YOOKASSA_SHOP_ID or not settings.YOOKASSA_SECRET_KEY:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "yookassa_not_configured")
+
+    amount = int(calc["total_rub"])
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await auth_lib.resolve_user(repo, authorization=authorization)
+
+        email = (body.email or "").strip() or user.email
+        if settings.YOOKASSA_FISCALIZATION and not email:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "email_required")
+        if body.email and not user.email:
+            from sqlalchemy import update as _upd
+            from .db.models import User as _U
+            from .db.repo import utcnow as _now
+            await session.execute(
+                _upd(_U).where(_U.id == user.id).values(
+                    email=email, updated_at=_now(),
+                )
+            )
+
+        import secrets as _secrets
+        tmp_pid = "tmp_" + _secrets.token_urlsafe(16)
+        payment = await repo.create_pending_payment(
+            user_id=user.id,
+            plan="org",
+            amount_rub=amount,
+            days_granted=int(calc["days"]),
+            provider_payment_id=tmp_pid,
+            notes=(
+                f"org selfserve: {school_name} · {calc['seats']} мест × "
+                f"{calc['months']} мес"
+            ),
+        )
+        await session.flush()
+        local_payment_id = int(payment.id)
+        await repo.create_org_order(
+            payment_id=local_payment_id,
+            user_id=int(user.id),
+            school_name=school_name,
+            contact_person=body.contact_person,
+            contact_email=email,
+            seats=int(calc["seats"]),
+            months=int(calc["months"]),
+            amount_rub=amount,
+        )
+        await session.commit()
+
+    yk_resp = await yk.create_payment(
+        amount_rub=amount,
+        description=(
+            f"English Tutor для школ: {calc['seats']} мест на {calc['months']} мес."
+        ),
+        return_url=_return_url(local_payment_id) + "&org=1",
+        metadata={
+            "user_id": str(user.id),
+            "plan": "org",
+            "payment_id": str(local_payment_id),
+        },
+        customer_email=email,
+    )
+    if not yk_resp or "id" not in yk_resp:
+        async with db_session() as session:
+            repo = Repo(session)
+            await repo.mark_payment_status(local_payment_id, "canceled")
+            await session.commit()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "yookassa_create_failed")
+
+    provider_pid = str(yk_resp["id"])
+    confirmation_url = (yk_resp.get("confirmation") or {}).get("confirmation_url")
+    if not confirmation_url:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "no_confirmation_url")
+
+    async with db_session() as session:
+        repo = Repo(session)
+        from sqlalchemy import update as _upd
+        from .db.models import Payment as _P
+        from .db.repo import utcnow as _now
+        await session.execute(
+            _upd(_P).where(_P.id == local_payment_id).values(
+                provider_payment_id=provider_pid, updated_at=_now(),
+            )
+        )
+        await session.commit()
+
+    return {
+        "payment_id": local_payment_id,
+        "confirmation_url": confirmation_url,
+        "amount_rub": amount,
+        "seats": calc["seats"],
+        "months": calc["months"],
+    }
+
+
+@router.get("/org/order-status")
+async def org_order_status(
+    payment_id: int, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Статус заказа школы + ссылки-приглашения после успешной оплаты."""
+    _require_db()
+    from .admin import _org_invite_link, _org_invite_link_web
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await auth_lib.resolve_user(repo, authorization=authorization)
+        payment = await repo.find_payment_by_id(int(payment_id))
+        if payment is None or payment.user_id != user.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+        order = await repo.get_org_order_by_payment(int(payment_id))
+        if order is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+        org = await repo.get_org(int(order.org_id)) if order.org_id else None
+
+    out = {
+        "payment_status": payment.status,
+        "order_status": order.status,
+        "school_name": order.school_name,
+        "seats": int(order.seats),
+        "months": int(order.months),
+        "amount_rub": int(order.amount_rub),
+    }
+    if org is not None:
+        out.update({
+            "org_id": int(org.id),
+            "invite_code": org.invite_code,
+            "invite_link": _org_invite_link(org.invite_code),
+            "invite_link_web": _org_invite_link_web(org.invite_code),
+            "valid_until": org.valid_until.isoformat() if org.valid_until else None,
+        })
+    return out

@@ -323,6 +323,84 @@ export async function createPayment(
   } catch { return { ok: false, error: "network" }; }
 }
 
+// ─── B2B self-service: подключение школы с лендинга ──────────────────
+
+export interface OrgQuote {
+  seats: number;
+  months: number;
+  base_price_per_seat_month: number;
+  volume_discount_pct: number;
+  period_discount_pct: number;
+  total_discount_pct: number;
+  base_total_rub: number;
+  total_rub: number;
+  per_seat_month_rub: number;
+  saving_rub: number;
+  days: number;
+}
+
+export interface OrgPricing {
+  base_price_per_seat_month: number;
+  min_seats: number;
+  max_seats: number;
+  allowed_months: number[];
+  volume_tiers: { seats: number; pct: number }[];
+  period_tiers: { months: number; pct: number }[];
+}
+
+/** Параметры тарификации для калькулятора (публичный эндпоинт). */
+export async function fetchOrgPricing(): Promise<OrgPricing | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/payments/org/pricing`);
+    if (!res.ok) return null;
+    return await res.json() as OrgPricing;
+  } catch { return null; }
+}
+
+/** Оформление пакета мест: возвращает ссылку на оплату ЮKassa. */
+export async function orgCheckout(body: {
+  school_name: string; seats: number; months: number;
+  contact_person?: string; email?: string;
+}): Promise<{ ok: boolean; confirmation_url?: string; payment_id?: number; error?: string }> {
+  try {
+    const res = await _postJson("/api/payments/org/checkout", body);
+    if (res.ok) {
+      const d = await res.json() as { confirmation_url: string; payment_id: number };
+      return { ok: true, ...d };
+    }
+    return { ok: false, error: await _readError(res) };
+  } catch { return { ok: false, error: "network" }; }
+}
+
+export interface OrgOrderStatus {
+  payment_status: string;
+  order_status: string;
+  school_name: string;
+  seats: number;
+  months: number;
+  amount_rub: number;
+  org_id?: number;
+  invite_code?: string;
+  invite_link?: string;
+  invite_link_web?: string;
+  valid_until?: string | null;
+}
+
+/** Статус заказа школы + ссылки-приглашения после оплаты. */
+export async function fetchOrgOrderStatus(paymentId: number): Promise<OrgOrderStatus | null> {
+  try {
+    const headers: HeadersInit = {};
+    const tok = getToken();
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const res = await fetch(
+      `${API_BASE}/api/payments/org/order-status?payment_id=${paymentId}`,
+      { headers },
+    );
+    if (!res.ok) return null;
+    return await res.json() as OrgOrderStatus;
+  } catch { return null; }
+}
+
 /** B2B: подключение к школе по инвайт-коду (?school=CODE из deep-link). */
 export async function joinOrg(
   inviteCode: string,

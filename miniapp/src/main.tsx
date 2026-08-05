@@ -18,6 +18,7 @@ import { GrammarScreen } from "./GrammarScreen";
 import { SrsScreen } from "./SrsScreen";
 import { LoginScreen } from "./LoginScreen";
 import { LandingScreen } from "./LandingScreen";
+import { SchoolsLanding } from "./SchoolsLanding";
 import { BottomNav } from "./BottomNav";
 import { AccountSheet } from "./AccountSheet";
 import { LeaderboardScreen } from "./LeaderboardScreen";
@@ -180,6 +181,14 @@ function Root() {
   const battle = parseBattle(startParam);
   if (battle) {
     return <BattleScreen battleId={battle.id} side={battle.side} />;
+  }
+
+  // B2B-лендинг /schools — публичная страница подключения школы.
+  // Показываем и незалогиненным, и залогиненным (там свой флоу оплаты).
+  const isSchoolsPath = typeof window !== "undefined"
+    && window.location.pathname.replace(/\/+$/, "") === "/schools";
+  if (isSchoolsPath && auth !== "loading" && !showLogin) {
+    return <SchoolsLanding onLogin={() => setShowLogin(true)} />;
   }
 
   if (auth === "loading") {
