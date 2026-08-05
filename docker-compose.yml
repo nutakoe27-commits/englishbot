@@ -74,7 +74,12 @@ services:
 
   # ── Admin Panel — React SPA ───────────────────────────────────────────────
   admin:
-    build: ./admin
+    build:
+      context: ./admin
+      args:
+        # На staging переопределить в .env:
+        # VITE_API_BASE=https://api-english-test.krichigindocs.ru
+        VITE_API_BASE: ${VITE_API_BASE:-https://api-english.krichigindocs.ru}
     restart: unless-stopped
     ports:
       - "127.0.0.1:${ADMIN_PORT:-8083}:80"

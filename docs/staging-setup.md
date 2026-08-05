@@ -5,11 +5,11 @@
 
 | Компонент | Прод | Тест |
 |---|---|---|
-| Каталог | `/var/www/englishbot` | `/var/www/englishbot-staging` |
+| Каталог | `/var/www/englishbot` | `/var/www/englishbot-staging/englishbot` |
 | База | `megotim4y2` | `englishbot_staging` |
 | Mini App / сайт | `englishbot.krichigindocs.ru` → 8081 | `englishbot-test.krichigindocs.ru` → 8091 |
 | Backend API | `api-english.krichigindocs.ru` → 8082 | `api-english-test.krichigindocs.ru` → 8092 |
-| Админка | `admin-english.krichigindocs.ru` → 8083 | `admin-english-test.krichigindocs.ru` → **8085** |
+| Админка | `admin-english.krichigindocs.ru` → 8083 | `admin-english-test.krichigindocs.ru` → **9083** |
 | Бот | боевой токен | **отдельный тестовый бот** |
 
 Порты контейнеров задаются переменными `MINIAPP_PORT`, `BACKEND_PORT`,
@@ -53,7 +53,7 @@ sudo certbot --expand -d englishbot.krichigindocs.ru \
 ## 3. Конфиг nginx для тестовой админки
 
 ```bash
-sudo cp /var/www/englishbot-staging/docker/nginx/vps-site/admin-english-test.conf \
+sudo cp /var/www/englishbot-staging/englishbot/docker/nginx/vps-site/admin-english-test.conf \
         /etc/nginx/sites-available/admin-english-test.conf
 sudo ln -sf /etc/nginx/sites-available/admin-english-test.conf \
             /etc/nginx/sites-enabled/admin-english-test.conf
@@ -62,13 +62,19 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ## 4. Переменные окружения тестового стенда
 
-В `/var/www/englishbot-staging/.env` должны быть заданы (помимо общих):
+В `.env` каталога тестового стенда должны быть заданы (помимо общих):
 
 ```ini
-# Порты, чтобы не конфликтовать с продом
-MINIAPP_PORT=8091
-BACKEND_PORT=8092
-ADMIN_PORT=8085
+# Порты, чтобы не конфликтовать с продом (значения — пример; главное,
+# чтобы они совпадали с proxy_pass в nginx-конфигах тестовых поддоменов)
+MINIAPP_PORT=9081
+BACKEND_PORT=9082
+ADMIN_PORT=9083
+
+# ОБЯЗАТЕЛЬНО для админки: без этого она собирается с относительным /api,
+# уходит на собственный домен, получает index.html вместо JSON и падает
+# в белый экран.
+VITE_API_BASE=https://api-english-test.krichigindocs.ru
 
 # Тестовая база
 DATABASE_URL=mysql+asyncmy://englishbot_staging:PASSWORD@host.docker.internal:3306/englishbot_staging?charset=utf8mb4
@@ -102,11 +108,11 @@ VITE_API_BASE=https://api-english-test.krichigindocs.ru
 ## 5. Запуск
 
 ```bash
-cd /var/www/englishbot-staging
+cd /var/www/englishbot-staging/englishbot
 docker compose up -d --build backend bot miniapp admin
 docker compose ps          # у всех статус running/healthy
-curl -s http://127.0.0.1:8092/health    # {"status":"ok"}
-curl -s http://127.0.0.1:8085 | head -5 # HTML админки
+curl -s http://127.0.0.1:9082/health    # {"status":"ok"}
+curl -s http://127.0.0.1:9083 | head -5 # HTML админки
 ```
 
 Открыть `https://admin-english-test.krichigindocs.ru`, ввести `ADMIN_TOKEN`
@@ -120,4 +126,7 @@ curl -s http://127.0.0.1:8085 | head -5 # HTML админки
 | Админка просит токен по кругу | Неверный `ADMIN_TOKEN` либо backend не видит его: `docker compose exec backend printenv ADMIN_TOKEN` |
 | Ошибка CORS в консоли браузера | В `.env` не задан `ADMIN_HOST` тестового домена — задать и пересобрать backend |
 | Сертификат невалиден | Домен не добавлен в сертификат — повторить шаг 2 |
-| Порт занят | `sudo ss -ltnp \| grep 8085` — сменить `ADMIN_PORT` и порт в конфиге nginx |
+| 404 от nginx (не от контейнера) | Ни один server-блок не совпал: конфиг не подключён, битый симлинк в `sites-enabled` или не сделан `reload`. Проверить: `sudo nginx -T \| grep -c admin-english-test` |
+| `conflicting server name … ignored` в `nginx -t` | Для домена есть второй server-блок, один из них игнорируется. Найти: `grep -rln admin-english-test /etc/nginx/sites-enabled/` |
+| Белый экран после ввода токена | Админка собрана без `VITE_API_BASE` → запросы уходят на её домен, SPA-fallback отдаёт index.html. Задать переменную и `docker compose up -d --build admin` |
+| Порт занят | `sudo ss -ltnp \| grep 9083` — сменить `ADMIN_PORT` и порт в конфиге nginx |

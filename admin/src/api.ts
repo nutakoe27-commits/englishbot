@@ -48,6 +48,16 @@ async function request<T>(
       data = text;
     }
   }
+  // Ответ 200, но не JSON — почти всегда это index.html от SPA-fallback:
+  // значит VITE_API_BASE не задан и запрос ушёл на домен самой админки.
+  // Без этой проверки HTML «успешно» доезжает до компонентов и роняет их.
+  if (res.ok && typeof data === "string") {
+    throw new ApiError(
+      res.status,
+      "API вернул не JSON. Похоже, админка собрана без VITE_API_BASE и " +
+      "стучится на собственный домен вместо backend.",
+    );
+  }
   if (!res.ok) {
     const detail =
       (data && typeof data === "object" && "detail" in data
