@@ -64,6 +64,13 @@ def _return_url(payment_id: int) -> str:
     return f"{base}/?payment_id={payment_id}"
 
 
+def _org_return_url(payment_id: int) -> str:
+    """Возврат после оплаты школы — на лендинг /schools, где показываются
+    статус заказа и ссылки-приглашения (в приложении этого экрана нет)."""
+    base = (settings.MINIAPP_URL or "").rstrip("/")
+    return f"{base}/schools?payment_id={payment_id}&org=1"
+
+
 @router.get("/plans")
 async def list_plans() -> dict:
     """Список тарифов для отображения на странице подписки. Без auth."""
@@ -420,7 +427,7 @@ async def org_checkout(
         description=(
             f"English Tutor для школ: {calc['seats']} мест на {calc['months']} мес."
         ),
-        return_url=_return_url(local_payment_id) + "&org=1",
+        return_url=_org_return_url(local_payment_id),
         metadata={
             "user_id": str(user.id),
             "plan": "org",

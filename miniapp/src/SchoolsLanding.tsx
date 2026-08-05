@@ -26,6 +26,27 @@ import { ymHit, ymReachGoal } from "./metrika";
 import "./Landing.css";
 
 const OFFER_URL = "/oferta-school.html";
+const SCHOOLS_INTENT_KEY = "et_schools_intent";
+
+/** Пришли ли мы сюда сразу после входа «чтобы подключить школу». */
+function consumeConnectIntent(): boolean {
+  if (typeof window === "undefined") return false;
+  let intent = false;
+  try {
+    if (new URLSearchParams(window.location.search).get("connect") === "1") {
+      intent = true;
+      // Чистим URL, чтобы флаг не срабатывал при перезагрузке страницы.
+      const url = new URL(window.location.href);
+      url.searchParams.delete("connect");
+      window.history.replaceState(null, "", url.pathname + (url.search || "") + url.hash);
+    }
+    if (localStorage.getItem(SCHOOLS_INTENT_KEY) === "1") {
+      intent = true;
+      localStorage.removeItem(SCHOOLS_INTENT_KEY);
+    }
+  } catch { /* private mode */ }
+  return intent;
+}
 
 /** Дефолты на случай, если backend недоступен — калькулятор всё равно считает. */
 const FALLBACK: OrgPricing = {
@@ -56,7 +77,10 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
   const [pricing, setPricing] = useState<OrgPricing>(FALLBACK);
   const [seats, setSeats] = useState<number>(30);
   const [months, setMonths] = useState<number>(6);
-  const [formOpen, setFormOpen] = useState(false);
+  // Вернулись после входа с намерением подключить школу — форма сразу открыта.
+  const [formOpen, setFormOpen] = useState<boolean>(
+    () => consumeConnectIntent() && !!getToken(),
+  );
   const [schoolName, setSchoolName] = useState("");
   const [person, setPerson] = useState("");
   const [email, setEmail] = useState("");
@@ -110,6 +134,15 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
     return () => { alive = false; };
   }, [returnPaymentId]);
 
+  // Форма открылась автоматически после входа — подкрутим к ней экран.
+  useEffect(() => {
+    if (!formOpen) return;
+    const t = setTimeout(() => {
+      document.getElementById("school-order")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [formOpen]);
+
   const startCheckout = useCallback(async () => {
     if (busy) return;
     const name = schoolName.trim();
@@ -136,7 +169,13 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
 
   const onConnect = () => {
     ymReachGoal("school_cta_click");
-    if (!authed) { onLogin(); return; }
+    if (!authed) {
+      // Запоминаем намерение: вход через Яндекс перезагрузит страницу и
+      // вернёт на корень сайта — оттуда нас отправят обратно на /schools.
+      try { localStorage.setItem(SCHOOLS_INTENT_KEY, "1"); } catch { /* private mode */ }
+      onLogin();
+      return;
+    }
     setFormOpen(true);
     setTimeout(() => {
       document.getElementById("school-order")?.scrollIntoView({ behavior: "smooth" });

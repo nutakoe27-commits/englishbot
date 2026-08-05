@@ -103,6 +103,9 @@ type AuthState = "loading" | "authed" | "login";
 // B2B: код школы из ?school= переживает OAuth-redirect через localStorage
 // (конвенция ключей et_* — как et_theme и токен в auth.ts).
 const SCHOOL_CODE_KEY = "et_school_code";
+// Намерение «подключить школу»: вход через Яндекс делает полную перезагрузку
+// и возвращает на корень сайта, поэтому контекст /schools надо пережить.
+const SCHOOLS_INTENT_KEY = "et_schools_intent";
 
 function Root() {
   // Хуки всегда первыми, до условных return — иначе React 18 в проде может
@@ -178,6 +181,31 @@ function Root() {
     return () => { cancelled = true; };
   }, []);
 
+  // Возврат с оплаты школы мог прийти на корень (например, по старой
+  // ссылке ЮKassa) — уводим на /schools, где есть экран заказа.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("org") === "1" && p.get("payment_id")
+          && window.location.pathname.replace(/\/+$/, "") !== "/schools") {
+        window.location.replace(`/schools${window.location.search}`);
+      }
+    } catch { /* noop */ }
+  }, []);
+
+  // Вход состоялся, а юзер пришёл подключать школу — возвращаем его на
+  // лендинг школ с флагом автооткрытия формы заказа.
+  useEffect(() => {
+    if (auth !== "authed" || typeof window === "undefined") return;
+    try {
+      if (localStorage.getItem(SCHOOLS_INTENT_KEY) !== "1") return;
+      if (window.location.pathname.replace(/\/+$/, "") === "/schools") return;
+      localStorage.removeItem(SCHOOLS_INTENT_KEY);
+      window.location.replace("/schools?connect=1");
+    } catch { /* private mode */ }
+  }, [auth]);
+
   const battle = parseBattle(startParam);
   if (battle) {
     return <BattleScreen battleId={battle.id} side={battle.side} />;
@@ -202,7 +230,7 @@ function Root() {
     const hasPaymentReturn = typeof window !== "undefined"
       && new URLSearchParams(window.location.search).has("payment_id");
     if (showLogin || hasPaymentReturn) {
-      return <LoginScreen onAuthed={() => setAuth("authed")} />;
+      return <LoginScreen onAuthed={() => { setShowLogin(false); setAuth("authed"); }} />;
     }
     return (
       <LandingScreen
