@@ -101,6 +101,13 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
   const authed = !!getToken();
   const q = useMemo(() => calcQuote(pricing, seats, months), [pricing, seats, months]);
 
+  // Класс на body — как на основном лендинге: он задаёт фон страницы
+  // (в тёмной теме иначе останется фон приложения).
+  useEffect(() => {
+    document.body.classList.add("lp-active");
+    return () => { document.body.classList.remove("lp-active"); };
+  }, []);
+
   useEffect(() => {
     ymHit(window.location.origin + "/schools", "Лендинг для школ");
     ymReachGoal("schools_landing_view");
@@ -263,9 +270,22 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
             <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onConnect}>
               Подключить школу
             </button>
-            <p className="lp-hero__note">
-              Подключение за 5 минут · оплата картой · чек по 54-ФЗ · от {pricing.min_seats} мест
-            </p>
+            <div className="sch-trust">
+              {[
+                "Подключение за 5 минут",
+                "Оплата картой, чек по 54-ФЗ",
+                `Пакет от ${pricing.min_seats} мест`,
+                "Telegram и браузер",
+              ].map((t) => (
+                <span key={t} className="sch-trust__item">
+                  <span className="sch-trust__dot" aria-hidden />{t}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="lp-hero__visual">
+            <CabinetPreview />
           </div>
         </div>
       </section>
@@ -523,6 +543,45 @@ function SchoolsHeader({ onLogin }: { onLogin: () => void }) {
         </nav>
       </div>
     </header>
+  );
+}
+
+/** Превью кабинета учителя в первом экране — показывает ценность сразу,
+ *  не требуя скриншотов. Данные демонстрационные. */
+function CabinetPreview() {
+  const rows = [
+    { name: "Анна К.", min: "128 мин", streak: "12 дн", pts: "340", alert: false },
+    { name: "Игорь М.", min: "76 мин", streak: "4 дн", pts: "180", alert: false },
+    { name: "Полина В.", min: "15 мин", streak: "0 дн", pts: "40", alert: true },
+  ];
+  return (
+    <div className="sch-preview">
+      <div className="sch-preview__head">
+        <span className="sch-preview__title">Кабинет школы</span>
+        <span className="sch-preview__badge">24 / 30 мест</span>
+      </div>
+      <div className="sch-preview__sub">Практика учеников за текущий месяц</div>
+
+      <div className="sch-preview__row sch-preview__row--head">
+        <span>Ученик</span><span>Практика</span><span>Стрик</span><span>Очки</span>
+      </div>
+      {rows.map((r) => (
+        <div
+          key={r.name}
+          className={`sch-preview__row ${r.alert ? "sch-preview__row--alert" : ""}`}
+        >
+          <span className="sch-preview__name">{r.name}</span>
+          <span className="sch-preview__num">{r.min}</span>
+          <span className="sch-preview__num">{r.streak}</span>
+          <span className="sch-preview__num">{r.pts}</span>
+        </div>
+      ))}
+
+      <div className="sch-preview__foot">
+        Полина не занималась 6 дней — видно сразу.<br />
+        Частые ошибки группы: <b>артикли</b>, <b>времена</b>, <b>предлоги</b>.
+      </div>
+    </div>
   );
 }
 
