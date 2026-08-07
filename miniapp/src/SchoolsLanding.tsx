@@ -393,7 +393,9 @@ export function SchoolsLanding({ onLogin, authed: authedProp, onOpenApp }: Props
               onClick={() => void startTrial()}
               disabled={trialBusy}
             >
-              {trialBusy ? "Создаём доступ…" : `Или попробовать бесплатно — ${pricing.trial_seats ?? 3} места на ${pricing.trial_days ?? 14} дней`}
+              {trialBusy
+                ? "Создаём доступ…"
+                : `Попробовать бесплатно: ${pricing.trial_seats ?? 3} места, ${pricing.trial_days ?? 14} дней`}
             </button>
             {trialResult && (
               <div className="sch-trial-done">
@@ -775,12 +777,16 @@ function SchoolsHeader(
   { onLogin: () => void; authed: boolean; onOpenApp?: () => void },
 ) {
   return (
-    <header className="lp-header">
+    <header className="lp-header sch-header">
       <div className="lp-container lp-header__inner">
-        <a className="lp-brand" href="/">
+        <a className="lp-brand sch-brand" href="/">
           <span className="lp-brand__dot" aria-hidden />
-          <span className="lp-brand__name">English Tutor <span className="sch-badge">для школ</span></span>
+          <span className="lp-brand__name">
+            English&nbsp;Tutor <span className="sch-badge">для школ</span>
+          </span>
         </a>
+        {/* Тема вне nav: на узком экране остаётся в первой строке с брендом. */}
+        <ThemeToggle className="sch-theme" />
         <nav className="lp-nav sch-nav">
           <a className="lp-nav__link" href="/">Обычная версия</a>
           {authed ? (
@@ -794,7 +800,6 @@ function SchoolsHeader(
           ) : (
             <button type="button" className="lp-nav__link" onClick={onLogin}>Войти</button>
           )}
-          <ThemeToggle className="sch-theme" />
           <a className="lp-btn lp-btn--primary lp-btn--sm" href="#calc">Рассчитать</a>
         </nav>
       </div>

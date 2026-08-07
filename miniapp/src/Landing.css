@@ -888,3 +888,62 @@ html:has(body.lp-active) {
   background: var(--speak-tint); border: 1.5px solid var(--speak);
   color: var(--lp-text); font-size: 14px; line-height: 1.6;
 }
+
+/* ─── Шапка школьного лендинга: мобильная адаптация ──────────────────
+   У базовой .lp-header__inner жёсткая высота 64px и flex без переноса.
+   Пунктов здесь больше, чем на основном лендинге, поэтому на узких
+   экранах раскладываем в две строки: бренд + тема, затем навигация. */
+
+.sch-header .lp-header__inner { gap: 12px; }
+.sch-brand { flex: none; min-width: 0; }
+.sch-brand .lp-brand__name { white-space: nowrap; }
+/* Тема прижимается вправо, навигация идёт следом. */
+.sch-theme { flex: none; margin-left: auto; }
+.sch-nav { align-items: center; gap: 14px; flex: none; }
+
+@media (max-width: 760px) {
+  .sch-header .lp-header__inner {
+    height: auto;
+    min-height: 56px;
+    flex-wrap: wrap;
+    padding: 10px 0;
+    row-gap: 10px;
+  }
+  .sch-brand { font-size: 15px; }
+  .sch-badge { margin-left: 4px; padding: 2px 7px; font-size: 11px; }
+  /* Навигация — отдельной строкой на всю ширину. */
+  .sch-nav {
+    order: 3;
+    width: 100%;
+    flex: 1 0 100%;
+    gap: 10px;
+    justify-content: space-between;
+  }
+  .sch-nav .lp-nav__link { font-size: 14px; white-space: nowrap; }
+  .sch-nav .lp-btn { flex: none; }
+}
+
+@media (max-width: 400px) {
+  .sch-brand { font-size: 14px; }
+  .sch-nav { gap: 8px; }
+  .sch-nav .lp-nav__link { font-size: 13px; }
+  .sch-nav .lp-btn--sm { padding: 8px 12px; font-size: 13px; }
+}
+
+/* Мобильная вёрстка остальных блоков лендинга школ */
+@media (max-width: 760px) {
+  .sch-trial-cta { width: 100%; text-align: center; font-size: 14px; }
+  .sch-preview { padding: 14px; }
+  /* Таблица превью: колонки уже, шрифт мельче — иначе строки ломаются. */
+  .sch-preview__row {
+    grid-template-columns: 1fr auto auto auto;
+    gap: 6px;
+    padding: 8px 6px;
+    font-size: 12px;
+  }
+  .sch-preview__row--head { font-size: 10px; }
+  .sch-invoice__toggle { width: 100%; text-align: center; }
+  .sch-seats__input { width: 84px; }
+  .sch-total__price { font-size: 30px; }
+  .sch-total__old { display: block; margin: 4px 0 0; font-size: 15px; }
+}
