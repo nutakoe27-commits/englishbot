@@ -842,3 +842,49 @@ html:has(body.lp-active) {
   line-height: 1.45;
 }
 .sch-uplift:hover { background: rgba(255, 255, 255, 0.2); }
+
+/* Пробный период и заявка на счёт */
+.sch-trial-cta {
+  display: block;
+  margin-top: 14px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  border: 1.5px dashed var(--lp-accent);
+  background: transparent;
+  color: var(--lp-accent);
+  font-size: 15px; font-weight: 700;
+  font-family: inherit; cursor: pointer;
+}
+.sch-trial-cta:hover { background: var(--accent-tint); }
+.sch-trial-cta:disabled { opacity: 0.6; cursor: default; }
+
+.sch-trial-done {
+  margin-top: 14px; padding: 16px;
+  border-radius: 12px;
+  background: var(--speak-tint);
+  border: 1.5px solid var(--speak);
+  color: var(--lp-text);
+  font-size: 14px; line-height: 1.6;
+}
+.sch-trial-done code {
+  display: block; margin: 8px 0;
+  font-size: 13px; word-break: break-all;
+  color: var(--lp-text);
+}
+
+.sch-invoice { margin-top: 18px; }
+.sch-invoice__toggle {
+  padding: 12px 18px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--lp-bg-soft);
+  color: var(--lp-text);
+  font-size: 14.5px; font-weight: 700;
+  font-family: inherit; cursor: pointer;
+}
+.sch-invoice__toggle:hover { border-color: var(--lp-accent); }
+.sch-invoice__done {
+  padding: 16px; border-radius: 12px;
+  background: var(--speak-tint); border: 1.5px solid var(--speak);
+  color: var(--lp-text); font-size: 14px; line-height: 1.6;
+}

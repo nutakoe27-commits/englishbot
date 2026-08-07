@@ -3905,3 +3905,39 @@ button {
   border-top: 1px solid var(--border);
 }
 .ps-footer .btn { flex: 1; }
+
+/* ─── Кабинет школы: ссылки, продление, докупка мест ────────────────── */
+.cab-trial {
+  display: inline-block; margin-left: 8px; padding: 2px 8px;
+  border-radius: 999px; background: var(--warn-tint); color: var(--text);
+  font-size: 11px; font-weight: 700; vertical-align: middle;
+}
+.cab-links { display: flex; flex-direction: column; gap: 12px; }
+.cab-links__row { display: flex; flex-direction: column; gap: 6px; }
+.cab-links__label { font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
+.cab-links__btns { display: flex; gap: 8px; }
+
+.cab-bill {
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.cab-bill__tabs { display: flex; }
+.cab-bill__tab {
+  flex: 1; padding: 12px 10px;
+  background: var(--bg-1); border: 0; border-bottom: 1px solid var(--border-strong);
+  color: var(--text); font-size: 13.5px; font-weight: 700;
+  font-family: inherit; cursor: pointer;
+}
+.cab-bill__tab.is-active { background: var(--accent); color: #fff; border-bottom-color: var(--accent); }
+.cab-bill__body { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.cab-bill__field { display: flex; flex-direction: column; gap: 7px; }
+.cab-bill__label { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+.cab-bill__months { display: flex; gap: 8px; flex-wrap: wrap; }
+.cab-bill__total {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 12px 14px; border-radius: 10px;
+  background: var(--accent-tint); color: var(--text);
+}
+.cab-bill__total b { font-size: 22px; }
+.cab-bill__total span { font-size: 12.5px; color: var(--text-dim); }

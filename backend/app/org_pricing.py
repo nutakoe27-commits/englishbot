@@ -77,6 +77,42 @@ def quote(seats: int, months: int) -> dict:
     }
 
 
+TRIAL_SEATS = 3        # мест в бесплатном пробном периоде
+TRIAL_DAYS = 14        # длительность пробного периода
+
+
+def quote_addon(seats_add: int, remaining_days: int, seats_after: int) -> dict:
+    """Докупка мест к действующему пакету — оплата только за оставшийся срок.
+
+    Скидка за объём считается по ИТОГОВОМУ количеству мест (школа не теряет
+    свой уровень, докупая места). Скидка за срок не применяется: срок уже
+    оплачен, докупается только остаток.
+    """
+    try:
+        seats_add = int(seats_add)
+        remaining_days = int(remaining_days)
+        seats_after = int(seats_after)
+    except (TypeError, ValueError):
+        raise ValueError("bad_params")
+    if seats_add < 1 or seats_add > MAX_SEATS:
+        raise ValueError("bad_seats")
+    if remaining_days < 1:
+        raise ValueError("expired")
+
+    vol = volume_discount(seats_after)
+    per_seat_day = BASE_PRICE_PER_SEAT_MONTH / 30.0
+    base_total = seats_add * remaining_days * per_seat_day
+    total = max(1, int(round(base_total * (100 - vol) / 100)))
+    return {
+        "seats_add": seats_add,
+        "remaining_days": remaining_days,
+        "seats_after": seats_after,
+        "volume_discount_pct": vol,
+        "base_total_rub": int(round(base_total)),
+        "total_rub": total,
+    }
+
+
 def limits() -> dict:
     """Параметры для калькулятора на фронте."""
     return {
@@ -86,4 +122,6 @@ def limits() -> dict:
         "allowed_months": list(ALLOWED_MONTHS),
         "volume_tiers": [{"seats": s, "pct": p} for s, p in VOLUME_TIERS],
         "period_tiers": [{"months": m, "pct": p} for m, p in PERIOD_TIERS],
+        "trial_seats": TRIAL_SEATS,
+        "trial_days": TRIAL_DAYS,
     }

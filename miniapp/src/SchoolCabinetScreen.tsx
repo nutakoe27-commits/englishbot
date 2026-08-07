@@ -16,9 +16,12 @@
 import { useEffect, useState } from "react";
 import {
   downloadOrgReport,
+  fetchOrgAddonQuote,
   fetchOrgCabinet,
   fetchOrgStudent,
+  orgCheckout,
   setOrgStudentActive,
+  type OrgAddonQuote,
   type OrgCabinet,
   type OrgStudentDetail,
   type OrgStudentRow,
@@ -58,6 +61,13 @@ export function SchoolCabinetScreen({ onClose }: Props) {
   // Какая инвайт-ссылка только что скопирована: "tg" | "web".
   const [copied, setCopied] = useState<string | null>(null);
   const [memberBusy, setMemberBusy] = useState(false);
+  // Продление и докупка мест — оплата из кабинета, без обращения к нам.
+  const [billOpen, setBillOpen] = useState<null | "renew" | "seats">(null);
+  const [renewMonths, setRenewMonths] = useState<number>(6);
+  const [renewSeats, setRenewSeats] = useState<number>(0);
+  const [addSeats, setAddSeats] = useState<number>(5);
+  const [addQuote, setAddQuote] = useState<OrgAddonQuote | null>(null);
+  const [billBusy, setBillBusy] = useState(false);
 
   useLucide(`cab-${data ? data.students.length : "load"}-${expanded}`);
 
@@ -90,15 +100,47 @@ export function SchoolCabinetScreen({ onClose }: Props) {
     } finally { setCsvBusy(false); }
   };
 
-  const copyInvite = async (kind: "tg" | "web") => {
-    if (!data) return;
+  const copyLink = async (key: string, value: string) => {
     try {
-      await navigator.clipboard.writeText(
-        kind === "tg" ? data.org.invite_link : data.org.invite_link_web,
-      );
-      setCopied(kind);
+      await navigator.clipboard.writeText(value);
+      setCopied(key);
       setTimeout(() => setCopied(null), 1500);
     } catch { /* clipboard недоступен (старый WebView) */ }
+  };
+
+  // Пересчёт докупки мест — сумма считается на сервере (остаток срока).
+  useEffect(() => {
+    if (billOpen !== "seats" || addSeats < 1) { setAddQuote(null); return; }
+    let alive = true;
+    const t = setTimeout(() => {
+      void (async () => {
+        const q = await fetchOrgAddonQuote(addSeats);
+        if (alive) setAddQuote(q);
+      })();
+    }, 350);
+    return () => { alive = false; clearTimeout(t); };
+  }, [billOpen, addSeats]);
+
+  const startBilling = async (kind: "renew" | "seats") => {
+    if (!data || billBusy) return;
+    setBillBusy(true);
+    try {
+      const r = await orgCheckout({
+        kind,
+        org_id: data.org.id,
+        school_name: data.org.name,
+        seats: kind === "renew"
+          ? (renewSeats || data.org.seats_total)
+          : addSeats,
+        months: kind === "renew" ? renewMonths : 0,
+      });
+      if (r.ok && r.confirmation_url) { window.location.href = r.confirmation_url; return; }
+      setError(
+        r.error === "email_required"
+          ? "Нужен email для чека — добавьте его в Профиле."
+          : "Не получилось создать счёт. Попробуйте ещё раз.",
+      );
+    } finally { setBillBusy(false); }
   };
 
   const reloadCabinet = async () => {
@@ -140,35 +182,136 @@ export function SchoolCabinetScreen({ onClose }: Props) {
             <>
               <NoteCard padding={16} tone="sage">
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <strong style={{ fontSize: 17 }}>{data.org.name}</strong>
-                  <span style={{ fontSize: 13, opacity: 0.75 }}>
+                  <strong style={{ fontSize: 17 }}>
+                    {data.org.name}
+                    {data.org.is_trial && (
+                      <span className="cab-trial">пробный период</span>
+                    )}
+                  </strong>
+                  <span style={{ fontSize: 13, opacity: 0.8 }}>
                     Мест занято: {data.org.seats_used} / {data.org.seats_total}
                     {" · "}Доступ до {_fmtDate(data.org.valid_until)}
+                    {data.org.days_left <= 14 && (
+                      <b> · осталось {data.org.days_left} дн.</b>
+                    )}
                   </span>
                 </div>
               </NoteCard>
 
-              {/* Инвайт-ссылки — школа рассылает приглашения сама. */}
-              <div style={{ display: "flex", gap: 8 }}>
-                <Button
-                  variant="secondary"
-                  fullWidth
-                  onClick={() => void copyInvite("tg")}
-                >
-                  {copied === "tg" ? "Скопировано ✓" : "🔗 Ссылка (Telegram)"}
-                </Button>
-                <Button
-                  variant="secondary"
-                  fullWidth
-                  onClick={() => void copyInvite("web")}
-                >
-                  {copied === "web" ? "Скопировано ✓" : "🔗 Ссылка (сайт)"}
-                </Button>
+              {/* Ссылки: отдельно ученикам, отдельно преподавателям. */}
+              <div className="cab-links">
+                <div className="cab-links__row">
+                  <span className="cab-links__label">Для учеников — занимают места</span>
+                  <div className="cab-links__btns">
+                    <Button variant="secondary" fullWidth
+                      onClick={() => void copyLink("s-tg", data.org.invite_link)}>
+                      {copied === "s-tg" ? "Скопировано ✓" : "Telegram"}
+                    </Button>
+                    <Button variant="secondary" fullWidth
+                      onClick={() => void copyLink("s-web", data.org.invite_link_web)}>
+                      {copied === "s-web" ? "Скопировано ✓" : "Сайт"}
+                    </Button>
+                  </div>
+                </div>
+                <div className="cab-links__row">
+                  <span className="cab-links__label">
+                    Для преподавателей — кабинет, место не занимают
+                  </span>
+                  <div className="cab-links__btns">
+                    <Button variant="secondary" fullWidth
+                      onClick={() => void copyLink("t-tg", data.org.teacher_link)}>
+                      {copied === "t-tg" ? "Скопировано ✓" : "Telegram"}
+                    </Button>
+                    <Button variant="secondary" fullWidth
+                      onClick={() => void copyLink("t-web", data.org.teacher_link_web)}>
+                      {copied === "t-web" ? "Скопировано ✓" : "Сайт"}
+                    </Button>
+                  </div>
+                </div>
               </div>
-              <p className="sub-hint" style={{ margin: 0 }}>
-                Отправь ученику любую из ссылок — он подключится сам и займёт
-                свободное место. Ссылка для сайта — если Telegram недоступен.
-              </p>
+
+              {/* Оплата из кабинета: продление срока и докупка мест. */}
+              <div className="cab-bill">
+                <div className="cab-bill__tabs">
+                  <button type="button"
+                    className={`cab-bill__tab ${billOpen === "renew" ? "is-active" : ""}`}
+                    onClick={() => setBillOpen(billOpen === "renew" ? null : "renew")}>
+                    ⏱ Продлить доступ
+                  </button>
+                  <button type="button"
+                    className={`cab-bill__tab ${billOpen === "seats" ? "is-active" : ""}`}
+                    onClick={() => setBillOpen(billOpen === "seats" ? null : "seats")}>
+                    ➕ Добавить мест
+                  </button>
+                </div>
+
+                {billOpen === "renew" && (
+                  <div className="cab-bill__body">
+                    <div className="cab-bill__field">
+                      <span className="cab-bill__label">Срок</span>
+                      <div className="cab-bill__months">
+                        {[3, 6, 12].map((m) => (
+                          <button key={m} type="button"
+                            className={`sch-month ${m === renewMonths ? "is-active" : ""}`}
+                            onClick={() => setRenewMonths(m)}>
+                            {m} мес
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="cab-bill__field">
+                      <span className="cab-bill__label">
+                        Мест после продления (сейчас {data.org.seats_total})
+                      </span>
+                      <input type="number" className="sch-input" min={2} max={5000}
+                        value={renewSeats || data.org.seats_total}
+                        onChange={(e) => setRenewSeats(parseInt(e.target.value, 10) || 0)} />
+                    </div>
+                    <p className="sub-hint" style={{ margin: 0 }}>
+                      Оставшиеся дни не сгорают — новый срок прибавляется к текущему.
+                      Итоговая сумма со скидками посчитается на странице оплаты.
+                    </p>
+                    <Button variant="primary" fullWidth disabled={billBusy}
+                      onClick={() => void startBilling("renew")}>
+                      {billBusy ? "Готовим счёт…" : "Перейти к оплате"}
+                    </Button>
+                  </div>
+                )}
+
+                {billOpen === "seats" && (
+                  <div className="cab-bill__body">
+                    <div className="cab-bill__field">
+                      <span className="cab-bill__label">Сколько мест добавить</span>
+                      <input type="number" className="sch-input" min={1} max={1000}
+                        value={addSeats}
+                        onChange={(e) => setAddSeats(Math.max(1, parseInt(e.target.value, 10) || 1))} />
+                    </div>
+                    {addQuote && !addQuote.expired && (
+                      <div className="cab-bill__total">
+                        <b>{addQuote.total_rub.toLocaleString("ru-RU")} ₽</b>
+                        <span>
+                          за {addSeats} мест до конца срока ({addQuote.remaining_days} дн.)
+                          {addQuote.volume_discount_pct > 0
+                            && ` · скидка ${addQuote.volume_discount_pct}%`}
+                        </span>
+                      </div>
+                    )}
+                    {addQuote?.expired && (
+                      <p className="sub-hint" style={{ margin: 0 }}>
+                        Срок доступа истёк — сначала продлите его.
+                      </p>
+                    )}
+                    <p className="sub-hint" style={{ margin: 0 }}>
+                      Платите только за оставшиеся дни оплаченного периода.
+                    </p>
+                    <Button variant="primary" fullWidth
+                      disabled={billBusy || !addQuote || !!addQuote?.expired}
+                      onClick={() => void startBilling("seats")}>
+                      {billBusy ? "Готовим счёт…" : "Перейти к оплате"}
+                    </Button>
+                  </div>
+                )}
+              </div>
 
               <Button
                 variant="secondary"

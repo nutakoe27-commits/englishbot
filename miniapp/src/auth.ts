@@ -346,6 +346,8 @@ export interface OrgPricing {
   allowed_months: number[];
   volume_tiers: { seats: number; pct: number }[];
   period_tiers: { months: number; pct: number }[];
+  trial_seats?: number;
+  trial_days?: number;
 }
 
 /** Параметры тарификации для калькулятора (публичный эндпоинт). */
@@ -361,6 +363,8 @@ export async function fetchOrgPricing(): Promise<OrgPricing | null> {
 export async function orgCheckout(body: {
   school_name: string; seats: number; months: number;
   contact_person?: string; email?: string;
+  /** new — новая школа, renew — продление, seats — докупка мест. */
+  kind?: "new" | "renew" | "seats"; org_id?: number;
 }): Promise<{ ok: boolean; confirmation_url?: string; payment_id?: number; error?: string }> {
   try {
     const res = await _postJson("/api/payments/org/checkout", body);
@@ -399,6 +403,49 @@ export async function fetchOrgOrderStatus(paymentId: number): Promise<OrgOrderSt
     if (!res.ok) return null;
     return await res.json() as OrgOrderStatus;
   } catch { return null; }
+}
+
+export interface OrgAddonQuote {
+  seats_add: number;
+  remaining_days: number;
+  seats_after: number;
+  volume_discount_pct: number;
+  total_rub: number;
+  expired?: boolean;
+}
+
+/** Расчёт докупки мест до конца оплаченного срока. */
+export async function fetchOrgAddonQuote(seats: number): Promise<OrgAddonQuote | null> {
+  try {
+    const res = await _postJson("/api/payments/org/addon-quote", { seats });
+    if (!res.ok) return null;
+    return await res.json() as OrgAddonQuote;
+  } catch { return null; }
+}
+
+/** Бесплатный пробный период школы. */
+export async function startOrgTrial(schoolName: string): Promise<
+  { ok: true; invite_link: string; invite_link_web: string; teacher_link: string;
+    seats: number; days: number; valid_until: string | null }
+  | { ok: false; error: string }
+> {
+  try {
+    const res = await _postJson("/api/org/trial", { school_name: schoolName });
+    if (res.ok) return { ok: true, ...(await res.json()) };
+    return { ok: false, error: await _readError(res) };
+  } catch { return { ok: false, error: "network" }; }
+}
+
+/** Заявка на счёт и договор для юрлица. */
+export async function requestOrgInvoice(body: {
+  school_name: string; contact_email: string; seats: number; months: number;
+  inn?: string; contact_person?: string; phone?: string; comment?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await _postJson("/api/payments/org/invoice-request", body);
+    if (res.ok) return { ok: true };
+    return { ok: false, error: await _readError(res) };
+  } catch { return { ok: false, error: "network" }; }
 }
 
 /** B2B: подключение к школе по инвайт-коду (?school=CODE из deep-link). */
@@ -484,12 +531,18 @@ export interface OrgStudentRow {
 
 export interface OrgCabinet {
   org: {
+    id: number;
     name: string;
     seats_total: number;
     seats_used: number;
     valid_until: string | null;
+    days_left: number;
+    is_trial: boolean;
     invite_link: string;
     invite_link_web: string;
+    /** Ссылка для преподавателей: даёт кабинет, места не занимает. */
+    teacher_link: string;
+    teacher_link_web: string;
   };
   students: OrgStudentRow[];
 }

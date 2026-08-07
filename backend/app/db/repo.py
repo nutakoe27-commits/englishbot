@@ -587,6 +587,7 @@ class Repo:
         return res.scalar_one_or_none()
 
     async def get_org_by_invite(self, invite_code: str):
+        """Школа по ученическому коду."""
         from .models import Organization
         code = invite_code.strip().upper()
         if not code:
@@ -595,6 +596,28 @@ class Repo:
             select(Organization).where(Organization.invite_code == code)
         )
         return res.scalar_one_or_none()
+
+    async def get_org_by_any_code(self, code: str) -> tuple[object, str]:
+        """Школа по ученическому ИЛИ учительскому коду.
+        Возвращает (org, role): role = 'student' | 'teacher'. (None, '') —
+        код не найден."""
+        from .models import Organization
+        norm = (code or "").strip().upper()
+        if not norm:
+            return None, ""
+        res = await self.s.execute(
+            select(Organization).where(Organization.invite_code == norm)
+        )
+        org = res.scalar_one_or_none()
+        if org is not None:
+            return org, "student"
+        res = await self.s.execute(
+            select(Organization).where(Organization.teacher_code == norm)
+        )
+        org = res.scalar_one_or_none()
+        if org is not None:
+            return org, "teacher"
+        return None, ""
 
     async def org_seats_used(self, org_id: int) -> int:
         from .models import OrgMember
@@ -614,7 +637,7 @@ class Repo:
         'invalid' — код не найден / школа неактивна / срок истёк (org=None
         только для не найденного кода)."""
         from .models import OrgMember
-        org = await self.get_org_by_invite(invite_code)
+        org, role = await self.get_org_by_any_code(invite_code)
         if org is None:
             return "invalid", None
         if not org.active or org.valid_until is None or org.valid_until <= utcnow():
@@ -625,12 +648,30 @@ class Repo:
             )
         )
         member = res.scalar_one_or_none()
+
+        # Учитель мест не занимает. Если человек уже был учеником и перешёл
+        # по учительской ссылке — повышаем роль и освобождаем его место.
+        if role == "teacher":
+            if member is not None:
+                if member.active and member.role in ("teacher", "admin"):
+                    return "already_teacher", org
+                member.role = "teacher"
+                member.active = True
+            else:
+                self.s.add(OrgMember(
+                    org_id=org.id, user_id=user_id, role="teacher",
+                    active=True, joined_at=utcnow(),
+                ))
+            await self.s.flush()
+            return "ok_teacher", org
+
         if member is not None and member.active:
             return "already", org
         if await self.org_seats_used(org.id) >= org.seats_total:
             return "no_seats", org
         if member is not None:
             member.active = True
+            member.role = "student"
         else:
             self.s.add(OrgMember(
                 org_id=org.id, user_id=user_id, role="student",
@@ -645,6 +686,7 @@ class Repo:
         self, *, payment_id: int, user_id: int, school_name: str,
         contact_person: Optional[str], contact_email: Optional[str],
         seats: int, months: int, amount_rub: int,
+        kind: str = "new", target_org_id: Optional[int] = None,
     ):
         from .models import OrgOrder
         order = OrgOrder(
@@ -653,6 +695,7 @@ class Repo:
             contact_person=(contact_person or "").strip()[:128] or None,
             contact_email=(contact_email or "").strip()[:255] or None,
             seats=seats, months=months, amount_rub=amount_rub,
+            kind=kind, target_org_id=target_org_id,
             status="pending", created_at=utcnow(),
         )
         self.s.add(order)
@@ -677,17 +720,39 @@ class Repo:
         if order.status == "done" and order.org_id:
             return int(order.org_id)          # уже выдано
 
-        org = await self.create_org(
-            name=order.school_name,
-            seats_total=int(order.seats),
-            valid_until=utcnow() + timedelta(days=int(order.months) * 30),
-            contact_email=order.contact_email,
-        )
-        # Плательщик становится админом школы: у него сразу появляется кабинет.
-        self.s.add(OrgMember(
-            org_id=org.id, user_id=int(order.user_id), role="admin",
-            active=True, joined_at=utcnow(),
-        ))
+        kind = getattr(order, "kind", "new") or "new"
+        if kind == "new":
+            org = await self.create_org(
+                name=order.school_name,
+                seats_total=int(order.seats),
+                valid_until=utcnow() + timedelta(days=int(order.months) * 30),
+                contact_email=order.contact_email,
+            )
+            # Плательщик становится админом школы: кабинет доступен сразу.
+            self.s.add(OrgMember(
+                org_id=org.id, user_id=int(order.user_id), role="admin",
+                active=True, joined_at=utcnow(),
+            ))
+        else:
+            org = await self.get_org(int(order.target_org_id or 0))
+            if org is None:
+                order.status = "failed"
+                await self.s.flush()
+                return None
+            if kind == "renew":
+                # Продление: считаем от большей из дат — не сжигаем остаток.
+                base = org.valid_until if (
+                    org.valid_until and org.valid_until > utcnow()
+                ) else utcnow()
+                org.valid_until = base + timedelta(days=int(order.months) * 30)
+                # Продление могло идти с изменённым числом мест.
+                if int(order.seats) > 0:
+                    org.seats_total = int(order.seats)
+                org.active = True
+                # Оплаченная школа перестаёт быть пробной.
+                org.is_trial = False
+            elif kind == "seats":
+                org.seats_total = int(org.seats_total) + int(order.seats)
         order.org_id = org.id
         order.status = "done"
         # Платёж помечаем succeeded — личную подписку при этом НЕ трогаем.
@@ -698,6 +763,59 @@ class Repo:
         await self.s.flush()
         return int(org.id)
 
+    async def user_trial_org(self, user_id: int):
+        """Пробная школа, заведённая этим пользователем. Нужна для правила
+        «один пробный период на человека»."""
+        from .models import Organization, OrgMember
+        res = await self.s.execute(
+            select(Organization)
+            .join(OrgMember, OrgMember.org_id == Organization.id)
+            .where(
+                OrgMember.user_id == user_id,
+                OrgMember.role == "admin",
+                Organization.is_trial.is_(True),
+            )
+            .limit(1)
+        )
+        return res.scalar_one_or_none()
+
+    async def create_trial_org(self, *, name: str, user_id: int,
+                               seats: int, days: int, contact_email: Optional[str]):
+        """Бесплатный пробный период: школа на N мест и N дней, плательщик —
+        сразу админ. Повторно тем же юзером не выдаётся (проверка снаружи)."""
+        from .models import OrgMember
+        org = await self.create_org(
+            name=name, seats_total=seats,
+            valid_until=utcnow() + timedelta(days=days),
+            contact_email=contact_email, is_trial=True,
+        )
+        self.s.add(OrgMember(
+            org_id=org.id, user_id=user_id, role="admin",
+            active=True, joined_at=utcnow(),
+        ))
+        await self.s.flush()
+        return org
+
+    async def create_invoice_request(self, **kw):
+        """Заявка на счёт и договор для юрлица."""
+        from .models import OrgInvoiceRequest
+        req = OrgInvoiceRequest(
+            school_name=(kw.get("school_name") or "").strip()[:128],
+            inn=(kw.get("inn") or "").strip()[:32] or None,
+            contact_person=(kw.get("contact_person") or "").strip()[:128] or None,
+            contact_email=(kw.get("contact_email") or "").strip()[:255],
+            phone=(kw.get("phone") or "").strip()[:32] or None,
+            seats=int(kw.get("seats") or 0),
+            months=int(kw.get("months") or 0),
+            amount_rub=int(kw.get("amount_rub") or 0),
+            comment=(kw.get("comment") or "").strip()[:1000] or None,
+            user_id=kw.get("user_id"),
+            status="new", created_at=utcnow(),
+        )
+        self.s.add(req)
+        await self.s.flush()
+        return req
+
     @staticmethod
     def _gen_invite_code() -> str:
         # Без похожих символов (0/O, 1/I/L) — код диктуют вслух ученикам.
@@ -705,24 +823,42 @@ class Repo:
         alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
         return "".join(secrets.choice(alphabet) for _ in range(8))
 
+    async def _gen_unique_code(self) -> str:
+        """Свободный код (проверяем оба поля — коды живут в одном
+        пространстве имён, чтобы вход по коду был однозначным)."""
+        for _ in range(8):
+            code = self._gen_invite_code()
+            org, _role = await self.get_org_by_any_code(code)
+            if org is None:
+                return code
+        return self._gen_invite_code()
+
     async def create_org(
         self, *, name: str, seats_total: int,
         valid_until: Optional[datetime], contact_email: Optional[str],
+        is_trial: bool = False,
     ):
         from .models import Organization
-        for _ in range(5):
-            code = self._gen_invite_code()
-            if await self.get_org_by_invite(code) is None:
-                break
+        code = await self._gen_unique_code()
+        teacher_code = await self._gen_unique_code()
         org = Organization(
-            name=name.strip(), invite_code=code, seats_total=seats_total,
-            valid_until=valid_until, active=True,
+            name=name.strip(), invite_code=code, teacher_code=teacher_code,
+            seats_total=seats_total, valid_until=valid_until, active=True,
+            is_trial=is_trial,
             contact_email=(contact_email or "").strip() or None,
             created_at=utcnow(),
         )
         self.s.add(org)
         await self.s.flush()
         return org
+
+    async def ensure_teacher_code(self, org) -> str:
+        """Досоздать учительский код школам, заведённым до миграции 0031."""
+        if getattr(org, "teacher_code", None):
+            return org.teacher_code
+        org.teacher_code = await self._gen_unique_code()
+        await self.s.flush()
+        return org.teacher_code
 
     async def list_orgs(self) -> list[dict]:
         from .models import Organization, OrgMember
@@ -741,6 +877,8 @@ class Repo:
         for org, seats_used in res.all():
             out.append({
                 "id": org.id, "name": org.name, "invite_code": org.invite_code,
+                "teacher_code": getattr(org, "teacher_code", None),
+                "is_trial": bool(getattr(org, "is_trial", False)),
                 "seats_total": org.seats_total, "seats_used": int(seats_used or 0),
                 "valid_until": org.valid_until, "active": org.active,
                 "contact_email": org.contact_email, "created_at": org.created_at,

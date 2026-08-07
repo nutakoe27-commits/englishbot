@@ -20,6 +20,7 @@ Telegram-бот живёт параллельно (Telegram Payments + provider_
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -350,6 +351,9 @@ class _OrgCheckoutIn(BaseModel):
     months: int
     contact_person: Optional[str] = None
     email: Optional[str] = None        # для чека 54-ФЗ и связи со школой
+    # Продление / докупка мест к существующей школе (кабинет школы).
+    kind: str = "new"                  # new | renew | seats
+    org_id: Optional[int] = None
 
 
 @router.post("/org/checkout")
@@ -364,23 +368,74 @@ async def org_checkout(
     """
     _require_db()
     from . import org_pricing
+    from .db import Repo
 
-    school_name = (body.school_name or "").strip()
-    if not school_name or len(school_name) > 128:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_school_name")
-    try:
-        calc = org_pricing.quote(body.seats, body.months)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    kind = (body.kind or "new").strip().lower()
+    if kind not in ("new", "renew", "seats"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_kind")
 
     if not settings.YOOKASSA_SHOP_ID or not settings.YOOKASSA_SECRET_KEY:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "yookassa_not_configured")
 
-    amount = int(calc["total_rub"])
-    from .db import Repo
+    school_name = (body.school_name or "").strip()
+    target_org_id: Optional[int] = None
+    seats_for_order = int(body.seats or 0)
+    months_for_order = int(body.months or 0)
+
     async with db_session() as session:
         repo = Repo(session)
         user = await auth_lib.resolve_user(repo, authorization=authorization)
+
+        if kind == "new":
+            if not school_name or len(school_name) > 128:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_school_name")
+            try:
+                calc = org_pricing.quote(body.seats, body.months)
+            except ValueError as exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+            amount = int(calc["total_rub"])
+            seats_for_order = int(calc["seats"])
+            months_for_order = int(calc["months"])
+            description = (
+                f"English Tutor для школ: {seats_for_order} мест на "
+                f"{months_for_order} мес."
+            )
+        else:
+            # Продление и докупка — только для своей школы (teacher/admin).
+            org, role = await _resolve_staff_org(repo, user, body.org_id)
+            target_org_id = int(org.id)
+            school_name = org.name
+            if kind == "renew":
+                try:
+                    calc = org_pricing.quote(
+                        body.seats or org.seats_total, body.months,
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+                amount = int(calc["total_rub"])
+                seats_for_order = int(calc["seats"])
+                months_for_order = int(calc["months"])
+                description = (
+                    f"English Tutor: продление школы «{org.name}» — "
+                    f"{seats_for_order} мест на {months_for_order} мес."
+                )
+            else:  # seats
+                remaining = _remaining_days(org)
+                if remaining < 1:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, "expired")
+                try:
+                    calc = org_pricing.quote_addon(
+                        body.seats, remaining, int(org.seats_total) + int(body.seats),
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+                amount = int(calc["total_rub"])
+                seats_for_order = int(calc["seats_add"])
+                months_for_order = 0
+                description = (
+                    f"English Tutor: +{seats_for_order} мест к школе «{org.name}» "
+                    f"до конца срока"
+                )
 
         email = (body.email or "").strip() or user.email
         if settings.YOOKASSA_FISCALIZATION and not email:
@@ -401,12 +456,9 @@ async def org_checkout(
             user_id=user.id,
             plan="org",
             amount_rub=amount,
-            days_granted=int(calc["days"]),
+            days_granted=int(calc.get("days") or 0),
             provider_payment_id=tmp_pid,
-            notes=(
-                f"org selfserve: {school_name} · {calc['seats']} мест × "
-                f"{calc['months']} мес"
-            ),
+            notes=f"org {kind}: {school_name} · {description}"[:500],
         )
         await session.flush()
         local_payment_id = int(payment.id)
@@ -416,17 +468,17 @@ async def org_checkout(
             school_name=school_name,
             contact_person=body.contact_person,
             contact_email=email,
-            seats=int(calc["seats"]),
-            months=int(calc["months"]),
+            seats=seats_for_order,
+            months=months_for_order,
             amount_rub=amount,
+            kind=kind,
+            target_org_id=target_org_id,
         )
         await session.commit()
 
     yk_resp = await yk.create_payment(
         amount_rub=amount,
-        description=(
-            f"English Tutor для школ: {calc['seats']} мест на {calc['months']} мес."
-        ),
+        description=description,
         return_url=_org_return_url(local_payment_id),
         metadata={
             "user_id": str(user.id),
@@ -463,9 +515,130 @@ async def org_checkout(
         "payment_id": local_payment_id,
         "confirmation_url": confirmation_url,
         "amount_rub": amount,
-        "seats": calc["seats"],
-        "months": calc["months"],
+        "seats": seats_for_order,
+        "months": months_for_order,
+        "kind": kind,
     }
+
+
+def _remaining_days(org) -> int:
+    """Сколько полных дней доступа осталось у школы."""
+    from .db.repo import utcnow
+    if not org.valid_until:
+        return 0
+    delta = org.valid_until - utcnow()
+    return max(0, delta.days)
+
+
+async def _resolve_staff_org(repo, user, org_id: Optional[int]):
+    """Школа, которой юзер управляет (teacher/admin). 403 иначе.
+    Продлевать и докупать места может только сотрудник своей школы."""
+    mem = await repo.user_org_membership(user.id)
+    if mem is None or mem[1] not in ("teacher", "admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not_org_staff")
+    org, role = mem
+    if org_id is not None and int(org_id) != int(org.id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "foreign_org")
+    return org, role
+
+
+class _OrgAddonQuoteIn(BaseModel):
+    seats: int
+    org_id: Optional[int] = None
+
+
+@router.post("/org/addon-quote")
+async def org_addon_quote(
+    body: _OrgAddonQuoteIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Расчёт докупки мест до конца оплаченного срока (для кабинета школы)."""
+    _require_db()
+    from . import org_pricing
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await auth_lib.resolve_user(repo, authorization=authorization)
+        org, _role = await _resolve_staff_org(repo, user, body.org_id)
+        remaining = _remaining_days(org)
+        try:
+            calc = org_pricing.quote_addon(
+                body.seats, max(1, remaining),
+                int(org.seats_total) + int(body.seats),
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    calc["expired"] = remaining < 1
+    return calc
+
+
+class _OrgInvoiceIn(BaseModel):
+    school_name: str
+    contact_email: str
+    seats: int
+    months: int
+    inn: Optional[str] = None
+    contact_person: Optional[str] = None
+    phone: Optional[str] = None
+    comment: Optional[str] = None
+
+
+@router.post("/org/invoice-request")
+async def org_invoice_request(
+    body: _OrgInvoiceIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Заявка на счёт и договор для юрлица. Оплата картой подходит не всем
+    школам — заявка сохраняется и сразу падает владельцу в Telegram.
+    Авторизация не требуется: школа может ещё не иметь аккаунта."""
+    _require_db()
+    from . import org_pricing
+    from .auth import send_bot_message
+    from .db import Repo
+
+    school_name = (body.school_name or "").strip()
+    email = (body.contact_email or "").strip()
+    if not school_name or len(school_name) > 128:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_school_name")
+    if "@" not in email or len(email) > 255:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_email")
+    try:
+        calc = org_pricing.quote(body.seats, body.months)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    user_id: Optional[int] = None
+    async with db_session() as session:
+        repo = Repo(session)
+        if authorization:
+            try:
+                user = await auth_lib.resolve_user(repo, authorization=authorization)
+                user_id = int(user.id)
+            except Exception:
+                user_id = None
+        req = await repo.create_invoice_request(
+            school_name=school_name, inn=body.inn,
+            contact_person=body.contact_person, contact_email=email,
+            phone=body.phone, seats=int(calc["seats"]),
+            months=int(calc["months"]), amount_rub=int(calc["total_rub"]),
+            comment=body.comment, user_id=user_id,
+        )
+        await session.commit()
+        req_id = int(req.id)
+
+    text = (
+        "🧾 <b>Заявка на счёт от школы</b>\n\n"
+        f"Школа: <b>{school_name}</b>\n"
+        f"Пакет: {calc['seats']} мест × {calc['months']} мес — "
+        f"{calc['total_rub']} ₽\n"
+        f"Контакт: {body.contact_person or '—'} · {email}"
+        + (f" · {body.phone}" if body.phone else "") + "\n"
+        + (f"ИНН: {body.inn}\n" if body.inn else "")
+        + (f"Комментарий: {body.comment}\n" if body.comment else "")
+        + f"\nЗаявка #{req_id}"
+    )
+    for admin_id in settings.admin_ids_list:
+        asyncio.create_task(send_bot_message(admin_id, text))
+
+    return {"ok": True, "request_id": req_id, "amount_rub": int(calc["total_rub"])}
 
 
 @router.get("/org/order-status")

@@ -15,6 +15,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  requestOrgInvoice,
+  startOrgTrial,
   fetchOrgPricing,
   fetchOrgOrderStatus,
   getToken,
@@ -74,6 +76,8 @@ const FALLBACK: OrgPricing = {
   allowed_months: [3, 6, 12],
   volume_tiers: [{ seats: 100, pct: 20 }, { seats: 30, pct: 10 }],
   period_tiers: [{ months: 12, pct: 15 }, { months: 6, pct: 5 }],
+  trial_seats: 3,
+  trial_days: 14,
 };
 
 function calcQuote(p: OrgPricing, seats: number, months: number) {
@@ -125,6 +129,12 @@ export function SchoolsLanding({ onLogin, authed: authedProp, onOpenApp }: Props
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Пробный период и заявка на счёт для юрлица.
+  const [trialBusy, setTrialBusy] = useState(false);
+  const [trialResult, setTrialResult] = useState<{ link: string; days: number; seats: number } | null>(null);
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [inv, setInv] = useState({ inn: "", phone: "", comment: "" });
+  const [invSent, setInvSent] = useState(false);
 
   // Возврат с оплаты: /schools?payment_id=N&org=1
   const [returnPaymentId] = useState<number | null>(() => {
@@ -238,6 +248,49 @@ export function SchoolsLanding({ onLogin, authed: authedProp, onOpenApp }: Props
     } finally { setBusy(false); }
   }, [busy, schoolName, email, person, seats, months, q.total, pricing.min_seats]);
 
+  const startTrial = async () => {
+    if (trialBusy) return;
+    if (!authed) {
+      try { localStorage.setItem(SCHOOLS_INTENT_KEY, "1"); } catch { /* private */ }
+      onLogin();
+      return;
+    }
+    const name = (schoolName.trim() || window.prompt("Название вашей школы:") || "").trim();
+    if (!name) { setError("Укажите название школы."); return; }
+    setTrialBusy(true); setError("");
+    ymReachGoal("school_trial_started");
+    try {
+      const r = await startOrgTrial(name);
+      if (r.ok) {
+        setTrialResult({ link: r.invite_link_web, days: r.days, seats: r.seats });
+        return;
+      }
+      if (r.error === "trial_already_used") setError("Пробный период уже использован на этом аккаунте.");
+      else if (r.error === "already_in_org") setError("Этот аккаунт уже привязан к школе.");
+      else setError("Не получилось создать пробный доступ. Напишите @NuTak0e.");
+    } finally { setTrialBusy(false); }
+  };
+
+  const sendInvoice = async () => {
+    if (busy) return;
+    const name = schoolName.trim();
+    if (!name) { setError("Укажите название школы."); return; }
+    if (!/^.+@.+\..+$/.test(email.trim())) { setError("Укажите email для связи."); return; }
+    setBusy(true); setError("");
+    ymReachGoal("school_invoice_requested", { seats, months });
+    try {
+      const r = await requestOrgInvoice({
+        school_name: name, contact_email: email.trim(), seats, months,
+        inn: inv.inn.trim() || undefined,
+        contact_person: person.trim() || undefined,
+        phone: inv.phone.trim() || undefined,
+        comment: inv.comment.trim() || undefined,
+      });
+      if (r.ok) { setInvSent(true); return; }
+      setError("Не получилось отправить заявку. Напишите @NuTak0e.");
+    } finally { setBusy(false); }
+  };
+
   const onConnect = () => {
     ymReachGoal("school_cta_click");
     if (!authed) {
@@ -334,6 +387,24 @@ export function SchoolsLanding({ onLogin, authed: authedProp, onOpenApp }: Props
             <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onConnect}>
               Подключить школу
             </button>
+            <button
+              type="button"
+              className="sch-trial-cta"
+              onClick={() => void startTrial()}
+              disabled={trialBusy}
+            >
+              {trialBusy ? "Создаём доступ…" : `Или попробовать бесплатно — ${pricing.trial_seats ?? 3} места на ${pricing.trial_days ?? 14} дней`}
+            </button>
+            {trialResult && (
+              <div className="sch-trial-done">
+                <b>Пробный доступ готов.</b> {trialResult.seats} места на {trialResult.days} дней.
+                Отправьте ученикам ссылку:
+                <code>{trialResult.link}</code>
+                Кабинет школы — в приложении, вкладка «Профиль».
+              </div>
+            )}
+            {error && !formOpen && <div className="sch-error" style={{ marginTop: 12 }}>{error}</div>}
+
             <div className="sch-trust">
               {[
                 "Подключение за 5 минут",
@@ -524,6 +595,74 @@ export function SchoolsLanding({ onLogin, authed: authedProp, onOpenApp }: Props
             </div>
           </div>
 
+          {/* Оплата по счёту — многие школы не платят картой */}
+          <div className="sch-invoice">
+            {!invoiceOpen && !invSent && (
+              <button type="button" className="sch-invoice__toggle"
+                onClick={() => { setInvoiceOpen(true); ymReachGoal("school_invoice_opened"); }}>
+                🧾 Нужен счёт и договор для юрлица
+              </button>
+            )}
+            {invSent && (
+              <div className="sch-invoice__done">
+                <b>Заявка отправлена.</b> Пришлём счёт и договор на {email.trim()} в течение рабочего дня.
+                Если нужно срочно — напишите <a href="https://t.me/NuTak0e" target="_blank" rel="noreferrer">@NuTak0e</a>.
+              </div>
+            )}
+            {invoiceOpen && !invSent && (
+              <div className="sch-order" style={{ marginTop: 0 }}>
+                <h3 className="sch-order__title">Счёт для юридического лица</h3>
+                <p className="lp-hero__note" style={{ marginTop: -8 }}>
+                  Пакет из калькулятора: <b>{seats} мест × {months} мес — {fmt(q.total)} ₽</b>.
+                  Пришлём счёт и договор, доступ откроем после оплаты.
+                </p>
+                <div className="sch-order__grid">
+                  <label className="sch-field">
+                    <span className="sch-field__label">Название организации *</span>
+                    <input className="sch-input" value={schoolName} maxLength={128}
+                      onChange={(e) => setSchoolName(e.target.value)} placeholder="ООО «Скайрокет»" />
+                  </label>
+                  <label className="sch-field">
+                    <span className="sch-field__label">ИНН</span>
+                    <input className="sch-input" value={inv.inn} maxLength={32}
+                      onChange={(e) => setInv({ ...inv, inn: e.target.value })} placeholder="7701234567" />
+                  </label>
+                  <label className="sch-field">
+                    <span className="sch-field__label">Контактное лицо</span>
+                    <input className="sch-input" value={person} maxLength={128}
+                      onChange={(e) => setPerson(e.target.value)} placeholder="Иван Петров" />
+                  </label>
+                  <label className="sch-field">
+                    <span className="sch-field__label">Email *</span>
+                    <input className="sch-input" type="email" value={email} maxLength={255}
+                      onChange={(e) => setEmail(e.target.value)} placeholder="director@school.ru" />
+                  </label>
+                  <label className="sch-field">
+                    <span className="sch-field__label">Телефон</span>
+                    <input className="sch-input" value={inv.phone} maxLength={32}
+                      onChange={(e) => setInv({ ...inv, phone: e.target.value })} placeholder="+7 900 000-00-00" />
+                  </label>
+                  <label className="sch-field">
+                    <span className="sch-field__label">Комментарий</span>
+                    <input className="sch-input" value={inv.comment} maxLength={500}
+                      onChange={(e) => setInv({ ...inv, comment: e.target.value })} placeholder="Пожелания по договору" />
+                  </label>
+                </div>
+                {error && <div className="sch-error" style={{ marginTop: 14 }}>{error}</div>}
+                <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+                  <button type="button" className="lp-btn lp-btn--primary lp-btn--md"
+                    onClick={() => void sendInvoice()} disabled={busy}>
+                    {busy ? "Отправляем…" : "Запросить счёт"}
+                  </button>
+                  <button type="button" className="lp-btn lp-btn--ghost lp-btn--md"
+                    onClick={() => setInvoiceOpen(false)}>
+                    Отмена
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Форма заказа */}
           {formOpen && authed && (
             <div className="sch-order" id="school-order">
@@ -595,9 +734,9 @@ export function SchoolsLanding({ onLogin, authed: authedProp, onOpenApp }: Props
           <div className="sch-faq">
             <SchFaq q="Что нужно от школы, чтобы начать?" a="Только оплатить пакет и разослать ссылку ученикам. Списки учеников заранее собирать не нужно — они подключаются сами, вы видите их в кабинете по мере подключения." />
             <SchFaq q="Ученику нужен Telegram?" a="Нет. Есть вторая ссылка — на сайт. Ученик заходит через Яндекс ID или email с паролем и занимается в браузере." />
-            <SchFaq q="Что если учеников станет больше?" a="Докупаете места — напишите нам, расширим пакет. Мы сами предупредим, если мест перестанет хватать." />
-            <SchFaq q="Как получить доступ преподавателю?" a="Преподаватель переходит по той же ссылке, после чего мы переключаем его роль на «учитель»: он получает кабинет со статистикой и не занимает ученическое место." />
-            <SchFaq q="Нужны закрывающие документы?" a="Да, работаем по оферте, чек по 54-ФЗ приходит на указанный email. Если нужен договор и счёт на юрлицо — напишите @NuTak0e, оформим." />
+            <SchFaq q="Что если учеников станет больше?" a="Докупаете места прямо в кабинете школы — платите только за оставшиеся дни оплаченного периода. Там же продлевается доступ, когда срок подходит к концу." />
+            <SchFaq q="Как получить доступ преподавателю?" a="В кабинете школы есть отдельная ссылка для преподавателей. Перешедший по ней сразу получает кабинет со статистикой и НЕ занимает ученическое место — все места остаются детям." />
+            <SchFaq q="Нужны закрывающие документы?" a="Да. При оплате картой чек по 54-ФЗ приходит на email автоматически. Если нужен счёт и договор на юрлицо — нажмите «Нужен счёт для юрлица» под калькулятором, пришлём документы." />
             <SchFaq q="Что будет, когда срок закончится?" a="Доступ учеников вернётся к бесплатным лимитам, данные и прогресс сохранятся. Мы напомним заранее, чтобы вы успели продлить." />
           </div>
         </div>

@@ -224,6 +224,10 @@ class Organization(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     invite_code: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    # Второй код (миграция 0031): переход по нему даёт роль teacher —
+    # кабинет школы без занятия ученического места.
+    teacher_code: Mapped[Optional[str]] = mapped_column(String(32), unique=True)
+    is_trial: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     seats_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     valid_until: Mapped[Optional[datetime]] = mapped_column(DateTime)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -248,9 +252,41 @@ class OrgOrder(Base):
     months: Mapped[int] = mapped_column(Integer, nullable=False)
     amount_rub: Mapped[int] = mapped_column(Integer, nullable=False)
     org_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    # Что оплачивается (миграция 0031): новая школа, продление срока или
+    # докупка мест к действующему пакету.
+    kind: Mapped[str] = mapped_column(
+        SAEnum("new", "renew", "seats", name="org_order_kind"),
+        nullable=False, default="new",
+    )
+    target_org_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     status: Mapped[str] = mapped_column(
         SAEnum("pending", "done", "failed", name="org_order_status"),
         nullable=False, default="pending",
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class OrgInvoiceRequest(Base):
+    """Заявка школы на счёт и договор (миграция 0031). Многие школы не платят
+    картой — заявка падает владельцу в Telegram и хранится здесь, чтобы лид
+    не потерялся."""
+
+    __tablename__ = "org_invoice_requests"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    school_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    inn: Mapped[Optional[str]] = mapped_column(String(32))
+    contact_person: Mapped[Optional[str]] = mapped_column(String(128))
+    contact_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone: Mapped[Optional[str]] = mapped_column(String(32))
+    seats: Mapped[int] = mapped_column(Integer, nullable=False)
+    months: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount_rub: Mapped[int] = mapped_column(Integer, nullable=False)
+    comment: Mapped[Optional[str]] = mapped_column(String(1000))
+    user_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(
+        SAEnum("new", "done", name="org_invoice_status"),
+        nullable=False, default="new",
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 

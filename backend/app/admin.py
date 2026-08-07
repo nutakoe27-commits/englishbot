@@ -875,6 +875,11 @@ def _org_to_dict(o: dict) -> dict:
         "active": bool(o["active"]),
         "invite_link": _org_invite_link(o["invite_code"]),
         "invite_link_web": _org_invite_link_web(o["invite_code"]),
+        "teacher_code": o.get("teacher_code"),
+        "teacher_link": (
+            _org_invite_link(o["teacher_code"]) if o.get("teacher_code") else None
+        ),
+        "is_trial": bool(o.get("is_trial")),
     }
 
 

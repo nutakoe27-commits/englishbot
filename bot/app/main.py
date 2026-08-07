@@ -237,6 +237,22 @@ async def _handle_school_deeplink(message: Message, invite_code: str) -> None:
         return
     status = data.get("status")
     org_name = data.get("org_name") or "твоя школа"
+    if status in ("ok_teacher", "already_teacher"):
+        prefix = (
+            f"👩‍🏫 Ты подключён как преподаватель школы <b>{org_name}</b>!"
+            if status == "ok_teacher"
+            else f"👩‍🏫 Ты уже преподаватель школы <b>{org_name}</b>."
+        )
+        await message.answer(
+            f"{prefix}\n\n"
+            "Открой mini app → вкладка «Профиль» → «Кабинет школы»: там "
+            "статистика учеников, их частые ошибки и отчёт за месяц.\n\n"
+            "Ученическое место ты при этом не занимаешь — все места остаются "
+            "детям. Тебе тоже доступны все режимы занятий.",
+            parse_mode="HTML",
+            reply_markup=_miniapp_keyboard(),
+        )
+        return
     if status in ("ok", "already"):
         prefix = (
             f"🎓 Ты подключён к школе <b>{org_name}</b>!"

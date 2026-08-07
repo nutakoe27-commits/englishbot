@@ -724,23 +724,91 @@ async def org_cabinet(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
     # Инвайт-ссылки — чтобы школа рассылала приглашения сама, без владельца.
     from .admin import _org_invite_link, _org_invite_link_web
+    from .db.repo import utcnow as _now
     async with db_session() as session:
         repo = Repo(session)
         _user, org = await _resolve_org_staff(
             repo, authorization=authorization, init_data=init_data,
         )
+        # Школам, заведённым до появления учительских ссылок, код досоздаётся.
+        teacher_code = await repo.ensure_teacher_code(org)
         seats_used = await repo.org_seats_used(org.id)
         students = await repo.org_students_stats(org.id)
+        await session.commit()
+    days_left = (
+        max(0, (org.valid_until - _now()).days) if org.valid_until else 0
+    )
     return {
         "org": {
+            "id": int(org.id),
             "name": org.name,
             "seats_total": org.seats_total,
             "seats_used": seats_used,
             "valid_until": org.valid_until.isoformat() if org.valid_until else None,
+            "days_left": days_left,
+            "is_trial": bool(getattr(org, "is_trial", False)),
             "invite_link": _org_invite_link(org.invite_code),
             "invite_link_web": _org_invite_link_web(org.invite_code),
+            # Ссылка для преподавателей: даёт кабинет и не занимает место.
+            "teacher_link": _org_invite_link(teacher_code),
+            "teacher_link_web": _org_invite_link_web(teacher_code),
         },
         "students": _cabinet_students(students),
+    }
+
+
+class _OrgTrialIn(BaseModel):
+    init_data: str = ""
+    school_name: str
+
+
+@app.post("/api/org/trial", tags=["Org"])
+async def org_trial(
+    body: _OrgTrialIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Бесплатный пробный период для школы: несколько мест на две недели,
+    без оплаты. Один раз на пользователя."""
+    from fastapi import HTTPException, status
+    from . import org_pricing
+    from .admin import _org_invite_link, _org_invite_link_web
+    from .db import Repo
+    if not settings.DATABASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db not configured")
+
+    name = (body.school_name or "").strip()
+    if not name or len(name) > 128:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_school_name")
+
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await resolve_user(
+            repo, authorization=authorization, init_data=body.init_data,
+        )
+        if await repo.user_trial_org(user.id) is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "trial_already_used")
+        # Уже состоит в школе — второй раз подключать не даём.
+        if await repo.user_org_membership(user.id) is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "already_in_org")
+        org = await repo.create_trial_org(
+            name=name, user_id=int(user.id),
+            seats=org_pricing.TRIAL_SEATS, days=org_pricing.TRIAL_DAYS,
+            contact_email=user.email,
+        )
+        await session.commit()
+        org_id, code, tcode = int(org.id), org.invite_code, org.teacher_code
+        valid_until = org.valid_until
+
+    return {
+        "ok": True,
+        "org_id": org_id,
+        "school_name": name,
+        "seats": org_pricing.TRIAL_SEATS,
+        "days": org_pricing.TRIAL_DAYS,
+        "valid_until": valid_until.isoformat() if valid_until else None,
+        "invite_link": _org_invite_link(code),
+        "invite_link_web": _org_invite_link_web(code),
+        "teacher_link": _org_invite_link(tcode),
+        "teacher_link_web": _org_invite_link_web(tcode),
     }
 
 
