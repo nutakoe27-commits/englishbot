@@ -15,7 +15,7 @@
 
 import { useEffect } from "react";
 import { ymHit, ymReachGoal } from "./metrika";
-import { ThemeToggle } from "./ThemeToggle";
+import { LandingNav } from "./LandingNav";
 import "./Landing.css";
 
 interface Props {
@@ -79,25 +79,15 @@ export function LandingScreen({ onStartTrial, onLogin }: Props) {
 
 /* ─── Header ─────────────────────────────────────────────────────────── */
 function Header({ onLogin, onCta }: { onLogin: () => void; onCta: () => void }) {
+  // Шапка общая с лендингом школ: на телефоне ссылки уезжают в выдвижное меню.
   return (
-    <header className="lp-header">
-      <div className="lp-container lp-header__inner">
-        <div className="lp-brand">
-          <span className="lp-brand__dot" aria-hidden />
-          <span className="lp-brand__name">English Tutor</span>
-        </div>
-        <nav className="lp-nav">
-          <ThemeToggle />
-          <a className="lp-nav__link" href="/schools">Для школ</a>
-          <button type="button" className="lp-nav__link" onClick={onLogin}>
-            Войти
-          </button>
-          <button type="button" className="lp-btn lp-btn--primary lp-btn--sm" onClick={onCta}>
-            Попробовать
-          </button>
-        </nav>
-      </div>
-    </header>
+    <LandingNav
+      items={[
+        { label: "Для школ", href: "/schools" },
+        { label: "Войти", onClick: onLogin },
+      ]}
+      cta={{ label: "Попробовать", onClick: onCta }}
+    />
   );
 }
 

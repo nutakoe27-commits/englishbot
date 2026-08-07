@@ -25,7 +25,7 @@ import {
   type OrgPricing,
 } from "./auth";
 import { fetchMe } from "./auth";
-import { ThemeToggle } from "./ThemeToggle";
+import { LandingNav } from "./LandingNav";
 import { ymHit, ymReachGoal } from "./metrika";
 import "./Landing.css";
 
@@ -777,33 +777,19 @@ function SchoolsHeader(
   { onLogin: () => void; authed: boolean; onOpenApp?: () => void },
 ) {
   return (
-    <header className="lp-header sch-header">
-      <div className="lp-container lp-header__inner">
-        <a className="lp-brand sch-brand" href="/">
-          <span className="lp-brand__dot" aria-hidden />
-          <span className="lp-brand__name">
-            English&nbsp;Tutor <span className="sch-badge">для школ</span>
-          </span>
-        </a>
-        {/* Тема вне nav: на узком экране остаётся в первой строке с брендом. */}
-        <ThemeToggle className="sch-theme" />
-        <nav className="lp-nav sch-nav">
-          <a className="lp-nav__link" href="/">Обычная версия</a>
-          {authed ? (
-            <button
-              type="button"
-              className="lp-nav__link"
-              onClick={() => (onOpenApp ? onOpenApp() : (window.location.href = "/"))}
-            >
-              В приложение
-            </button>
-          ) : (
-            <button type="button" className="lp-nav__link" onClick={onLogin}>Войти</button>
-          )}
-          <a className="lp-btn lp-btn--primary lp-btn--sm" href="#calc">Рассчитать</a>
-        </nav>
-      </div>
-    </header>
+    <LandingNav
+      badge="для школ"
+      items={[
+        { label: "Обычная версия", href: "/" },
+        authed
+          ? {
+              label: "В приложение",
+              onClick: () => (onOpenApp ? onOpenApp() : (window.location.href = "/")),
+            }
+          : { label: "Войти", onClick: onLogin },
+      ]}
+      cta={{ label: "Рассчитать стоимость", href: "#calc" }}
+    />
   );
 }
 

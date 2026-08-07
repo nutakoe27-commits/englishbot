@@ -947,3 +947,107 @@ html:has(body.lp-active) {
   .sch-total__price { font-size: 30px; }
   .sch-total__old { display: block; margin: 4px 0 0; font-size: 15px; }
 }
+
+/* ─── Общая шапка лендингов: бургер и выдвижная панель ────────────────
+   Ссылок стало больше, чем помещается в строку на телефоне, поэтому на
+   узких экранах они уезжают в панель, а в шапке остаются бренд, тема и
+   бургер. Правила общие для обоих лендингов (LandingNav.tsx). */
+
+.lp-brand--link { text-decoration: none; color: var(--lp-text); }
+.lp-brand--link .lp-brand__name { white-space: nowrap; }
+
+.lp-mobile-actions { display: none; align-items: center; gap: 8px; }
+
+.lp-burger {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 42px; height: 42px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--lp-bg-soft);
+  cursor: pointer; padding: 0;
+}
+.lp-burger__box {
+  display: flex; flex-direction: column; justify-content: center;
+  gap: 4px; width: 18px; height: 14px;
+}
+.lp-burger__box i {
+  display: block; height: 2px; width: 100%; border-radius: 2px;
+  background: var(--lp-text);
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+.lp-burger__box.is-open i:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.lp-burger__box.is-open i:nth-child(2) { opacity: 0; }
+.lp-burger__box.is-open i:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+.lp-drawer__backdrop {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+}
+.lp-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 2001;
+  width: min(84vw, 320px);
+  /* Панель живёт в <body>, вне .lp — переменные --lp-* здесь не видны.
+     Цвета задаём явно: часть DS-токенов (например --bg-0) в рантайме
+     не резолвится, и фон уходил в белый, а текст оставался светлым. */
+  background: #FFFCF2;
+  color: var(--text, #2A2622);
+  border-left: 1px solid var(--border-strong, rgba(42, 38, 34, 0.22));
+  box-shadow: -18px 0 40px -20px rgba(0, 0, 0, 0.55);
+  display: flex; flex-direction: column;
+  padding: 16px 18px calc(18px + env(safe-area-inset-bottom));
+  animation: lp-drawer-in 0.2s ease-out;
+}
+@keyframes lp-drawer-in {
+  from { transform: translateX(16px); opacity: 0.6; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+.lp-drawer__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 12px; margin-bottom: 8px;
+  border-bottom: 1px solid var(--border, rgba(42, 38, 34, 0.10));
+}
+.lp-drawer__title { font-size: 13px; font-weight: 700; color: var(--text-dim, #6B5F50); }
+.lp-drawer__close {
+  width: 36px; height: 36px; border-radius: 9px;
+  border: 1px solid var(--border-strong, rgba(42, 38, 34, 0.22));
+  background: transparent; color: inherit;
+  font-size: 15px; cursor: pointer; line-height: 1;
+}
+.lp-drawer__items { display: flex; flex-direction: column; }
+.lp-drawer__link {
+  display: block; width: 100%;
+  padding: 15px 4px;
+  border: 0; border-bottom: 1px solid var(--border, rgba(42, 38, 34, 0.10));
+  background: transparent;
+  color: inherit;
+  font-size: 16px; font-weight: 600; font-family: inherit;
+  text-align: left; text-decoration: none; cursor: pointer;
+}
+.lp-drawer__link:active { opacity: 0.6; }
+.lp-drawer__foot { margin-top: auto; padding-top: 16px; }
+.lp-drawer__cta { width: 100%; }
+
+@media (max-width: 760px) {
+  .lp-nav--desktop { display: none; }
+  .lp-mobile-actions { display: flex; }
+  .lp-header__inner { gap: 10px; }
+  .lp-brand--link { font-size: 15px; flex: none; min-width: 0; }
+}
+@media (max-width: 380px) {
+  .lp-brand--link { font-size: 14px; }
+  .sch-badge { font-size: 10px; padding: 2px 6px; }
+}
+
+/* Панель в тёмной теме: она вне .lp, поэтому правило вешаем на [data-theme]. */
+[data-theme="dark"] .lp-drawer {
+  background: #12151c;
+  color: #e8eaf0;
+  border-left-color: rgba(255, 255, 255, 0.16);
+}
+[data-theme="dark"] .lp-drawer__head,
+[data-theme="dark"] .lp-drawer__link {
+  border-color: rgba(255, 255, 255, 0.10);
+}
+[data-theme="dark"] .lp-drawer__title { color: #9ba0b0; }
+[data-theme="dark"] .lp-drawer__close { border-color: rgba(255, 255, 255, 0.16); }
