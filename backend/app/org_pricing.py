@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 BASE_PRICE_PER_SEAT_MONTH = 590   # ₽ за одно место в месяц без скидок
-MIN_SEATS = 10                    # минимальный заказ
+MIN_SEATS = 2                     # минимальный заказ (мини-группа)
 MAX_SEATS = 5000                  # предохранитель от опечаток
 ALLOWED_MONTHS = (3, 6, 12)
 

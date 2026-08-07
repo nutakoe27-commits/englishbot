@@ -22,6 +22,8 @@ import {
   type OrgOrderStatus,
   type OrgPricing,
 } from "./auth";
+import { fetchMe } from "./auth";
+import { ThemeToggle } from "./ThemeToggle";
 import { ymHit, ymReachGoal } from "./metrika";
 import "./Landing.css";
 
@@ -48,10 +50,26 @@ function consumeConnectIntent(): boolean {
   return intent;
 }
 
+const CALC_KEY = "et_schools_calc";
+
+/** Сохранённый выбор пакета (переживает перезагрузку при входе). */
+function readSaved(): { seats: number; months: number } {
+  try {
+    const raw = localStorage.getItem(CALC_KEY);
+    if (raw) {
+      const v = JSON.parse(raw) as { seats?: number; months?: number };
+      const seats = Number(v.seats);
+      const months = Number(v.months);
+      if (seats >= 2 && [3, 6, 12].includes(months)) return { seats, months };
+    }
+  } catch { /* private mode */ }
+  return { seats: 10, months: 6 };
+}
+
 /** Дефолты на случай, если backend недоступен — калькулятор всё равно считает. */
 const FALLBACK: OrgPricing = {
   base_price_per_seat_month: 590,
-  min_seats: 10,
+  min_seats: 2,
   max_seats: 5000,
   allowed_months: [3, 6, 12],
   volume_tiers: [{ seats: 100, pct: 20 }, { seats: 30, pct: 10 }],
@@ -73,10 +91,31 @@ function calcQuote(p: OrgPricing, seats: number, months: number) {
 
 const fmt = (n: number) => n.toLocaleString("ru-RU");
 
-export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
+function clampSeats(v: number, p: OrgPricing): number {
+  if (!Number.isFinite(v)) return p.min_seats;
+  return Math.min(p.max_seats, Math.max(p.min_seats, Math.round(v)));
+}
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+}
+
+interface Props {
+  onLogin: () => void;
+  /** Юзер уже вошёл — показываем выход в приложение вместо «Войти». */
+  authed?: boolean;
+  onOpenApp?: () => void;
+}
+
+export function SchoolsLanding({ onLogin, authed: authedProp, onOpenApp }: Props) {
   const [pricing, setPricing] = useState<OrgPricing>(FALLBACK);
-  const [seats, setSeats] = useState<number>(30);
-  const [months, setMonths] = useState<number>(6);
+  // Выбор сохраняем: вход через Яндекс перезагружает страницу, и без этого
+  // управляющий возвращается к дефолтам, потеряв подобранный пакет.
+  const [seats, setSeats] = useState<number>(() => readSaved().seats);
+  const [months, setMonths] = useState<number>(() => readSaved().months);
   // Вернулись после входа с намерением подключить школу — форма сразу открыта.
   const [formOpen, setFormOpen] = useState<boolean>(
     () => consumeConnectIntent() && !!getToken(),
@@ -98,8 +137,14 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
   const [order, setOrder] = useState<OrgOrderStatus | null>(null);
   const [orderWait, setOrderWait] = useState<boolean>(!!returnPaymentId);
 
-  const authed = !!getToken();
+  const authed = authedProp ?? !!getToken();
   const q = useMemo(() => calcQuote(pricing, seats, months), [pricing, seats, months]);
+  // Ближайший порог скидки за объём — показываем, сколько мест до него.
+  const nextTier = useMemo(() => {
+    const tiers = [...pricing.volume_tiers].sort((a, b) => a.seats - b.seats);
+    const next = tiers.find((t) => seats < t.seats);
+    return next ? { seats: next.seats, need: next.seats - seats, pct: next.pct + q.per } : null;
+  }, [pricing, seats, q.per]);
 
   // Класс на body — как на основном лендинге: он задаёт фон страницы
   // (в тёмной теме иначе останется фон приложения).
@@ -140,6 +185,25 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
     void tick();
     return () => { alive = false; };
   }, [returnPaymentId]);
+
+  // Запоминаем подобранный пакет — чтобы он пережил вход и возврат.
+  useEffect(() => {
+    try { localStorage.setItem(CALC_KEY, JSON.stringify({ seats, months })); }
+    catch { /* private mode */ }
+  }, [seats, months]);
+
+  // Подставляем email и имя из аккаунта — управляющему не нужно вводить заново.
+  useEffect(() => {
+    if (!authed) return;
+    let alive = true;
+    void (async () => {
+      const me = await fetchMe();
+      if (!alive || !me) return;
+      setEmail((cur) => cur || me.email || "");
+      setPerson((cur) => cur || me.first_name || "");
+    })();
+    return () => { alive = false; };
+  }, [authed]);
 
   // Форма открылась автоматически после входа — подкрутим к ней экран.
   useEffect(() => {
@@ -193,7 +257,7 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
   if (returnPaymentId) {
     return (
       <div className="lp">
-        <SchoolsHeader onLogin={onLogin} />
+        <SchoolsHeader onLogin={onLogin} authed={authed} onOpenApp={onOpenApp} />
         <section className="lp-section">
           <div className="lp-container" style={{ maxWidth: 720 }}>
             {orderWait && (
@@ -254,7 +318,7 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
   // ─── Основной лендинг ─────────────────────────────────────────────
   return (
     <div className="lp">
-      <SchoolsHeader onLogin={onLogin} />
+      <SchoolsHeader onLogin={onLogin} authed={authed} onOpenApp={onOpenApp} />
 
       <section className="lp-hero">
         <div className="lp-container lp-hero__inner">
@@ -343,21 +407,48 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
 
           <div className="sch-calc">
             <div className="sch-calc__controls">
-              <label className="sch-field">
-                <span className="sch-field__label">Учеников: <b>{seats}</b></span>
+              <div className="sch-field">
+                <div className="sch-seats__top">
+                  <span className="sch-field__label">Учеников</span>
+                  <input
+                    type="number"
+                    className="sch-seats__input"
+                    min={pricing.min_seats}
+                    max={pricing.max_seats}
+                    value={seats}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      setSeats(Number.isFinite(v) ? v : pricing.min_seats);
+                    }}
+                    onBlur={() => setSeats(clampSeats(seats, pricing))}
+                    aria-label="Количество учеников"
+                  />
+                </div>
                 <input
                   type="range"
                   min={pricing.min_seats}
                   max={300}
-                  step={5}
-                  value={seats}
+                  step={1}
+                  value={Math.min(seats, 300)}
                   onChange={(e) => setSeats(parseInt(e.target.value, 10))}
                   className="sch-range"
                 />
+                <div className="sch-presets">
+                  {[3, 5, 10, 20, 30, 50, 100].filter((n) => n >= pricing.min_seats).map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={`sch-preset ${seats === n ? "is-active" : ""}`}
+                      onClick={() => setSeats(n)}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
                 <span className="sch-field__hint">
-                  от {pricing.min_seats} до 300 — если нужно больше, напишите нам
+                  от {pricing.min_seats} мест · ползунок до 300, больше — введите числом
                 </span>
-              </label>
+              </div>
 
               <div className="sch-field">
                 <span className="sch-field__label">Срок доступа</span>
@@ -405,6 +496,17 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
                 {fmt(q.perSeat)} ₽ за место в месяц · {seats} мест × {months} мес
                 {q.saving > 0 && ` · экономия ${fmt(q.saving)} ₽`}
               </div>
+              {nextTier && (
+                <button
+                  type="button"
+                  className="sch-uplift"
+                  onClick={() => setSeats(nextTier.seats)}
+                  title="Подставить это количество"
+                >
+                  + {nextTier.need} {plural(nextTier.need, "место", "места", "мест")} —
+                  и скидка вырастет до {nextTier.pct}%
+                </button>
+              )}
               <button
                 type="button"
                 className="lp-btn lp-btn--primary lp-btn--lg"
@@ -529,17 +631,32 @@ export function SchoolsLanding({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-function SchoolsHeader({ onLogin }: { onLogin: () => void }) {
+function SchoolsHeader(
+  { onLogin, authed, onOpenApp }:
+  { onLogin: () => void; authed: boolean; onOpenApp?: () => void },
+) {
   return (
     <header className="lp-header">
       <div className="lp-container lp-header__inner">
-        <a className="lp-brand" href="/" style={{ textDecoration: "none" }}>
+        <a className="lp-brand" href="/">
           <span className="lp-brand__dot" aria-hidden />
           <span className="lp-brand__name">English Tutor <span className="sch-badge">для школ</span></span>
         </a>
-        <nav className="lp-nav">
-          <button type="button" className="lp-nav__link" onClick={onLogin}>Войти</button>
-          <a className="lp-btn lp-btn--primary lp-btn--sm" href="#calc">Рассчитать стоимость</a>
+        <nav className="lp-nav sch-nav">
+          <a className="lp-nav__link" href="/">Обычная версия</a>
+          {authed ? (
+            <button
+              type="button"
+              className="lp-nav__link"
+              onClick={() => (onOpenApp ? onOpenApp() : (window.location.href = "/"))}
+            >
+              В приложение
+            </button>
+          ) : (
+            <button type="button" className="lp-nav__link" onClick={onLogin}>Войти</button>
+          )}
+          <ThemeToggle className="sch-theme" />
+          <a className="lp-btn lp-btn--primary lp-btn--sm" href="#calc">Рассчитать</a>
         </nav>
       </div>
     </header>

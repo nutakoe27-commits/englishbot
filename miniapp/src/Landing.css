@@ -787,3 +787,58 @@ html:has(body.lp-active) {
   .sch-order__grid { grid-template-columns: 1fr; }
   .sch-preview { margin-top: 8px; }
 }
+
+/* Навигация и переключатель темы в шапке школьного лендинга */
+.sch-nav { align-items: center; gap: 14px; }
+.sch-theme { flex: none; }
+
+/* Поле «Учеников»: ползунок + ручной ввод + пресеты */
+.sch-seats__top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sch-seats__input {
+  width: 92px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-0);
+  color: var(--lp-text);
+  font-size: 16px;
+  font-weight: 800;
+  font-family: inherit;
+  text-align: center;
+}
+.sch-seats__input:focus { outline: none; border-color: var(--lp-accent); }
+
+.sch-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.sch-preset {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-0);
+  color: var(--lp-text-dim);
+  font-size: 13px; font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.sch-preset:hover { border-color: var(--lp-accent); color: var(--lp-text); }
+.sch-preset.is-active {
+  background: var(--lp-accent); border-color: var(--lp-accent); color: #fff;
+}
+
+/* Подсказка «добавьте мест — вырастет скидка» */
+.sch-uplift {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  line-height: 1.45;
+}
+.sch-uplift:hover { background: rgba(255, 255, 255, 0.2); }

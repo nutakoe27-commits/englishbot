@@ -215,8 +215,18 @@ function Root() {
   // Показываем и незалогиненным, и залогиненным (там свой флоу оплаты).
   const isSchoolsPath = typeof window !== "undefined"
     && window.location.pathname.replace(/\/+$/, "") === "/schools";
-  if (isSchoolsPath && auth !== "loading" && !showLogin) {
-    return <SchoolsLanding onLogin={() => setShowLogin(true)} />;
+  if (isSchoolsPath && auth !== "loading") {
+    // Залогиненный видит лендинг школ ВСЕГДА — по прямой ссылке тоже.
+    // Экран входа показываем, только если гость сам нажал «Войти».
+    if (auth === "authed" || !showLogin) {
+      return (
+        <SchoolsLanding
+          authed={auth === "authed"}
+          onLogin={() => setShowLogin(true)}
+          onOpenApp={() => { window.location.href = "/"; }}
+        />
+      );
+    }
   }
 
   if (auth === "loading") {
