@@ -135,6 +135,8 @@ export function SchoolsLanding({ onLogin, authed: authedProp, onOpenApp }: Props
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [inv, setInv] = useState({ inn: "", phone: "", comment: "" });
   const [invSent, setInvSent] = useState(false);
+  // Сколько школа планирует брать с ученика за AI-практику (блок заработка).
+  const [studentPrice, setStudentPrice] = useState<number>(1000);
 
   // Возврат с оплаты: /schools?payment_id=N&org=1
   const [returnPaymentId] = useState<number | null>(() => {
@@ -155,6 +157,23 @@ export function SchoolsLanding({ onLogin, authed: authedProp, onOpenApp }: Props
     const next = tiers.find((t) => seats < t.seats);
     return next ? { seats: next.seats, need: next.seats - seats, pct: next.pct + q.per } : null;
   }, [pricing, seats, q.per]);
+
+  // Экономика школы: сколько она заработает, продавая AI-практику ученикам.
+  // Считаем от того же пакета, что выбран в калькуляторе выше.
+  const biz = useMemo(() => {
+    const costPerSeatMonth = q.perSeat;                 // во что обходится место
+    const marginPerSeat = studentPrice - costPerSeatMonth;
+    const profitMonth = marginPerSeat * seats;
+    const profitTotal = profitMonth * months;
+    const marginPct = studentPrice > 0
+      ? Math.round((marginPerSeat / studentPrice) * 100)
+      : 0;
+    // Сколько учеников должны согласиться на доплату, чтобы отбить весь пакет.
+    const breakEven = studentPrice > 0
+      ? Math.min(seats, Math.ceil(q.total / (studentPrice * months)))
+      : seats;
+    return { costPerSeatMonth, marginPerSeat, profitMonth, profitTotal, marginPct, breakEven };
+  }, [q.perSeat, q.total, studentPrice, seats, months]);
 
   // Класс на body — как на основном лендинге: он задаёт фон страницы
   // (в тёмной теме иначе останется фон приложения).
@@ -713,6 +732,158 @@ export function SchoolsLanding({ onLogin, authed: authedProp, onOpenApp }: Props
               </p>
             </div>
           )}
+        </div>
+      </section>
+
+      {/* ─── Экономика: как школа зарабатывает на AI-практике ────────── */}
+      <section className="lp-section sch-money" id="money">
+        <div className="lp-container">
+          <span className="sch-money__eyebrow">Экономика для школы</span>
+          <h2 className="lp-h2">Это не расход, а новая статья дохода</h2>
+          <p className="lp-section__sub" style={{ maxWidth: 720 }}>
+            Школы не дарят AI-практику — они её продают. Это платная опция к
+            абонементу, за которую родители платят охотно: ребёнок наконец
+            говорит дома, а не только на уроке раз в неделю.
+          </p>
+
+          <div className="sch-money__calc">
+            <div className="sch-money__controls">
+              <div className="sch-field">
+                <div className="sch-seats__top">
+                  <span className="sch-field__label">
+                    Доплата с ученика в месяц
+                  </span>
+                  <input
+                    type="number"
+                    className="sch-seats__input"
+                    min={0}
+                    max={10000}
+                    step={50}
+                    value={studentPrice}
+                    onChange={(e) => setStudentPrice(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                    aria-label="Доплата с ученика в месяц"
+                  />
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={3000}
+                  step={50}
+                  value={Math.min(studentPrice, 3000)}
+                  onChange={(e) => setStudentPrice(parseInt(e.target.value, 10))}
+                  className="sch-range"
+                />
+                <div className="sch-presets">
+                  {[500, 750, 1000, 1500, 2000].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={`sch-preset ${studentPrice === n ? "is-active" : ""}`}
+                      onClick={() => setStudentPrice(n)}
+                    >
+                      {fmt(n)} ₽
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="sch-money__rows">
+                <div className="sch-money__row">
+                  <span>Вам обходится место</span>
+                  <b>{fmt(biz.costPerSeatMonth)} ₽ / мес</b>
+                </div>
+                <div className="sch-money__row">
+                  <span>Берёте с ученика</span>
+                  <b>{fmt(studentPrice)} ₽ / мес</b>
+                </div>
+                <div className="sch-money__row sch-money__row--accent">
+                  <span>Ваша маржа с ученика</span>
+                  <b>
+                    {biz.marginPerSeat >= 0 ? "+" : ""}{fmt(biz.marginPerSeat)} ₽
+                    {biz.marginPct > 0 && ` · ${biz.marginPct}%`}
+                  </b>
+                </div>
+              </div>
+            </div>
+
+            <div className="sch-money__result">
+              <span className="sch-money__result-label">
+                Заработок школы за {months} мес. при {seats} учениках
+              </span>
+              <div className="sch-money__big">
+                {biz.profitTotal >= 0 ? "+" : ""}{fmt(biz.profitTotal)} ₽
+              </div>
+              <div className="sch-money__sub">
+                это {biz.profitMonth >= 0 ? "+" : ""}{fmt(biz.profitMonth)} ₽ каждый месяц,
+                сверх всех расходов на сервис
+              </div>
+
+              <div className="sch-money__payback">
+                <span className="sch-money__payback-num">{biz.breakEven}</span>
+                <span>
+                  {plural(biz.breakEven, "ученик", "ученика", "учеников")} из {seats}
+                  {" "}достаточно, чтобы окупить весь пакет. Остальные —
+                  чистая прибыль школы.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="sch-money__ways">
+            <div className="sch-way">
+              <span className="sch-way__num">1</span>
+              <div>
+                <div className="sch-way__title">Отдельная опция к абонементу</div>
+                <div className="sch-way__body">
+                  «Домашняя AI-практика — {fmt(studentPrice)} ₽/мес». Самый простой
+                  путь: ничего не меняете в тарифах, просто предлагаете
+                  дополнение при продлении.
+                </div>
+              </div>
+            </div>
+            <div className="sch-way">
+              <span className="sch-way__num">2</span>
+              <div>
+                <div className="sch-way__title">Премиум-тариф с AI внутри</div>
+                <div className="sch-way__body">
+                  Поднимаете цену пакета и делаете AI-практику его отличием.
+                  У родителя появляется понятная причина взять тариф дороже,
+                  а у вас — аргумент, которого нет у соседней школы.
+                </div>
+              </div>
+            </div>
+            <div className="sch-way">
+              <span className="sch-way__num">3</span>
+              <div>
+                <div className="sch-way__title">Не поднимать цену вообще</div>
+                <div className="sch-way__body">
+                  Тогда сервис окупается удержанием. Ученик, который занимается
+                  дома и видит свой прогресс, уходит заметно реже — а один
+                  сохранённый абонемент обычно дороже, чем места на всю группу.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="sch-money__note">
+            Считайте сами: место обходится вам в <b>{fmt(biz.costPerSeatMonth)} ₽</b> в
+            месяц — это дешевле одного индивидуального занятия. Всё, что вы берёте
+            с ученика сверх этой суммы, остаётся школе.
+          </div>
+
+          <div className="sch-money__cta">
+            <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onConnect}>
+              Подключить школу
+            </button>
+            <button
+              type="button"
+              className="lp-btn lp-btn--ghost lp-btn--lg"
+              onClick={() => void startTrial()}
+              disabled={trialBusy}
+            >
+              {trialBusy ? "Создаём доступ…" : "Сначала попробовать бесплатно"}
+            </button>
+          </div>
         </div>
       </section>
 
