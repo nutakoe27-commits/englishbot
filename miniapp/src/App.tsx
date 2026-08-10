@@ -78,6 +78,8 @@ interface TranslateTarget {
   context: string;
   x: number;
   y: number;
+  /** Верх слова — чтобы попап раскрылся вверх, если снизу нет места. */
+  anchorTop: number;
 }
 
 /** Рендер word-diff (см. wordDiff.ts) в JSX. del — было у юзера и убрали,
@@ -230,6 +232,7 @@ export default function App({ onExit }: AppProps = {}) {
         context,
         x: rect.left,
         y: rect.bottom + 6,
+        anchorTop: rect.top,
       });
     },
     [],
@@ -1485,6 +1488,7 @@ export default function App({ onExit }: AppProps = {}) {
           context={translateTarget.context}
           x={translateTarget.x}
           y={translateTarget.y}
+          anchorTop={translateTarget.anchorTop}
           onClose={() => setTranslateTarget(null)}
         />
       )}

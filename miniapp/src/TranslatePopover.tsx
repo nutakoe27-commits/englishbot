@@ -1,12 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 interface TranslatePopoverProps {
   apiBase: string;
   initData: string;
   word: string;
   context: string;
+  /** Левый край слова. */
   x: number;
+  /** Низ слова — попап по умолчанию раскрывается отсюда вниз. */
   y: number;
+  /** Верх слова. Нужен, чтобы у нижних строк раскрыться ВВЕРХ. */
+  anchorTop?: number;
   onClose: () => void;
 }
 
@@ -30,6 +35,7 @@ export function TranslatePopover({
   context,
   x,
   y,
+  anchorTop,
   onClose,
 }: TranslatePopoverProps) {
   const [state, setState] = useState<State>({ kind: "loading" });
@@ -127,16 +133,50 @@ export function TranslatePopover({
     };
   }, [onClose]);
 
-  // Клампим popover в окно: не даём вылезти за правый край.
+  // Позиция: по горизонтали клампим в окно, по вертикали — раскрываемся вниз,
+  // а если снизу не помещаемся (последние строки транскрипта, над нижней
+  // навигацией) — переворачиваемся вверх. Без этого кнопка «+ В словарь»
+  // уезжала за экран и слово нельзя было добавить.
   const POPOVER_W = 220;
-  const left = Math.max(8, Math.min(x, window.innerWidth - POPOVER_W - 8));
-  const top = Math.max(8, y);
+  const GAP = 6;
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
-  return (
+  useLayoutEffect(() => {
+    const el = popoverRef.current;
+    if (!el) return;
+    const h = el.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    // Нижняя навигация перекрывает попап — резервируем её высоту.
+    const nav = document.querySelector(".bnav");
+    const bottomReserve = (nav ? nav.getBoundingClientRect().height : 0) + 8;
+
+    const left = Math.max(8, Math.min(x, vw - POPOVER_W - 8));
+    const spaceBelow = vh - bottomReserve - y;
+    let top: number;
+    if (spaceBelow >= h) {
+      top = y;                                   // помещается снизу
+    } else if (anchorTop !== undefined && anchorTop - h - GAP >= 8) {
+      top = anchorTop - h - GAP;                 // переворачиваемся вверх
+    } else {
+      // Не помещается ни там, ни там — прижимаем к низу видимой области.
+      top = Math.max(8, vh - bottomReserve - h);
+    }
+    setPos({ left, top });
+    // Пересчитываем и когда пришёл перевод: высота попапа меняется.
+  }, [x, y, anchorTop, state.kind]);
+
+  return createPortal(
     <div
       ref={popoverRef}
       className="translate-popover"
-      style={{ left, top, maxWidth: POPOVER_W }}
+      style={{
+        left: pos?.left ?? x,
+        top: pos?.top ?? y,
+        maxWidth: POPOVER_W,
+        // До замера прячем, чтобы не мигнуть в неправильной позиции.
+        visibility: pos ? "visible" : "hidden",
+      }}
       role="dialog"
       aria-label={`Перевод слова ${word}`}
     >
@@ -170,6 +210,7 @@ export function TranslatePopover({
           </button>
         </>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }

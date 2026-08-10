@@ -16,6 +16,8 @@ interface TranslateTarget {
   context: string;
   x: number;
   y: number;
+  /** Верх слова — чтобы попап мог раскрыться вверх у нижних строк. */
+  anchorTop: number;
 }
 
 // Контекст для перевода — окружающее предложение (по точке/!/?).
@@ -61,6 +63,7 @@ export function Transcript({ apiBase, text, initiallyVisible = false }: Props) {
       context: findSentence(text, wordIndex),
       x: rect.left,
       y: rect.bottom + 6,
+      anchorTop: rect.top,
     });
   };
 
@@ -98,6 +101,7 @@ export function Transcript({ apiBase, text, initiallyVisible = false }: Props) {
           context={target.context}
           x={target.x}
           y={target.y}
+          anchorTop={target.anchorTop}
           onClose={() => setTarget(null)}
         />
       )}
