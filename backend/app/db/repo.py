@@ -982,10 +982,62 @@ class Repo:
         row = res.first()
         return (row[0], row[1]) if row is not None else None
 
-    async def org_students_stats(self, org_id: int) -> list[dict]:
-        """Статистика учеников школы для кабинета учителя: минуты по режимам
-        и очки за текущий МСК-месяц + стрик/последняя активность из users.
-        Один агрегатный запрос по sessions, без per-user циклов."""
+    # Ученик считается «спящим», если не занимался столько дней.
+    ORG_ATTENTION_DAYS = 7
+
+    def org_period_bounds(
+        self, days: Optional[int],
+    ) -> tuple[datetime, datetime, datetime, datetime]:
+        """Границы текущего и предыдущего окна в наивном UTC.
+
+        days=None — календарный МСК-месяц (как было). Иначе — последние N
+        дней. Предыдущее окно той же длины нужно для динамики «стало лучше
+        или хуже», без неё сводка ничего не говорит.
+        """
+        if days:
+            end = utcnow()
+            start = end - timedelta(days=int(days))
+            return start, end, start - timedelta(days=int(days)), start
+        first, nxt = self._month_bounds_utc()
+        length = nxt - first
+        return first, nxt, first - length, first
+
+    async def _org_sessions_agg(
+        self, ids: list[int], start: datetime, end: datetime,
+    ) -> dict[int, tuple[int, int, int]]:
+        """{user_id: (сек. говорения, сек. слушания, уроков грамматики)}."""
+        if not ids:
+            return {}
+        speak = func.sum(
+            case((SessionRow.mode.in_(("voice", "chat")), SessionRow.used_seconds), else_=0)
+        )
+        listen = func.sum(
+            case((SessionRow.mode == "listening", SessionRow.used_seconds), else_=0)
+        )
+        gram = func.sum(case((SessionRow.mode == "grammar", 1), else_=0))
+        agg = await self.s.execute(
+            select(SessionRow.user_id, speak, listen, gram)
+            .where(
+                SessionRow.user_id.in_(ids),
+                SessionRow.started_at >= start,
+                SessionRow.started_at < end,
+            )
+            .group_by(SessionRow.user_id)
+        )
+        return {
+            int(uid): (int(sp or 0), int(li or 0), int(gr or 0))
+            for uid, sp, li, gr in agg.all()
+        }
+
+    async def org_students_stats(
+        self, org_id: int, days: Optional[int] = None,
+    ) -> list[dict]:
+        """Статистика учеников школы за выбранный период.
+
+        days=None — календарный месяц; 7/30 — последние N дней. Месячная
+        статистика в первых числах показывает нули у всех, поэтому кабинет
+        по умолчанию спрашивает неделю.
+        """
         from .models import OrgMember
         from ..points import compute_points
         # 1) Все ученики школы (включая отключённых — с флагом active).
@@ -999,31 +1051,22 @@ class Repo:
         if not members:
             return []
         ids = [u.id for _, u in members]
-        # 2) Агрегат сессий за месяц одним запросом.
-        first_utc, nxt_utc = self._month_bounds_utc()
-        speak = func.sum(
-            case((SessionRow.mode.in_(("voice", "chat")), SessionRow.used_seconds), else_=0)
-        )
-        listen = func.sum(
-            case((SessionRow.mode == "listening", SessionRow.used_seconds), else_=0)
-        )
-        gram = func.sum(case((SessionRow.mode == "grammar", 1), else_=0))
-        agg = await self.s.execute(
-            select(SessionRow.user_id, speak, listen, gram)
-            .where(
-                SessionRow.user_id.in_(ids),
-                SessionRow.started_at >= first_utc,
-                SessionRow.started_at < nxt_utc,
-            )
-            .group_by(SessionRow.user_id)
-        )
-        by_user = {
-            int(uid): (int(sp or 0), int(li or 0), int(gr or 0))
-            for uid, sp, li, gr in agg.all()
-        }
+        start, end, _ps, _pe = self.org_period_bounds(days)
+        by_user = await self._org_sessions_agg(ids, start, end)
+        today = msk_today()
         out = []
         for m, u in members:
             sp, li, gr = by_user.get(int(u.id), (0, 0, 0))
+            last = u.last_practice_date
+            days_since = (today - last).days if last else None
+            # Классификацию делаем на сервере: фронт не должен считать даты
+            # сам — он не знает про МСК и «сегодня» устройства может врать.
+            if last is None:
+                status = "never"
+            elif days_since >= self.ORG_ATTENTION_DAYS:
+                status = "attention"
+            else:
+                status = "ok"
             out.append({
                 "user_id": u.id,
                 "first_name": u.first_name,
@@ -1033,11 +1076,65 @@ class Repo:
                 "speaking_min": sp // 60,
                 "listening_min": li // 60,
                 "grammar_lessons": gr,
+                # Суммарная практика за период — главная метрика в списке.
+                "practice_min": (sp + li) // 60,
                 "points_month": compute_points(sp, li, gr),
                 "streak_days": int(u.streak_days or 0),
-                "last_practice_date": u.last_practice_date,
+                "last_practice_date": last,
+                "days_since_practice": days_since,
+                "status": status,
             })
         return out
+
+    async def org_summary(self, org_id: int, days: Optional[int] = None) -> dict:
+        """Сводка по школе за период + сравнение с предыдущим таким же
+        периодом. Без динамики цифры не говорят, стало лучше или хуже."""
+        from .models import OrgMember
+        res = await self.s.execute(
+            select(OrgMember, User)
+            .join(User, User.id == OrgMember.user_id)
+            .where(
+                OrgMember.org_id == org_id,
+                OrgMember.role == "student",
+                OrgMember.active.is_(True),
+            )
+        )
+        members = res.all()
+        ids = [int(u.id) for _m, u in members]
+        if not ids:
+            return {
+                "students_total": 0, "active_students": 0, "active_students_prev": 0,
+                "practice_min": 0, "practice_min_prev": 0,
+                "need_attention": 0, "never_started": 0,
+            }
+        start, end, prev_start, prev_end = self.org_period_bounds(days)
+        cur = await self._org_sessions_agg(ids, start, end)
+        prev = await self._org_sessions_agg(ids, prev_start, prev_end)
+
+        def totals(agg: dict[int, tuple[int, int, int]]) -> tuple[int, int]:
+            minutes = sum((sp + li) for sp, li, _g in agg.values()) // 60
+            active = sum(1 for sp, li, g in agg.values() if (sp + li + g) > 0)
+            return minutes, active
+
+        cur_min, cur_active = totals(cur)
+        prev_min, prev_active = totals(prev)
+
+        today = msk_today()
+        attention = never = 0
+        for _m, u in members:
+            if u.last_practice_date is None:
+                never += 1
+            elif (today - u.last_practice_date).days >= self.ORG_ATTENTION_DAYS:
+                attention += 1
+        return {
+            "students_total": len(ids),
+            "active_students": cur_active,
+            "active_students_prev": prev_active,
+            "practice_min": cur_min,
+            "practice_min_prev": prev_min,
+            "need_attention": attention,
+            "never_started": never,
+        }
 
     # ─── веб-оплата (PR-8: ЮKassa) ─────────────────────────────────────
     async def create_pending_payment(

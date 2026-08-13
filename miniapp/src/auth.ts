@@ -524,9 +524,31 @@ export interface OrgStudentRow {
   speaking_min: number;
   listening_min: number;
   grammar_lessons: number;
+  /** Суммарная практика за период — главная метрика в списке. */
+  practice_min: number;
   points_month: number;
   streak_days: number;
   last_practice_date: string | null;
+  /** Дней с последнего занятия; null — не начинал вовсе. */
+  days_since_practice: number | null;
+  /** Классификация с сервера: ok | attention (7+ дней) | never. */
+  status: "ok" | "attention" | "never";
+}
+
+export interface OrgSummary {
+  students_total: number;
+  active_students: number;
+  active_students_prev: number;
+  practice_min: number;
+  practice_min_prev: number;
+  need_attention: number;
+  never_started: number;
+}
+
+export interface OrgPeriod {
+  key: string;
+  label: string;
+  options: { key: string; label: string }[];
 }
 
 export interface OrgCabinet {
@@ -544,6 +566,8 @@ export interface OrgCabinet {
     teacher_link: string;
     teacher_link_web: string;
   };
+  period: OrgPeriod;
+  summary: OrgSummary;
   students: OrgStudentRow[];
 }
 
@@ -579,9 +603,12 @@ export async function setOrgStudentActive(
   } catch { return false; }
 }
 
-export async function fetchOrgCabinet(): Promise<OrgCabinet | null> {
+export async function fetchOrgCabinet(period = "7"): Promise<OrgCabinet | null> {
   try {
-    const res = await fetch(`${API_BASE}/api/org/cabinet`, { headers: _authHeaders() });
+    const res = await fetch(
+      `${API_BASE}/api/org/cabinet?period=${encodeURIComponent(period)}`,
+      { headers: _authHeaders() },
+    );
     if (!res.ok) return null;
     return (await res.json()) as OrgCabinet;
   } catch { return null; }

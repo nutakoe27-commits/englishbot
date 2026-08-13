@@ -3906,31 +3906,174 @@ button {
 }
 .ps-footer .btn { flex: 1; }
 
-/* ─── Кабинет школы: ссылки, продление, докупка мест ────────────────── */
+/* ─── Кабинет школы ───────────────────────────────────────────────────
+   Порядок экрана: сводка → кто отстаёт → ученики → служебное.
+   Цвета берём из DS-токенов; --bg-0 не используем, он не резолвится. */
+
+.cab-head { display: flex; flex-direction: column; gap: 5px; }
+.cab-head__name { font-size: 17px; }
+.cab-head__sub { font-size: 13px; opacity: 0.85; line-height: 1.5; }
 .cab-trial {
   display: inline-block; margin-left: 8px; padding: 2px 8px;
   border-radius: 999px; background: var(--warn-tint); color: var(--text);
   font-size: 11px; font-weight: 700; vertical-align: middle;
 }
-.cab-links { display: flex; flex-direction: column; gap: 12px; }
-.cab-links__row { display: flex; flex-direction: column; gap: 6px; }
-.cab-links__label { font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
-.cab-links__btns { display: flex; gap: 8px; }
 
-.cab-bill {
+/* Переключатель периода */
+.cab-periods { display: flex; gap: 6px; }
+.cab-period {
+  flex: 1; padding: 9px 6px;
+  border-radius: 10px;
+  border: 1.5px solid var(--border-strong);
+  background: transparent; color: var(--text-dim);
+  font-size: 13px; font-weight: 700; font-family: inherit; cursor: pointer;
+}
+.cab-period.is-active {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+
+/* Сводка */
+.cab-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cab-kpis.is-loading { opacity: 0.5; }
+.cab-kpi {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 12px 10px;
+  border-radius: 12px;
   border: 1px solid var(--border-strong);
+  background: var(--bg-1);
+}
+.cab-kpi--warn { border-color: var(--record); background: var(--record-tint); }
+.cab-kpi__value {
+  font-size: 20px; font-weight: 800; color: var(--text); line-height: 1.15;
+  white-space: nowrap;
+}
+.cab-kpi__value i { font-size: 13px; font-weight: 600; font-style: normal; opacity: 0.6; }
+.cab-kpi__label { font-size: 11.5px; color: var(--text-dim); line-height: 1.3; }
+.cab-delta { font-size: 11.5px; font-weight: 700; margin-top: 2px; }
+.cab-delta--up { color: var(--speak); }
+.cab-delta--down { color: var(--record); }
+.cab-delta--flat { color: var(--text-faint); font-weight: 600; }
+
+/* Требуют внимания */
+.cab-attention {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px;
   border-radius: 14px;
+  border: 1.5px solid var(--record);
+  background: var(--record-tint);
+}
+.cab-attention__head { font-size: 14px; font-weight: 800; color: var(--text); }
+.cab-attention__list { display: flex; flex-direction: column; gap: 8px; }
+
+/* Заголовок списка и сортировка */
+.cab-listhead {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.cab-listhead__title { font-size: 14px; font-weight: 800; color: var(--text); }
+.cab-sort { display: flex; gap: 4px; flex-wrap: wrap; }
+.cab-sort__btn {
+  padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: transparent; color: var(--text-dim);
+  font-size: 12px; font-weight: 600; font-family: inherit; cursor: pointer;
+}
+.cab-sort__btn.is-active { background: var(--accent-tint); color: var(--text); border-color: var(--accent); }
+
+/* Строка ученика */
+.cab-list { display: flex; flex-direction: column; gap: 8px; }
+.cab-row {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-1);
+}
+.cab-row.is-open { border-color: var(--accent); }
+.cab-row.is-off { opacity: 0.55; }
+.cab-row__main {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: transparent; border: 0; padding: 0;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.cab-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.cab-dot--ok { background: var(--speak); }
+.cab-dot--attention { background: var(--warn); }
+.cab-dot--never { background: var(--text-faint); }
+.cab-row__name { flex: 1; font-size: 15px; font-weight: 700; color: var(--text); min-width: 0; }
+.cab-row__off {
+  margin-left: 6px; font-size: 11px; font-weight: 600;
+  color: var(--text-dim); text-transform: lowercase;
+}
+.cab-row__metric {
+  font-size: 14px; font-weight: 800; color: var(--text);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.cab-row__bar {
+  height: 4px; border-radius: 3px; margin: 8px 0 6px;
+  background: var(--border);
   overflow: hidden;
 }
+.cab-row__bar span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.cab-row__meta {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  font-size: 12px; color: var(--text-dim);
+}
+.cab-row__meta--warn { color: var(--record); font-weight: 700; }
+
+.cab-row__details {
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid var(--border-strong);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.cab-detail__modes { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-dim); }
+.cab-detail__modes b { color: var(--text); }
+.cab-detail__level { font-size: 13px; color: var(--text-dim); }
+.cab-detail__level b { color: var(--text); }
+.cab-detail__mistakes { display: flex; flex-direction: column; gap: 6px; }
+.cab-detail__mistakes-title { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.cab-mistake { font-size: 13px; line-height: 1.5; color: var(--text); }
+.cab-mistake s { opacity: 0.6; }
+.cab-mistake__cat {
+  margin-left: 6px; padding: 1px 6px; border-radius: 6px;
+  background: var(--accent-tint); color: var(--text-dim); font-size: 10.5px;
+}
+
+/* Пустое состояние */
+.cab-empty { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.cab-empty b { font-size: 15px; }
+.cab-empty p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--text-dim); }
+
+/* Служебный блок */
+.cab-manage { border: 1px solid var(--border-strong); border-radius: 14px; overflow: hidden; }
+.cab-manage__toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; padding: 14px 16px;
+  background: var(--bg-1); border: 0;
+  color: var(--text); font-size: 14px; font-weight: 700;
+  font-family: inherit; cursor: pointer;
+}
+.cab-manage__chev { transition: transform 0.18s ease; }
+.cab-manage__chev.is-open { transform: rotate(180deg); }
+.cab-manage__body {
+  padding: 16px; display: flex; flex-direction: column; gap: 18px;
+  border-top: 1px solid var(--border-strong);
+}
+
+.cab-links { display: flex; flex-direction: column; gap: 14px; }
+.cab-links__row { display: flex; flex-direction: column; gap: 7px; }
+.cab-links__label { font-size: 12.5px; font-weight: 600; color: var(--text-dim); line-height: 1.45; }
+.cab-links__btns { display: flex; gap: 8px; }
+
+.cab-bill { border: 1px solid var(--border-strong); border-radius: 12px; overflow: hidden; }
 .cab-bill__tabs { display: flex; }
 .cab-bill__tab {
-  flex: 1; padding: 12px 10px;
-  background: var(--bg-1); border: 0; border-bottom: 1px solid var(--border-strong);
-  color: var(--text); font-size: 13.5px; font-weight: 700;
+  flex: 1; padding: 11px 8px;
+  background: transparent; border: 0; border-bottom: 1px solid var(--border-strong);
+  color: var(--text); font-size: 13px; font-weight: 700;
   font-family: inherit; cursor: pointer;
 }
 .cab-bill__tab.is-active { background: var(--accent); color: #fff; border-bottom-color: var(--accent); }
-.cab-bill__body { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.cab-bill__body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .cab-bill__field { display: flex; flex-direction: column; gap: 7px; }
 .cab-bill__label { font-size: 13px; font-weight: 600; color: var(--text-dim); }
 .cab-bill__months { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -3942,9 +4085,9 @@ button {
 .cab-bill__total b { font-size: 22px; }
 .cab-bill__total span { font-size: 12.5px; color: var(--text-dim); }
 
-/* Кабинет школы на узких экранах */
 @media (max-width: 420px) {
-  .cab-bill__tab { font-size: 12.5px; padding: 11px 6px; }
-  .cab-links__btns { gap: 6px; }
-  .cab-bill__total b { font-size: 20px; }
+  .cab-kpi__value { font-size: 18px; }
+  .cab-kpi__label { font-size: 11px; }
+  .cab-bill__tab { font-size: 12.5px; }
+  .cab-sort__btn { font-size: 11.5px; padding: 5px 8px; }
 }

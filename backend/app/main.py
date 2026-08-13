@@ -713,11 +713,22 @@ def _cabinet_students(rows: list[dict]) -> list[dict]:
     ]
 
 
+# Периоды кабинета: неделя по умолчанию — месячная статистика в первых
+# числах показывает нули у всех и выглядит как «сервисом не пользуются».
+_ORG_PERIODS: dict[str, dict] = {
+    "7": {"days": 7, "label": "7 дней"},
+    "30": {"days": 30, "label": "30 дней"},
+    "month": {"days": None, "label": "Этот месяц"},
+}
+
+
 @app.get("/api/org/cabinet", tags=["Org"])
 async def org_cabinet(
-    init_data: str = "", authorization: Optional[str] = Header(None),
+    init_data: str = "",
+    period: str = "7",
+    authorization: Optional[str] = Header(None),
 ) -> dict:
-    """Кабинет школы: сводка + статистика учеников за текущий месяц."""
+    """Кабинет школы: сводка с динамикой + статистика учеников за период."""
     from fastapi import HTTPException, status
     from .db import Repo
     if not settings.DATABASE_URL:
@@ -725,6 +736,8 @@ async def org_cabinet(
     # Инвайт-ссылки — чтобы школа рассылала приглашения сама, без владельца.
     from .admin import _org_invite_link, _org_invite_link_web
     from .db.repo import utcnow as _now
+    period_key = period if period in _ORG_PERIODS else "7"
+    period_days = _ORG_PERIODS[period_key]["days"]
     async with db_session() as session:
         repo = Repo(session)
         _user, org = await _resolve_org_staff(
@@ -733,7 +746,8 @@ async def org_cabinet(
         # Школам, заведённым до появления учительских ссылок, код досоздаётся.
         teacher_code = await repo.ensure_teacher_code(org)
         seats_used = await repo.org_seats_used(org.id)
-        students = await repo.org_students_stats(org.id)
+        students = await repo.org_students_stats(org.id, days=period_days)
+        summary = await repo.org_summary(org.id, days=period_days)
         await session.commit()
     days_left = (
         max(0, (org.valid_until - _now()).days) if org.valid_until else 0
@@ -753,6 +767,14 @@ async def org_cabinet(
             "teacher_link": _org_invite_link(teacher_code),
             "teacher_link_web": _org_invite_link_web(teacher_code),
         },
+        "period": {
+            "key": period_key,
+            "label": _ORG_PERIODS[period_key]["label"],
+            "options": [
+                {"key": k, "label": v["label"]} for k, v in _ORG_PERIODS.items()
+            ],
+        },
+        "summary": summary,
         "students": _cabinet_students(students),
     }
 
