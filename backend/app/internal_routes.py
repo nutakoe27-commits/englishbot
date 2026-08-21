@@ -218,3 +218,144 @@ async def org_join(
         "status": status_str,
         "org_name": getattr(org, "name", None),
     }
+
+
+# ─── Рефералка: /start ref_<code> (миграция 0032) ────────────────────────
+
+class _ReferralJoinIn(BaseModel):
+    code: str
+    tg_id: int
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    username: Optional[str] = None
+    language_code: Optional[str] = None
+
+
+class _ReferralMeIn(BaseModel):
+    tg_id: int
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    username: Optional[str] = None
+    language_code: Optional[str] = None
+
+
+def referral_link(code: str) -> str:
+    return f"https://t.me/{settings.BOT_USERNAME}?start=ref_{code}"
+
+
+def _notify_referrer(res: dict) -> None:
+    """Сказать пригласившему, что ему начислены дни. Fire-and-forget."""
+    import asyncio
+    from .auth import send_bot_message
+    tg_id = res.get("referrer_tg_id")
+    if not tg_id or res.get("status") != "rewarded":
+        return
+    who = (res.get("invited_name") or "").strip() or "Друг"
+    if res.get("invited_username"):
+        who += f" (@{res['invited_username']})"
+    stats = res.get("referrer_stats") or {}
+    text = (
+        f"🎁 По твоей ссылке пришёл <b>{who}</b>!\n\n"
+        f"Тебе начислено <b>+{res.get('days_referrer', 0)} дней</b> полного доступа.\n"
+        f"Всего приглашено: {stats.get('invited_rewarded', 0)} · "
+        f"получено дней: {stats.get('days_earned', 0)}.\n\n"
+        "Приглашай ещё — лимита нет. Своя ссылка: /invite"
+    )
+    try:
+        asyncio.create_task(send_bot_message(int(tg_id), text))
+    except RuntimeError:
+        pass
+
+
+@router.post("/referral/join")
+async def referral_join(
+    body: _ReferralJoinIn,
+    x_bot_secret: Optional[str] = Header(None, alias="X-Bot-Secret"),
+) -> dict:
+    """Бот зовёт после /start ref_<code>.
+
+    Статусы: rewarded | skipped_existing | already_referred | self | invalid.
+    ВАЖНО: если получатель уже был зарегистрирован в боте — дни не получает
+    никто, но факт перехода мы всё равно фиксируем (skipped_existing).
+    """
+    _check_bot_secret(x_bot_secret)
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        res = await repo.apply_referral(
+            code=body.code,
+            tg_id=body.tg_id,
+            username=body.username,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            language_code=body.language_code,
+            days_invited=settings.REFERRAL_DAYS_INVITED,
+            days_referrer=settings.REFERRAL_DAYS_REFERRER,
+        )
+        await session.commit()
+    _notify_referrer(res)
+    return res
+
+
+@router.post("/referral/me")
+async def referral_me(
+    body: _ReferralMeIn,
+    x_bot_secret: Optional[str] = Header(None, alias="X-Bot-Secret"),
+) -> dict:
+    """Личная ссылка юзера + его статистика (команда /invite в боте)."""
+    _check_bot_secret(x_bot_secret)
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await repo.upsert_user(
+            tg_id=body.tg_id,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            username=body.username,
+            language_code=body.language_code,
+        )
+        if user is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
+        code = await repo.ensure_ref_code(user)
+        stats = await repo.referral_stats(int(user.id))
+        await session.commit()
+    return {
+        "code": code,
+        "link": referral_link(code),
+        "days_invited": settings.REFERRAL_DAYS_INVITED,
+        "days_referrer": settings.REFERRAL_DAYS_REFERRER,
+        **stats,
+    }
+
+
+# ─── Аналитические ссылки: /start src_<code> ─────────────────────────────
+
+class _AdLinkHitIn(BaseModel):
+    code: str
+    tg_id: int
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    username: Optional[str] = None
+    language_code: Optional[str] = None
+
+
+@router.post("/adlink/hit")
+async def adlink_hit(
+    body: _AdLinkHitIn,
+    x_bot_secret: Optional[str] = Header(None, alias="X-Bot-Secret"),
+) -> dict:
+    """Бот зовёт после /start src_<code>. Только счётчики, без бонусов."""
+    _check_bot_secret(x_bot_secret)
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        res = await repo.register_ad_link_hit(
+            code=body.code,
+            tg_id=body.tg_id,
+            username=body.username,
+            first_name=body.first_name,
+            last_name=body.last_name,
+            language_code=body.language_code,
+        )
+        await session.commit()
+    return res

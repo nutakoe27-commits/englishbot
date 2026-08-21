@@ -144,6 +144,28 @@ async def _maintenance_middleware(handler, event: Update, data: dict):
 # Стоит ПОСЛЕ maintenance, чтобы фейковые/служебные апдейты в режиме
 # тех.работ не засчитывались. Best-effort: ошибка БД не блокирует ответ.
 
+def _is_attribution_start(event: Update) -> bool:
+    """True для /start ref_… и /start src_….
+
+    Такие апдейты обрабатывает backend: он сам делает upsert юзера и должен
+    увидеть, был ли человек НОВЫМ. Если middleware успеет проставить
+    bot_activated_at раньше handler'а (а он fire-and-forget, гонка реальна),
+    новичок превратится в «уже зарегистрированного» и бонус сгорит.
+    Поэтому здесь мы такие апдейты пропускаем.
+    """
+    msg = event.message
+    if msg is None or not msg.text:
+        return False
+    text = msg.text.strip()
+    if not text.startswith("/start"):
+        return False
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        return False
+    payload = parts[1].strip().lower()
+    return payload.startswith("ref_") or payload.startswith("src_")
+
+
 @dp.update.outer_middleware()
 async def _bot_activation_middleware(handler, event: Update, data: dict):
     user = None
@@ -152,7 +174,7 @@ async def _bot_activation_middleware(handler, event: Update, data: dict):
     elif event.callback_query and event.callback_query.from_user:
         user = event.callback_query.from_user
 
-    if user is not None and not user.is_bot:
+    if user is not None and not user.is_bot and not _is_attribution_start(event):
         # Fire-and-forget: не ждём ответа БД, чтобы не задерживать handler.
         # Ошибки логируются внутри mark_bot_activated.
         asyncio.create_task(
@@ -180,6 +202,12 @@ def _miniapp_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text="📖 Как заниматься (инструкция)",
                     callback_data="show_guide",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🎁 Пригласить друга (+7 дней)",
+                    callback_data="invite",
                 )
             ],
         ]
@@ -280,6 +308,180 @@ async def _handle_school_deeplink(message: Message, invite_code: str) -> None:
         "⚠️ Код приглашения недействителен или срок доступа школы истёк. "
         "Проверь ссылку у администратора школы.",
     )
+
+
+# ─── Рефералка (миграция 0032) ───────────────────────────────────────────────
+def _invite_keyboard(link: str, days: int = 7) -> InlineKeyboardMarkup:
+    from urllib.parse import quote
+    share_text = (
+        "Занимаюсь английским с AI-репетитором — говорю голосом, слушаю "
+        "подкасты под свой уровень, разбираю ошибки. Заходи по моей ссылке, "
+        f"тебе дадут {days} дней полного доступа 👇"
+    )
+    share_url = (
+        f"https://t.me/share/url?url={quote(link, safe='')}"
+        f"&text={quote(share_text, safe='')}"
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Отправить другу", url=share_url)],
+            [
+                InlineKeyboardButton(
+                    text="🎤 Начать разговор", web_app=WebAppInfo(url=MINIAPP_URL),
+                )
+            ],
+        ]
+    )
+
+
+async def _send_invite_card(message: Message, user) -> None:
+    """Личная реферальная ссылка + статистика приглашений.
+
+    user передаём явно: в callback'е message.from_user — это БОТ (он автор
+    сообщения с кнопкой), а нам нужен тот, кто нажал.
+    """
+    if user is None:
+        return
+    code, data = await _post_backend("/api/internal/referral/me", {
+        "tg_id": user.id,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "username": user.username,
+        "language_code": user.language_code,
+    })
+    if code != 200 or not isinstance(data, dict) or not data.get("link"):
+        await message.answer(
+            "⚠️ Не получилось получить твою ссылку — попробуй ещё раз чуть позже.",
+        )
+        return
+    link = data["link"]
+    d_inv = int(data.get("days_invited") or 7)
+    d_ref = int(data.get("days_referrer") or 7)
+    invited = int(data.get("invited_rewarded") or 0)
+    days_earned = int(data.get("days_earned") or 0)
+
+    stats_line = (
+        f"📊 Приглашено: <b>{invited}</b> · получено дней: <b>{days_earned}</b>"
+        if invited
+        else "📊 Пока никто не пришёл по твоей ссылке — самое время её отправить."
+    )
+    await message.answer(
+        text=(
+            "🎁 <b>Приглашай друзей — занимайся бесплатно</b>\n\n"
+            f"За каждого друга, который придёт по твоей ссылке и <b>впервые</b> "
+            f"запустит бота:\n"
+            f"• другу — <b>{d_inv} дней</b> полного доступа\n"
+            f"• тебе — <b>{d_ref} дней</b> полного доступа\n\n"
+            "Друзей можно приглашать сколько угодно — лимита нет. "
+            "Дни просто складываются к твоей подписке.\n\n"
+            "🔗 <b>Твоя ссылка:</b>\n"
+            f"<code>{link}</code>\n\n"
+            f"{stats_line}\n\n"
+            "⚠️ Дни начисляются только за новых людей. Если человек уже "
+            "пользовался ботом, бонус не получит никто."
+        ),
+        parse_mode="HTML",
+        reply_markup=_invite_keyboard(link, d_inv),
+    )
+
+
+@dp.message(Command("invite"))
+async def cmd_invite(message: Message) -> None:
+    await _send_invite_card(message, message.from_user)
+
+
+@dp.callback_query(lambda c: c.data == "invite")
+async def cb_invite(query: CallbackQuery) -> None:
+    try:
+        await query.answer()
+    except Exception:
+        pass
+    if query.message:
+        await _send_invite_card(query.message, query.from_user)
+
+
+async def _handle_referral_deeplink(message: Message, ref_code: str) -> None:
+    """t.me/<bot>?start=ref_<code>.
+
+    Бонус получают ОБА — но только если приглашённый ещё не был в боте.
+    Если человек уже зарегистрирован, дни не получает никто (требование
+    продукта): иначе ссылку можно было бы гонять по своим же знакомым.
+    """
+    if not message.from_user:
+        return
+    code, data = await _post_backend("/api/internal/referral/join", {
+        "code": ref_code,
+        "tg_id": message.from_user.id,
+        "first_name": message.from_user.first_name,
+        "last_name": message.from_user.last_name,
+        "username": message.from_user.username,
+        "language_code": message.from_user.language_code,
+    })
+    if code != 200 or not isinstance(data, dict):
+        await _send_welcome(message)
+        return
+
+    status_str = data.get("status")
+    if status_str == "rewarded":
+        days = int(data.get("days_invited") or 7)
+        who = (data.get("referrer_name") or "").strip()
+        by = f" от {who}" if who else ""
+        await message.answer(
+            text=(
+                f"🎁 <b>Держи подарок{by}: {days} дней полного доступа!</b>\n\n"
+                "Внутри — AI-репетитор, с которым можно говорить голосом, "
+                "личные подкасты под твой уровень, грамматика и словарь "
+                "с повторением по интервалам.\n\n"
+                "Все режимы уже открыты, лимитов на эти дни нет. "
+                "Жми кнопку и начинай — первое занятие займёт 5 минут.\n\n"
+                "Захочешь позвать своих — команда /invite, тебе тоже "
+                "будут капать дни."
+            ),
+            parse_mode="HTML",
+            reply_markup=_miniapp_keyboard(),
+        )
+        return
+
+    if status_str in ("skipped_existing", "already_referred", "self"):
+        # Молча не оставляем — но и подарок не обещаем.
+        note = {
+            "self": "Это твоя собственная ссылка 🙂 Отправь её друзьям — "
+                    "за каждого нового человека тебе начислят дни.",
+            "already_referred": "Ты уже приходил по приглашению — "
+                                "второй раз бонус не начисляется.",
+        }.get(
+            status_str,
+            "Ты уже пользовался ботом, поэтому приветственные дни "
+            "не начисляются — они только для новых пользователей.",
+        )
+        await message.answer(
+            text=(
+                f"{note}\n\n"
+                "Зато ты можешь приглашать своих: за каждого нового друга — "
+                "дни полного доступа тебе и ему. Команда /invite."
+            ),
+            parse_mode="HTML",
+            reply_markup=_miniapp_keyboard(),
+        )
+        return
+
+    # invalid или что-то неожиданное — обычное приветствие.
+    await _send_welcome(message)
+
+
+async def _handle_adlink_deeplink(message: Message, src_code: str) -> None:
+    """t.me/<bot>?start=src_<code> — ссылка из админки для аналитики.
+    Бонусов не даёт: только считает переход и показывает обычный /start."""
+    if message.from_user:
+        await _post_backend("/api/internal/adlink/hit", {
+            "code": src_code,
+            "tg_id": message.from_user.id,
+            "first_name": message.from_user.first_name,
+            "last_name": message.from_user.last_name,
+            "username": message.from_user.username,
+            "language_code": message.from_user.language_code,
+        })
+    await _send_welcome(message)
 
 
 async def _handle_auth_deeplink(message: Message, token: str) -> None:
@@ -415,6 +617,17 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
         await _handle_school_deeplink(message, payload_raw[len("school_"):])
         return
 
+    # Рефералка: t.me/<bot>?start=ref_<code> — 7 дней приглашённому и 7 дней
+    # пригласившему (только если приглашённый ещё не был в боте).
+    if payload_raw.lower().startswith("ref_"):
+        await _handle_referral_deeplink(message, payload_raw[len("ref_"):])
+        return
+
+    # Аналитика: t.me/<bot>?start=src_<code> — ссылка из админки, бонусов нет.
+    if payload_raw.lower().startswith("src_"):
+        await _handle_adlink_deeplink(message, payload_raw[len("src_"):])
+        return
+
     # Deep-link /start subscribe убран: подписка теперь оформляется внутри
     # мини-аппа через SubscribeScreen → ЮKassa. На случай если старый
     # клиент пришлёт payload=subscribe — просто открываем mini app.
@@ -427,6 +640,11 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
         )
         return
 
+    await _send_welcome(message)
+
+
+async def _send_welcome(message: Message) -> None:
+    """Обычное приветствие /start (вынесено — зовём и из src_-ветки)."""
     user_name = message.from_user.first_name if message.from_user else "друг"
 
     await message.answer(
@@ -557,6 +775,7 @@ async def cmd_help(message: Message) -> None:
         "/start — главное меню и кнопка запуска разговора",
         "/guide — <b>как правильно заниматься</b> (прочитай обязательно)",
         "/profile — твой прогресс и статистика",
+        "/invite — пригласить друга: по 7 дней доступа тебе и ему",
     ]
     lines += [
         "/reminder — настройка ежедневного напоминания",
@@ -1244,6 +1463,7 @@ async def _set_bot_commands() -> None:
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="guide", description="Как заниматься (инструкция)"),
         BotCommand(command="profile", description="Мой профиль"),
+        BotCommand(command="invite", description="Пригласить друга (+7 дней)"),
         BotCommand(command="reminder", description="Напоминания"),
         BotCommand(command="help", description="Справка по командам"),
     ]

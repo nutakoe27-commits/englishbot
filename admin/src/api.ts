@@ -332,7 +332,106 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ user_id, role }),
     }),
+
+  // ─── Рефералка ────────────────────────────────────────
+  referrals: (days = 30, limit = 50) =>
+    request<ReferralsResponse>(
+      `/api/admin/referrals?days=${days}&limit=${limit}`,
+    ),
+  userReferral: (user_id: number) =>
+    request<UserReferral>(`/api/admin/users/${user_id}/referral`),
+
+  // ─── Ссылки для аналитики ─────────────────────────────
+  listAdLinks: () => request<{ items: AdLinkItem[] }>(`/api/admin/adlinks`),
+  createAdLink: (body: { code: string; title: string; note?: string }) =>
+    request<AdLinkItem>(`/api/admin/adlinks`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  toggleAdLink: (id: number, active: boolean) =>
+    request<{ ok: boolean }>(`/api/admin/adlinks/${id}/toggle`, {
+      method: "POST",
+      body: JSON.stringify({ active }),
+    }),
+  deleteAdLink: (id: number) =>
+    request<{ ok: boolean }>(`/api/admin/adlinks/${id}`, { method: "DELETE" }),
+  adLinkHits: (id: number, limit = 100) =>
+    request<{ items: AdLinkHit[]; total: number }>(
+      `/api/admin/adlinks/${id}/hits?limit=${limit}`,
+    ),
 };
+
+// ─── Рефералка (миграция 0032) ───────────────────────────────────────────────
+export interface ReferralOverview {
+  total: number;
+  rewarded: number;
+  skipped_existing: number;
+  days_granted: number;
+  referrers: number;
+  period_days: number;
+  period_total: number;
+  period_rewarded: number;
+}
+export interface ReferralTopItem {
+  user_id: number;
+  total: number;
+  rewarded: number;
+  days_earned: number;
+  tg_id: number | null;
+  username: string | null;
+  first_name: string | null;
+}
+export interface ReferralFeedItem {
+  id: number;
+  status: "rewarded" | "skipped_existing";
+  created_at: string | null;
+  days_invited: number;
+  days_referrer: number;
+  referrer_user_id: number;
+  referrer_username: string | null;
+  referrer_name: string | null;
+  invited_user_id: number;
+  invited_username: string | null;
+  invited_name: string | null;
+}
+export interface ReferralsResponse {
+  overview: ReferralOverview;
+  top: ReferralTopItem[];
+  feed: ReferralFeedItem[];
+  days_invited: number;
+  days_referrer: number;
+}
+export interface UserReferral {
+  code: string;
+  link: string;
+  invited_total: number;
+  invited_rewarded: number;
+  days_earned: number;
+}
+
+export interface AdLinkItem {
+  id: number;
+  code: string;
+  title: string;
+  note: string | null;
+  active: boolean;
+  clicks: number;
+  unique_users: number;
+  new_users: number;
+  payers: number;
+  revenue_rub: number;
+  created_at: string | null;
+  link: string;
+}
+export interface AdLinkHit {
+  user_id: number;
+  is_new_user: boolean;
+  created_at: string | null;
+  tg_id: number | null;
+  username: string | null;
+  first_name: string | null;
+  subscribed: boolean;
+}
 
 export interface OrgItem {
   id: number;

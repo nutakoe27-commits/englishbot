@@ -1067,3 +1067,122 @@ async def user_sessions(
     async with db_session() as s:
         sessions = await Repo(s).user_sessions(user_id, limit)
     return {"sessions": sessions}
+
+
+# ─── Рефералка + аналитические ссылки (миграция 0032) ────────────────────────
+
+def _ref_link(code: str) -> str:
+    return f"https://t.me/{settings.BOT_USERNAME}?start=ref_{code}"
+
+
+def _src_link(code: str) -> str:
+    return f"https://t.me/{settings.BOT_USERNAME}?start=src_{code}"
+
+
+@router.get("/referrals", dependencies=[Depends(require_admin_token)])
+async def admin_referrals(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict:
+    """Сводка по реферальной программе + топ пригласивших + лента."""
+    async with db_session() as s:
+        repo = Repo(s)
+        overview = await repo.referral_overview(days)
+        top = await repo.referral_top(limit=20)
+        feed = await repo.referral_feed(limit=limit)
+    return {
+        "overview": overview,
+        "top": top,
+        "feed": feed,
+        "days_invited": settings.REFERRAL_DAYS_INVITED,
+        "days_referrer": settings.REFERRAL_DAYS_REFERRER,
+    }
+
+
+@router.get("/users/{user_id}/referral", dependencies=[Depends(require_admin_token)])
+async def admin_user_referral(user_id: int) -> dict:
+    """Личная ссылка конкретного юзера + его реферальная статистика."""
+    async with db_session() as s:
+        repo = Repo(s)
+        user = await repo.get_user_by_id(user_id)
+        if user is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
+        code = await repo.ensure_ref_code(user)
+        stats = await repo.referral_stats(user_id)
+        await s.commit()
+    return {"code": code, "link": _ref_link(code), **stats}
+
+
+class _CreateAdLinkIn(BaseModel):
+    code: str
+    title: str
+    note: Optional[str] = None
+
+
+class _ToggleAdLinkIn(BaseModel):
+    active: bool
+
+
+_AD_CODE_OK = set(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+)
+
+
+@router.get("/adlinks", dependencies=[Depends(require_admin_token)])
+async def admin_list_adlinks() -> dict:
+    async with db_session() as s:
+        items = await Repo(s).list_ad_links()
+    return {"items": [{**i, "link": _src_link(i["code"])} for i in items]}
+
+
+@router.post("/adlinks", dependencies=[Depends(require_admin_token)])
+async def admin_create_adlink(body: _CreateAdLinkIn) -> dict:
+    code = (body.code or "").strip()
+    title = (body.title or "").strip()
+    if not code or len(code) > 32 or not set(code) <= _AD_CODE_OK:
+        # Telegram допускает в start-payload только [A-Za-z0-9_-].
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_code")
+    if not title or len(title) > 128:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_title")
+    async with db_session() as s:
+        repo = Repo(s)
+        if await repo.get_ad_link_by_code(code) is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "link_exists")
+        link = await repo.create_ad_link(code=code, title=title, note=body.note)
+        await s.commit()
+        return {
+            "id": int(link.id), "code": link.code, "title": link.title,
+            "note": link.note, "active": True, "clicks": 0,
+            "unique_users": 0, "new_users": 0, "payers": 0, "revenue_rub": 0.0,
+            "created_at": link.created_at.isoformat() if link.created_at else None,
+            "link": _src_link(link.code),
+        }
+
+
+@router.post("/adlinks/{link_id}/toggle", dependencies=[Depends(require_admin_token)])
+async def admin_toggle_adlink(link_id: int, body: _ToggleAdLinkIn) -> dict:
+    async with db_session() as s:
+        ok = await Repo(s).set_ad_link_active(link_id, bool(body.active))
+        if not ok:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "link_not_found")
+        await s.commit()
+    return {"ok": True, "active": bool(body.active)}
+
+
+@router.delete("/adlinks/{link_id}", dependencies=[Depends(require_admin_token)])
+async def admin_delete_adlink(link_id: int) -> dict:
+    async with db_session() as s:
+        ok = await Repo(s).delete_ad_link(link_id)
+        if not ok:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "link_not_found")
+        await s.commit()
+    return {"ok": True}
+
+
+@router.get("/adlinks/{link_id}/hits", dependencies=[Depends(require_admin_token)])
+async def admin_adlink_hits(
+    link_id: int, limit: int = Query(100, ge=1, le=500),
+) -> dict:
+    async with db_session() as s:
+        items = await Repo(s).ad_link_hits(link_id, limit)
+    return {"items": items, "total": len(items)}

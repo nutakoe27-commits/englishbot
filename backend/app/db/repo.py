@@ -12,6 +12,7 @@ from typing import Optional, Sequence
 from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from .models import (
     DailyUsage,
@@ -2768,3 +2769,435 @@ class Repo:
             )
             count += 1
         return count
+
+    # ─── Рефералка и аналитические ссылки (миграция 0032) ───────────────
+    # Правила продукта:
+    #   • приглашённый получает N дней полного доступа;
+    #   • пригласивший получает N дней за КАЖДОГО приглашённого (без лимита);
+    #   • если получатель ссылки УЖЕ зарегистрирован в боте — бонус не
+    #     получает НИКТО (ни он, ни пригласивший);
+    #   • одного человека нельзя «привести» дважды (UNIQUE invited_user_id).
+
+    @staticmethod
+    def _gen_ref_code() -> str:
+        import secrets
+        alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+        return "".join(secrets.choice(alphabet) for _ in range(8))
+
+    async def get_user_by_ref_code(self, code: str) -> Optional[User]:
+        code = (code or "").strip().upper()
+        if not code:
+            return None
+        res = await self.s.execute(
+            select(User).where(User.ref_code == code).limit(1)
+        )
+        return res.scalar_one_or_none()
+
+    async def ensure_ref_code(self, user: User) -> str:
+        """Личный код приглашения. Выдаётся лениво — у старых юзеров NULL."""
+        if user.ref_code:
+            return str(user.ref_code)
+        for _ in range(8):
+            code = self._gen_ref_code()
+            if await self.get_user_by_ref_code(code) is not None:
+                continue
+            res = await self.s.execute(
+                update(User).where(User.id == user.id, User.ref_code.is_(None))
+                .values(ref_code=code, updated_at=utcnow())
+            )
+            if res.rowcount:
+                user.ref_code = code
+                return code
+            # rowcount == 0 → код успели проставить параллельно, читаем из БД
+            # (скалярный select, а не сущность — identity map мог бы отдать
+            # старый объект с ref_code=None).
+            cur = await self.s.execute(
+                select(User.ref_code).where(User.id == user.id)
+            )
+            existing = cur.scalar_one_or_none()
+            if existing:
+                user.ref_code = str(existing)
+                return str(existing)
+        raise RuntimeError("ref_code_generation_failed")
+
+    async def _touch_bot_activated(self, user_id: int) -> None:
+        """Проставить bot_activated_at, если он был NULL (single-write)."""
+        await self.s.execute(
+            update(User)
+            .where(User.id == user_id, User.bot_activated_at.is_(None))
+            .values(bot_activated_at=utcnow(), updated_at=utcnow())
+        )
+
+    async def referral_stats(self, user_id: int) -> dict:
+        """Сколько человек привёл юзер и сколько дней за это получил."""
+        from .models import Referral
+        res = await self.s.execute(
+            select(
+                func.count(Referral.id),
+                func.coalesce(func.sum(Referral.days_referrer), 0),
+                func.sum(case((Referral.status == "rewarded", 1), else_=0)),
+            ).where(Referral.referrer_user_id == user_id)
+        )
+        total, days, rewarded = res.one()
+        return {
+            "invited_total": int(total or 0),
+            "invited_rewarded": int(rewarded or 0),
+            "days_earned": int(days or 0),
+        }
+
+    async def apply_referral(
+        self,
+        *,
+        code: str,
+        tg_id: int,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        language_code: Optional[str] = None,
+        days_invited: int = 7,
+        days_referrer: int = 7,
+    ) -> dict:
+        """Обработать переход по /start ref_<code>.
+
+        Статусы: rewarded | skipped_existing | already_referred | self |
+        invalid. Коммит делает вызывающая сторона.
+        """
+        from .models import Referral
+
+        referrer = await self.get_user_by_ref_code(code)
+        if referrer is None:
+            return {"status": "invalid"}
+
+        # Фиксируем «был ли человек уже в боте» ДО upsert'а — после него
+        # различить новичка и старожила уже нельзя.
+        # Активная/бывшая подписка тоже считается признаком «уже наш юзер»
+        # (аккаунт мог появиться из мини-аппа без записи в чат бота).
+        before = await self.get_user_by_tg_id(tg_id)
+        was_registered = before is not None and (
+            before.bot_activated_at is not None or before.subscription_until is not None
+        )
+
+        invited = await self.upsert_user(
+            tg_id=tg_id, username=username, first_name=first_name,
+            last_name=last_name, language_code=language_code,
+        )
+        if invited is None:
+            return {"status": "invalid"}
+        await self._touch_bot_activated(int(invited.id))
+
+        if int(invited.id) == int(referrer.id):
+            return {"status": "self"}
+
+        row_status = "skipped_existing" if was_registered else "rewarded"
+        d_inv = int(days_invited) if row_status == "rewarded" else 0
+        d_ref = int(days_referrer) if row_status == "rewarded" else 0
+
+        # UNIQUE(invited_user_id): второй раз «привести» человека нельзя.
+        ins = mysql_insert(Referral).values(
+            referrer_user_id=int(referrer.id),
+            invited_user_id=int(invited.id),
+            status=row_status,
+            days_invited=d_inv,
+            days_referrer=d_ref,
+            created_at=utcnow(),
+        ).prefix_with("IGNORE")
+        res = await self.s.execute(ins)
+        if not res.rowcount:
+            return {"status": "already_referred"}
+
+        if row_status == "rewarded":
+            await self.add_subscription_days(
+                user=invited, days=d_inv, plan="referral", amount_rub=0.0,
+                notes=f"referral: приглашён пользователем #{referrer.id}",
+            )
+            await self.add_subscription_days(
+                user=referrer, days=d_ref, plan="referral", amount_rub=0.0,
+                notes=f"referral: пригласил пользователя #{invited.id}",
+            )
+
+        stats = await self.referral_stats(int(referrer.id))
+        return {
+            "status": row_status,
+            "days_invited": d_inv,
+            "days_referrer": d_ref,
+            "referrer_user_id": int(referrer.id),
+            "referrer_tg_id": int(referrer.tg_id) if referrer.tg_id else None,
+            "referrer_name": (referrer.first_name or "").strip() or None,
+            "invited_name": (invited.first_name or "").strip() or None,
+            "invited_username": invited.username,
+            "referrer_stats": stats,
+        }
+
+    # ─── Админка: сводка по рефералке ───────────────────────────────────
+    async def referral_overview(self, days: int = 30) -> dict:
+        from .models import Referral
+        since = utcnow() - timedelta(days=int(days))
+        res = await self.s.execute(
+            select(
+                func.count(Referral.id),
+                func.sum(case((Referral.status == "rewarded", 1), else_=0)),
+                func.sum(case((Referral.status == "skipped_existing", 1), else_=0)),
+                func.coalesce(
+                    func.sum(Referral.days_invited + Referral.days_referrer), 0,
+                ),
+            )
+        )
+        total, rewarded, skipped, days_total = res.one()
+        res2 = await self.s.execute(
+            select(
+                func.count(Referral.id),
+                func.sum(case((Referral.status == "rewarded", 1), else_=0)),
+            ).where(Referral.created_at >= since)
+        )
+        p_total, p_rewarded = res2.one()
+        res3 = await self.s.execute(
+            select(func.count(func.distinct(Referral.referrer_user_id)))
+        )
+        referrers = res3.scalar_one_or_none() or 0
+        return {
+            "total": int(total or 0),
+            "rewarded": int(rewarded or 0),
+            "skipped_existing": int(skipped or 0),
+            "days_granted": int(days_total or 0),
+            "referrers": int(referrers),
+            "period_days": int(days),
+            "period_total": int(p_total or 0),
+            "period_rewarded": int(p_rewarded or 0),
+        }
+
+    async def referral_top(self, limit: int = 20) -> list[dict]:
+        """Топ пригласивших: сколько привёл и сколько дней получил."""
+        from .models import Referral
+        rewarded = func.sum(case((Referral.status == "rewarded", 1), else_=0))
+        res = await self.s.execute(
+            select(
+                Referral.referrer_user_id,
+                func.count(Referral.id).label("total"),
+                rewarded.label("rewarded"),
+                func.coalesce(func.sum(Referral.days_referrer), 0).label("days"),
+                User.tg_id, User.username, User.first_name,
+            )
+            .join(User, User.id == Referral.referrer_user_id, isouter=True)
+            .group_by(
+                Referral.referrer_user_id, User.tg_id, User.username, User.first_name,
+            )
+            .order_by(rewarded.desc(), func.count(Referral.id).desc())
+            .limit(int(limit))
+        )
+        return [
+            {
+                "user_id": int(uid),
+                "total": int(total or 0),
+                "rewarded": int(rew or 0),
+                "days_earned": int(days or 0),
+                "tg_id": int(tg) if tg is not None else None,
+                "username": uname,
+                "first_name": fname,
+            }
+            for uid, total, rew, days, tg, uname, fname in res.all()
+        ]
+
+    async def referral_feed(self, limit: int = 50) -> list[dict]:
+        """Последние приглашения — кто кого привёл и чем закончилось."""
+        from .models import Referral
+        RefUser = aliased(User)
+        InvUser = aliased(User)
+        res = await self.s.execute(
+            select(
+                Referral.id, Referral.status, Referral.created_at,
+                Referral.days_invited, Referral.days_referrer,
+                Referral.referrer_user_id, RefUser.username, RefUser.first_name,
+                Referral.invited_user_id, InvUser.username, InvUser.first_name,
+            )
+            .join(RefUser, RefUser.id == Referral.referrer_user_id, isouter=True)
+            .join(InvUser, InvUser.id == Referral.invited_user_id, isouter=True)
+            .order_by(Referral.id.desc())
+            .limit(int(limit))
+        )
+        return [
+            {
+                "id": int(rid),
+                "status": st,
+                "created_at": created.isoformat() if created else None,
+                "days_invited": int(di or 0),
+                "days_referrer": int(dr or 0),
+                "referrer_user_id": int(ruid),
+                "referrer_username": run,
+                "referrer_name": rfn,
+                "invited_user_id": int(iuid),
+                "invited_username": iun,
+                "invited_name": ifn,
+            }
+            for (rid, st, created, di, dr, ruid, run, rfn, iuid, iun, ifn) in res.all()
+        ]
+
+    # ─── Аналитические ссылки ───────────────────────────────────────────
+    async def get_ad_link_by_code(self, code: str):
+        from .models import AdLink
+        code = (code or "").strip()
+        if not code:
+            return None
+        res = await self.s.execute(
+            select(AdLink).where(func.lower(AdLink.code) == code.lower()).limit(1)
+        )
+        return res.scalar_one_or_none()
+
+    async def create_ad_link(self, *, code: str, title: str, note: Optional[str]):
+        from .models import AdLink
+        link = AdLink(
+            code=code.strip(), title=title.strip(),
+            note=(note or "").strip() or None,
+            active=True, clicks=0, created_at=utcnow(),
+        )
+        self.s.add(link)
+        await self.s.flush()
+        return link
+
+    async def set_ad_link_active(self, link_id: int, active: bool) -> bool:
+        from .models import AdLink
+        res = await self.s.execute(
+            update(AdLink).where(AdLink.id == int(link_id)).values(active=bool(active))
+        )
+        return bool(res.rowcount)
+
+    async def delete_ad_link(self, link_id: int) -> bool:
+        from sqlalchemy import delete as _delete
+        from .models import AdLink, AdLinkHit
+        await self.s.execute(_delete(AdLinkHit).where(AdLinkHit.link_id == int(link_id)))
+        res = await self.s.execute(_delete(AdLink).where(AdLink.id == int(link_id)))
+        return bool(res.rowcount)
+
+    async def register_ad_link_hit(
+        self,
+        *,
+        code: str,
+        tg_id: int,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        language_code: Optional[str] = None,
+    ) -> dict:
+        """Переход по /start src_<code>. Бонусов не даёт, только считает."""
+        from .models import AdLink, AdLinkHit
+        link = await self.get_ad_link_by_code(code)
+        if link is None:
+            return {"status": "invalid"}
+
+        before = await self.get_user_by_tg_id(tg_id)
+        is_new = before is None or before.bot_activated_at is None
+        user = await self.upsert_user(
+            tg_id=tg_id, username=username, first_name=first_name,
+            last_name=last_name, language_code=language_code,
+        )
+        if user is None:
+            return {"status": "invalid"}
+        await self._touch_bot_activated(int(user.id))
+
+        await self.s.execute(
+            update(AdLink).where(AdLink.id == link.id).values(clicks=AdLink.clicks + 1)
+        )
+        ins = mysql_insert(AdLinkHit).values(
+            link_id=int(link.id), user_id=int(user.id),
+            is_new_user=bool(is_new), created_at=utcnow(),
+        ).prefix_with("IGNORE")
+        await self.s.execute(ins)
+        # Атрибуция юзера к первой ссылке, по которой он пришёл.
+        await self.s.execute(
+            update(User)
+            .where(User.id == user.id, User.source_link_id.is_(None))
+            .values(source_link_id=int(link.id), updated_at=utcnow())
+        )
+        return {
+            "status": "ok",
+            "title": link.title,
+            "active": bool(link.active),
+            "is_new_user": bool(is_new),
+        }
+
+    async def list_ad_links(self) -> list[dict]:
+        """Ссылки + статистика: клики, уникальные, новые, платившие."""
+        from .models import AdLink, AdLinkHit
+        res = await self.s.execute(select(AdLink).order_by(AdLink.id.desc()))
+        links = list(res.scalars().all())
+        if not links:
+            return []
+        ids = [int(l.id) for l in links]
+
+        agg = await self.s.execute(
+            select(
+                AdLinkHit.link_id,
+                func.count(AdLinkHit.id),
+                func.sum(case((AdLinkHit.is_new_user.is_(True), 1), else_=0)),
+            )
+            .where(AdLinkHit.link_id.in_(ids))
+            .group_by(AdLinkHit.link_id)
+        )
+        by_link = {
+            int(lid): (int(uniq or 0), int(new or 0))
+            for lid, uniq, new in agg.all()
+        }
+
+        # Платящие и выручка — по атрибуции users.source_link_id.
+        pay = await self.s.execute(
+            select(
+                User.source_link_id,
+                func.count(func.distinct(Payment.user_id)),
+                func.coalesce(func.sum(Payment.amount_rub), 0),
+            )
+            .join(Payment, Payment.user_id == User.id)
+            .where(
+                User.source_link_id.in_(ids),
+                Payment.status == "succeeded",
+                Payment.amount_rub > 0,
+            )
+            .group_by(User.source_link_id)
+        )
+        pay_by_link = {
+            int(lid): (int(cnt or 0), float(amt or 0))
+            for lid, cnt, amt in pay.all()
+        }
+
+        out = []
+        for l in links:
+            uniq, new = by_link.get(int(l.id), (0, 0))
+            payers, revenue = pay_by_link.get(int(l.id), (0, 0.0))
+            out.append({
+                "id": int(l.id),
+                "code": l.code,
+                "title": l.title,
+                "note": l.note,
+                "active": bool(l.active),
+                "clicks": int(l.clicks or 0),
+                "unique_users": uniq,
+                "new_users": new,
+                "payers": payers,
+                "revenue_rub": round(revenue, 2),
+                "created_at": l.created_at.isoformat() if l.created_at else None,
+            })
+        return out
+
+    async def ad_link_hits(self, link_id: int, limit: int = 100) -> list[dict]:
+        from .models import AdLinkHit
+        res = await self.s.execute(
+            select(
+                AdLinkHit.user_id, AdLinkHit.is_new_user, AdLinkHit.created_at,
+                User.tg_id, User.username, User.first_name, User.subscription_until,
+            )
+            .join(User, User.id == AdLinkHit.user_id, isouter=True)
+            .where(AdLinkHit.link_id == int(link_id))
+            .order_by(AdLinkHit.id.desc())
+            .limit(int(limit))
+        )
+        now = utcnow()
+        return [
+            {
+                "user_id": int(uid),
+                "is_new_user": bool(new),
+                "created_at": created.isoformat() if created else None,
+                "tg_id": int(tg) if tg is not None else None,
+                "username": uname,
+                "first_name": fname,
+                "subscribed": bool(sub and sub > now),
+            }
+            for uid, new, created, tg, uname, fname, sub in res.all()
+        ]
