@@ -8,6 +8,10 @@
  * Данные тянем с /api/learner/recent-context — за неделю, не только за
  * последнюю сессию (так стабильнее: LLM-recap иногда не даёт результата
  * на коротких диалогах, и экран всё равно покажет что-то полезное).
+ *
+ * Здесь же — крючки на завтра. Это лучший момент в продукте: человек
+ * только что говорил по-английски и доволен собой. Раньше он не
+ * использовался ни подо что.
  */
 
 import { useEffect, useState } from "react";
@@ -18,6 +22,20 @@ interface RecentContext {
   vocab: { word: string; times_used: number; last_seen_at: string | null }[];
   mistakes: { category: string; bad: string; good: string; occurred_at: string | null }[];
   today_used_seconds: number;
+  /** Приветственные дни полного доступа (миграция 0033). */
+  trial?: { active: boolean; until: string | null; days_left: number };
+}
+
+const BOT_URL = "https://t.me/kmo_ai_english_bot";
+const LINK_TIP_KEY = "et_link_tip_shown";
+
+/** Открыть чат с ботом на нужной команде (внутри Telegram — без выхода). */
+function openBot(command: string): void {
+  const url = `${BOT_URL}?start=${command}`;
+  const tg = (window as unknown as { Telegram?: { WebApp?: { openTelegramLink?: (u: string) => void } } })
+    .Telegram?.WebApp;
+  if (tg?.openTelegramLink) tg.openTelegramLink(url);
+  else window.open(url, "_blank");
 }
 
 interface Props {
@@ -96,6 +114,21 @@ export function SessionSummary({ apiBase, sessionSeconds, onClose }: Props) {
   const sessionMin = Math.max(1, Math.round(sessionSeconds / 60));
   const streak = data?.streak.current ?? 0;
   const best = data?.streak.best ?? 0;
+  const inTelegram = !!WebApp.initData;
+  const trialLeft = data?.trial?.active ? data.trial.days_left : 0;
+
+  // Подсказку про второй способ входа показываем ОДИН раз и только после
+  // занятия: до первой сессии человеку нечего терять, и просьба звучит
+  // как анкета на входе.
+  let showLinkTip = false;
+  if (!inTelegram && data) {
+    try {
+      showLinkTip = localStorage.getItem(LINK_TIP_KEY) !== "1";
+    } catch { showLinkTip = false; }
+  }
+  const dismissLinkTip = () => {
+    try { localStorage.setItem(LINK_TIP_KEY, "1"); } catch { /* приватный режим */ }
+  };
 
   return (
     <div className="summary-overlay">
@@ -176,7 +209,48 @@ export function SessionSummary({ apiBase, sessionSeconds, onClose }: Props) {
           </p>
         )}
 
-        <button className="summary-close" onClick={onClose}>
+        {/* Остаток приветственных дней: к четвёртому дню человек должен
+            уже знать, что именно у него заберут. */}
+        {trialLeft > 0 && (
+          <div className="summary-trial">
+            {trialLeft === 1
+              ? "⏳ Последний день полного доступа. Завтра останется 5 минут разговора в сутки."
+              : `✨ Полный доступ ещё ${trialLeft} ${pluralizeDays(trialLeft)} — успей попробовать подкасты и грамматику.`}
+          </div>
+        )}
+
+        {/* Крючки на завтра. Только в Telegram: обе команды живут в боте. */}
+        {inTelegram && (
+          <div className="summary-actions">
+            <button
+              type="button"
+              className="summary-action"
+              onClick={() => openBot("reminder")}
+            >
+              🔔 Напоминать заниматься
+            </button>
+            <button
+              type="button"
+              className="summary-action"
+              onClick={() => openBot("invite")}
+            >
+              🎁 Позвать друга (+7 дней)
+            </button>
+          </div>
+        )}
+
+        {showLinkTip && (
+          <div className="summary-tip">
+            Привяжи второй способ входа в «Профиле» — Telegram, Яндекс ID
+            или email. Иначе прогресс и словарь потеряются при смене
+            устройства.
+          </div>
+        )}
+
+        <button
+          className="summary-close"
+          onClick={() => { if (showLinkTip) dismissLinkTip(); onClose(); }}
+        >
           Готово
         </button>
       </div>

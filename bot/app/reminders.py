@@ -1468,11 +1468,50 @@ async def _pass_trial7_upsell(bot: Bot, kb: InlineKeyboardMarkup) -> int:
     return sent
 
 
+async def _pass_first_session_guide(bot: Bot, miniapp_url: str) -> int:
+    """Инструкция «как заниматься» — на следующий день после первой сессии.
+
+    Раньше /guide предлагали в приветствии, до первой фразы: человека
+    отправляли читать вместо того, чтобы говорить. После первого занятия
+    те же советы становятся применимыми, а не абстрактными.
+    """
+    rows = await _fetch(
+        "SELECT u.id, u.tg_id, u.first_name "
+        "FROM users u "
+        "JOIN (SELECT user_id, MIN(started_at) AS first_at "
+        "      FROM sessions GROUP BY user_id) s ON s.user_id = u.id "
+        "WHERE u.tg_id IS NOT NULL AND u.is_blocked = 0 "
+        "  AND s.first_at <= UTC_TIMESTAMP() - INTERVAL 12 HOUR "
+        "  AND s.first_at > UTC_TIMESTAMP() - INTERVAL 3 DAY",
+        {},
+    )
+    kb = _reminder_keyboard(miniapp_url)
+    sent = 0
+    for uid, tg_id, first_name in rows:
+        if not await _nudge_once(int(uid), "first_session_guide"):
+            continue
+        msg = (
+            f"{_name(first_name)}, первое занятие позади 👏 Теперь пара вещей, "
+            "которые сильно меняют результат.\n\n"
+            "<b>Не переводи в голове.</b> Я не знаю русского и не жду перевода — "
+            "говори как умеешь, короткими фразами, с ошибками. Пойму и поправлю.\n\n"
+            "<b>Не молчи, подбирая идеальное предложение.</b> Скажи криво — "
+            "я покажу, как сказать правильно. Так запоминается в разы лучше, "
+            "чем из правила.\n\n"
+            "Полная инструкция — /guide, две минуты чтения."
+        )
+        if await _send_nudge(bot, tg_id=int(tg_id), text_msg=msg, kb=kb):
+            sent += 1
+        await asyncio.sleep(0.05)
+    return sent
+
+
 async def run_monetization_passes(bot: Bot, miniapp_url: str) -> None:
     """Один дневной проход по всем поводам. Каждый пас изолирован:
     падение одного не должно ронять остальные."""
     kb = _subscribe_keyboard(miniapp_url)
     passes = (
+        ("first_session_guide", _pass_first_session_guide(bot, miniapp_url)),
         ("trial_ended", _pass_trial_ended(bot, kb)),
         ("streak_milestone", _pass_streak_milestone(bot, kb)),
         ("sub_expiring", _pass_sub_expiring(bot, kb)),

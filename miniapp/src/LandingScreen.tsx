@@ -69,7 +69,6 @@ export function LandingScreen({ onStartTrial, onLogin }: Props) {
       <Screenshots />
       <SocialProof />
       <Pricing onCta={() => handleCta("pricing")} />
-      <Charity />
       <Faq />
       <FinalCta onCta={() => handleCta("final")} />
       <Footer />
@@ -108,11 +107,11 @@ function Hero({ onCta }: { onCta: () => void }) {
             просто исправляет.
           </p>
           <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
-            Попробовать бесплатно
+            Начать бесплатно — 3 дня полного доступа
           </button>
           <p className="lp-hero__note">
-            Без подписки. Отмена в любой момент. Регистрация в один тап
-            через Яндекс ID или email.
+            Первые 3 дня всё открыто без ограничений. Карта не нужна —
+            вход в один тап через Яндекс ID или email.
           </p>
           <div className="lp-hero__proof">
             <span className="lp-hero__proof-dot" aria-hidden />
@@ -294,37 +293,36 @@ function Pricing({ onCta }: { onCta: () => void }) {
       <div className="lp-container">
         <h2 className="lp-h2 lp-h2--center">Стоимость</h2>
         <p className="lp-section__sub">
-          Дешевле одного занятия с репетитором (1 000–1 500 ₽). Оплата
-          картой через ЮKassa. Отмена в любой момент, никаких скрытых
-          списаний.
+          Сначала 3 дня полного доступа бесплатно — платить, только если
+          зайдёт. Дешевле одного занятия с репетитором (1 000–1 500 ₽).
+          Оплата картой через ЮKassa, разовая, без автосписаний.
         </p>
         <div className="lp-plans">
+          <PlanCard
+            title="Пробная неделя"
+            price="199 ₽"
+            period="7 дней"
+            hint="Дешевле чашки кофе. Один раз на аккаунт"
+            onCta={onCta}
+            ctaLabel="Начать с 3 бесплатных дней"
+          />
           <PlanCard
             title="Месячный"
             price="999 ₽"
             period="30 дней"
-            hint="Попробовать сервис"
+            hint="Самый частый выбор"
             onCta={onCta}
-            ctaLabel="Начать бесплатно"
+            ctaLabel="Начать с 3 бесплатных дней"
+            highlighted
           />
           <PlanCard
             title="Годовой"
             price="5 999 ₽"
             oldPrice="11 988 ₽"
             period="365 дней"
-            hint="Самый популярный — выгода 50%"
+            hint="Выгода 50% — для тех, кто уже втянулся"
             onCta={onCta}
-            ctaLabel="Начать бесплатно"
-            highlighted
-          />
-          <PlanCard
-            title="2 года"
-            price="9 999 ₽"
-            oldPrice="23 976 ₽"
-            period="730 дней"
-            hint="Максимальная выгода"
-            onCta={onCta}
-            ctaLabel="Начать бесплатно"
+            ctaLabel="Начать с 3 бесплатных дней"
           />
         </div>
         <p className="lp-offer-link">
@@ -360,25 +358,6 @@ function PlanCard({
   );
 }
 
-/* ─── Charity ────────────────────────────────────────────────────────── */
-function Charity() {
-  return (
-    <section className="lp-section lp-charity">
-      <div className="lp-container">
-        <div className="lp-charity__card">
-          <div className="lp-charity__emoji" aria-hidden>💛</div>
-          <h3 className="lp-charity__title">Нет возможности оплатить?</h3>
-          <p>
-            Это не повод бросать английский. Напиши мне лично:{" "}
-            <a href="https://t.me/NuTak0e" target="_blank" rel="noreferrer">@NuTak0e</a>{" "}
-            — разберёмся и найдём вариант.
-          </p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 /* ─── FAQ ────────────────────────────────────────────────────────────── */
 function Faq() {
   const items: { q: string; a: React.ReactNode }[] = [
@@ -398,8 +377,10 @@ function Faq() {
     },
     {
       q: "Сколько времени занимает в день?",
-      a: <>15 минут в день хватает, чтобы держать привычку. На бесплатном
-        тарифе — 5 минут разговора в день. С подпиской — без лимитов.</>,
+      a: <>15 минут в день хватает, чтобы держать привычку. Первые 3 дня
+        после регистрации ограничений нет вообще. Дальше на бесплатном
+        тарифе остаётся 5 минут разговора в день, с подпиской — без
+        лимитов.</>,
     },
     {
       q: "Как происходит оплата? Это безопасно?",
@@ -416,9 +397,10 @@ function Faq() {
     },
     {
       q: "А если не понравится?",
-      a: <>Каждый день бесплатно — 5 минут разговора, подкаст и урок
-        грамматики. Попробуй без оплаты, а подписку оформляй, только если
-        зайдёт. Разовая оплата, никаких автосписаний.</>,
+      a: <>Первые три дня всё открыто без ограничений — разговор, подкасты,
+        грамматика. Успеешь понять, твоё это или нет, до любой оплаты.
+        Дальше остаются бесплатные 5 минут разговора в день, а подписку
+        берёшь, только если зайдёт. Оплата разовая, автосписаний нет.</>,
     },
   ];
   return (
@@ -445,9 +427,12 @@ function FinalCta({ onCta }: { onCta: () => void }) {
       <div className="lp-container lp-final__inner">
         <h2 className="lp-h2">Хватит молчать.<br />Скажи первую фразу сегодня.</h2>
         <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
-          Попробовать бесплатно
+          Начать бесплатно — 3 дня полного доступа
         </button>
-        <p className="lp-final__note">5 минут разговора в день бесплатно. Отмена в любой момент.</p>
+        <p className="lp-final__note">
+          Без карты и без автосписаний. Дальше — 5 минут разговора в день
+          бесплатно или подписка, если зайдёт.
+        </p>
       </div>
     </section>
   );
@@ -464,6 +449,9 @@ function Footer() {
         </div>
         <div className="lp-footer__links">
           <a href="/schools">Для школ английского</a>
+          <a href="https://t.me/NuTak0e" target="_blank" rel="noreferrer">
+            Нет возможности оплатить?
+          </a>
           <a href="/oferta.html" target="_blank" rel="noreferrer">Публичная оферта</a>
           <a href="https://t.me/kmo_ai" target="_blank" rel="noreferrer">Канал @kmo_ai</a>
           <a href="https://t.me/kmo_ai_english_bot" target="_blank" rel="noreferrer">Telegram-бот</a>

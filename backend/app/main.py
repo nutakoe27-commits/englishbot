@@ -197,6 +197,9 @@ async def learner_recent_context(
       - vocab: [{word, times_used, last_seen_at}, ...] (топ-15 за неделю)
       - mistakes: [{category, bad, good, occurred_at}, ...] (топ-5 за неделю)
       - today_used_seconds: сколько юзер сегодня практиковался
+      - trial: {active, until, days_left} — приветственные дни полного
+        доступа (миграция 0033); экран после занятия показывает остаток,
+        чтобы к четвёртому дню человек уже знал, что теряет
 
     Аутентификация — Bearer JWT (веб) или Telegram initData (Mini App).
     """
@@ -206,6 +209,7 @@ async def learner_recent_context(
             "vocab": [],
             "mistakes": [],
             "today_used_seconds": 0,
+            "trial": {"active": False, "until": None, "days_left": 0},
         }
 
     from .db import Repo
@@ -215,6 +219,13 @@ async def learner_recent_context(
         user = await resolve_user(repo, authorization=authorization, init_data=init_data)
         ctx = await repo.get_learner_context(user.id)
         used_today = await repo.get_used_seconds_today(user.id)
+        trial_until = repo.free_trial_until(user)
+        trial_active = repo.in_free_trial(user)
+        trial_days_left = 0
+        if trial_active and trial_until is not None:
+            from .db.repo import utcnow as _utcnow
+            left = (trial_until - _utcnow()).total_seconds()
+            trial_days_left = max(1, -(-int(left) // 86400))
 
     return {
         "streak": {
@@ -243,6 +254,11 @@ async def learner_recent_context(
             for m in ctx["recent_mistakes"]
         ],
         "today_used_seconds": int(used_today or 0),
+        "trial": {
+            "active": trial_active,
+            "until": trial_until.isoformat() if trial_until else None,
+            "days_left": trial_days_left,
+        },
     }
 
 
