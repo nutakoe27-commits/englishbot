@@ -2772,11 +2772,13 @@ class Repo:
 
     # ─── Рефералка и аналитические ссылки (миграция 0032) ───────────────
     # Правила продукта:
-    #   • приглашённый получает N дней полного доступа;
-    #   • пригласивший получает N дней за КАЖДОГО приглашённого (без лимита);
-    #   • если получатель ссылки УЖЕ зарегистрирован в боте — бонус не
-    #     получает НИКТО (ни он, ни пригласивший);
-    #   • одного человека нельзя «привести» дважды (UNIQUE invited_user_id).
+    #   • дни получает ТОЛЬКО пригласивший — за КАЖДОГО приведённого
+    #     нового человека, без лимита на количество;
+    #   • если получатель ссылки УЖЕ зарегистрирован в боте — дни не
+    #     начисляются никому (иначе ссылку можно гонять по своим же);
+    #   • одного человека нельзя «привести» дважды (UNIQUE invited_user_id);
+    #   • сколько кому начислять — REFERRAL_DAYS_INVITED/_REFERRER в .env,
+    #     нули просто не начисляются.
 
     @staticmethod
     def _gen_ref_code() -> str:
@@ -2906,14 +2908,18 @@ class Repo:
             return {"status": "already_referred"}
 
         if row_status == "rewarded":
-            await self.add_subscription_days(
-                user=invited, days=d_inv, plan="referral", amount_rub=0.0,
-                notes=f"referral: приглашён пользователем #{referrer.id}",
-            )
-            await self.add_subscription_days(
-                user=referrer, days=d_ref, plan="referral", amount_rub=0.0,
-                notes=f"referral: пригласил пользователя #{invited.id}",
-            )
+            # days=0 не начисляем вовсе: add_subscription_days иначе создаст
+            # мусорную строку в payments и перепишет subscription_until.
+            if d_inv > 0:
+                await self.add_subscription_days(
+                    user=invited, days=d_inv, plan="referral", amount_rub=0.0,
+                    notes=f"referral: приглашён пользователем #{referrer.id}",
+                )
+            if d_ref > 0:
+                await self.add_subscription_days(
+                    user=referrer, days=d_ref, plan="referral", amount_rub=0.0,
+                    notes=f"referral: пригласил пользователя #{invited.id}",
+                )
 
         stats = await self.referral_stats(int(referrer.id))
         return {

@@ -311,12 +311,14 @@ async def _handle_school_deeplink(message: Message, invite_code: str) -> None:
 
 
 # ─── Рефералка (миграция 0032) ───────────────────────────────────────────────
-def _invite_keyboard(link: str, days: int = 7) -> InlineKeyboardMarkup:
+def _invite_keyboard(link: str) -> InlineKeyboardMarkup:
     from urllib.parse import quote
+    # Текст уходит ДРУГУ. Ничего ему не обещаем — дни за приглашение
+    # начисляются пригласившему, и обещать другу бонус было бы враньём.
     share_text = (
-        "Занимаюсь английским с AI-репетитором — говорю голосом, слушаю "
-        "подкасты под свой уровень, разбираю ошибки. Заходи по моей ссылке, "
-        f"тебе дадут {days} дней полного доступа 👇"
+        "Занимаюсь английским с AI-репетитором прямо в Telegram: говорю с ним "
+        "голосом, слушаю подкасты под свой уровень, он разбирает мои ошибки. "
+        "Реально затягивает — попробуй 👇"
     )
     share_url = (
         f"https://t.me/share/url?url={quote(link, safe='')}"
@@ -355,7 +357,6 @@ async def _send_invite_card(message: Message, user) -> None:
         )
         return
     link = data["link"]
-    d_inv = int(data.get("days_invited") or 7)
     d_ref = int(data.get("days_referrer") or 7)
     invited = int(data.get("invited_rewarded") or 0)
     days_earned = int(data.get("days_earned") or 0)
@@ -367,21 +368,21 @@ async def _send_invite_card(message: Message, user) -> None:
     )
     await message.answer(
         text=(
-            "🎁 <b>Приглашай друзей — занимайся бесплатно</b>\n\n"
+            "🎁 <b>Зови друзей — занимайся бесплатно</b>\n\n"
             f"За каждого друга, который придёт по твоей ссылке и <b>впервые</b> "
-            f"запустит бота:\n"
-            f"• другу — <b>{d_inv} дней</b> полного доступа\n"
-            f"• тебе — <b>{d_ref} дней</b> полного доступа\n\n"
-            "Друзей можно приглашать сколько угодно — лимита нет. "
-            "Дни просто складываются к твоей подписке.\n\n"
+            f"запустит бота, тебе начисляется <b>{d_ref} дней</b> "
+            "полного доступа.\n\n"
+            "Приглашать можно сколько угодно — лимита нет. Дни просто "
+            "складываются к твоей подписке: если она активна, срок "
+            "сдвигается вперёд, ничего не сгорает.\n\n"
             "🔗 <b>Твоя ссылка:</b>\n"
             f"<code>{link}</code>\n\n"
             f"{stats_line}\n\n"
-            "⚠️ Дни начисляются только за новых людей. Если человек уже "
-            "пользовался ботом, бонус не получит никто."
+            "⚠️ Дни начисляются за <b>новых</b> людей — тех, кто ещё "
+            "не пользовался ботом."
         ),
         parse_mode="HTML",
-        reply_markup=_invite_keyboard(link, d_inv),
+        reply_markup=_invite_keyboard(link),
     )
 
 
@@ -403,9 +404,10 @@ async def cb_invite(query: CallbackQuery) -> None:
 async def _handle_referral_deeplink(message: Message, ref_code: str) -> None:
     """t.me/<bot>?start=ref_<code>.
 
-    Бонус получают ОБА — но только если приглашённый ещё не был в боте.
-    Если человек уже зарегистрирован, дни не получает никто (требование
-    продукта): иначе ссылку можно было бы гонять по своим же знакомым.
+    Схема односторонняя: дни начисляются пригласившему, и только если
+    пришедший — новый человек. Пришедшему ничего не начисляем, поэтому и
+    сообщение ему обычное приветственное: он просто попал в бота по
+    ссылке друга. Никаких обещаний бонуса тут быть не должно.
     """
     if not message.from_user:
         return
@@ -422,54 +424,36 @@ async def _handle_referral_deeplink(message: Message, ref_code: str) -> None:
         return
 
     status_str = data.get("status")
-    if status_str == "rewarded":
-        # Сначала обычное приветствие: человек в боте впервые и без него
-        # не понимает, куда попал. Подарок — вторым сообщением, на нём и
-        # висит кнопка запуска.
-        await _send_welcome(message, with_keyboard=False)
-        days = int(data.get("days_invited") or 7)
-        who = (data.get("referrer_name") or "").strip()
-        by = f" от {who}" if who else ""
+
+    if status_str == "self":
+        d_ref = int(data.get("days_referrer") or 7)
         await message.answer(
             text=(
-                f"🎁 <b>Держи подарок{by}: {days} дней полного доступа!</b>\n\n"
-                "Внутри — AI-репетитор, с которым можно говорить голосом, "
-                "личные подкасты под твой уровень, грамматика и словарь "
-                "с повторением по интервалам.\n\n"
-                "Все режимы уже открыты, лимитов на эти дни нет. "
-                "Жми кнопку и начинай — первое занятие займёт 5 минут.\n\n"
-                "Захочешь позвать своих — команда /invite, тебе тоже "
-                "будут капать дни."
+                "Это твоя собственная ссылка 🙂\n\n"
+                f"Отправь её друзьям — за каждого нового человека тебе "
+                f"начислят <b>{d_ref} дней</b> полного доступа. "
+                "Посмотреть ссылку и статистику — /invite."
             ),
             parse_mode="HTML",
             reply_markup=_miniapp_keyboard(),
         )
         return
 
-    if status_str in ("skipped_existing", "already_referred", "self"):
-        # Молча не оставляем — но и подарок не обещаем.
-        note = {
-            "self": "Это твоя собственная ссылка 🙂 Отправь её друзьям — "
-                    "за каждого нового человека тебе начислят дни.",
-            "already_referred": "Ты уже приходил по приглашению — "
-                                "второй раз бонус не начисляется.",
-        }.get(
-            status_str,
-            "Ты уже пользовался ботом, поэтому приветственные дни "
-            "не начисляются — они только для новых пользователей.",
-        )
+    if status_str in ("skipped_existing", "already_referred"):
+        # Человек уже наш — второй раз пересказывать ему приветствие незачем.
         await message.answer(
             text=(
-                f"{note}\n\n"
-                "Зато ты можешь приглашать своих: за каждого нового друга — "
-                "дни полного доступа тебе и ему. Команда /invite."
+                "С возвращением! 👋 Продолжаем заниматься?\n\n"
+                "Кстати, ты и сам можешь звать друзей: за каждого нового "
+                "человека тебе начисляют дни полного доступа. Команда /invite."
             ),
             parse_mode="HTML",
             reply_markup=_miniapp_keyboard(),
         )
         return
 
-    # invalid или что-то неожиданное — обычное приветствие.
+    # rewarded (пригласившему начислены дни) и любой неожиданный статус —
+    # новичку показываем обычное приветствие.
     await _send_welcome(message)
 
 
@@ -647,13 +631,8 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
     await _send_welcome(message)
 
 
-async def _send_welcome(message: Message, with_keyboard: bool = True) -> None:
-    """Обычное приветствие /start.
-
-    with_keyboard=False — когда следом идёт ещё одно сообщение со своей
-    кнопкой (ветка ref_): две одинаковые клавиатуры подряд выглядят мусорно,
-    а действовать юзер должен по последнему сообщению.
-    """
+async def _send_welcome(message: Message) -> None:
+    """Обычное приветствие /start (вынесено — зовём из веток ref_ и src_)."""
     user_name = message.from_user.first_name if message.from_user else "друг"
 
     await message.answer(
@@ -671,7 +650,7 @@ async def _send_welcome(message: Message, with_keyboard: bool = True) -> None:
             "Когда будешь готов — жми «🎤 Начать разговор»."
         ),
         parse_mode="HTML",
-        reply_markup=_miniapp_keyboard() if with_keyboard else None,
+        reply_markup=_miniapp_keyboard(),
     )
 
 
@@ -784,7 +763,7 @@ async def cmd_help(message: Message) -> None:
         "/start — главное меню и кнопка запуска разговора",
         "/guide — <b>как правильно заниматься</b> (прочитай обязательно)",
         "/profile — твой прогресс и статистика",
-        "/invite — пригласить друга: по 7 дней доступа тебе и ему",
+        "/invite — звать друзей: 7 дней полного доступа за каждого",
     ]
     lines += [
         "/reminder — настройка ежедневного напоминания",
