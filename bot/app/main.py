@@ -423,6 +423,10 @@ async def _handle_referral_deeplink(message: Message, ref_code: str) -> None:
 
     status_str = data.get("status")
     if status_str == "rewarded":
+        # Сначала обычное приветствие: человек в боте впервые и без него
+        # не понимает, куда попал. Подарок — вторым сообщением, на нём и
+        # висит кнопка запуска.
+        await _send_welcome(message, with_keyboard=False)
         days = int(data.get("days_invited") or 7)
         who = (data.get("referrer_name") or "").strip()
         by = f" от {who}" if who else ""
@@ -643,8 +647,13 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
     await _send_welcome(message)
 
 
-async def _send_welcome(message: Message) -> None:
-    """Обычное приветствие /start (вынесено — зовём и из src_-ветки)."""
+async def _send_welcome(message: Message, with_keyboard: bool = True) -> None:
+    """Обычное приветствие /start.
+
+    with_keyboard=False — когда следом идёт ещё одно сообщение со своей
+    кнопкой (ветка ref_): две одинаковые клавиатуры подряд выглядят мусорно,
+    а действовать юзер должен по последнему сообщению.
+    """
     user_name = message.from_user.first_name if message.from_user else "друг"
 
     await message.answer(
@@ -662,7 +671,7 @@ async def _send_welcome(message: Message) -> None:
             "Когда будешь готов — жми «🎤 Начать разговор»."
         ),
         parse_mode="HTML",
-        reply_markup=_miniapp_keyboard(),
+        reply_markup=_miniapp_keyboard() if with_keyboard else None,
     )
 
 
