@@ -148,6 +148,9 @@ export interface UserDetail extends UserBrief {
   achievements_total: number;
   grammar_topics_done?: number;
   grammar_topics_total?: number;
+  /** Приветственные дни полного доступа (миграция 0033). */
+  trial_active?: boolean;
+  trial_until?: string | null;
 }
 
 export interface MaintenanceSettings {

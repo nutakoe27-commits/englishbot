@@ -145,6 +145,19 @@ interface LimitsInfo {
   has_subscription: boolean;
   free_seconds_per_day: number;
   used_seconds_today: number;
+  /** Приветственные дни полного доступа (миграция 0033). */
+  trial_active?: boolean;
+  trial_until?: string | null;
+}
+
+/** Приветственный доступ закончился на днях — значит человек не «не получил»,
+ *  а «потерял». Пейволл должен говорить об этом другими словами. */
+function _trialJustEnded(l: LimitsInfo | null): boolean {
+  if (!l || l.trial_active || !l.trial_until) return false;
+  const until = Date.parse(l.trial_until.endsWith("Z") ? l.trial_until : l.trial_until + "Z");
+  if (isNaN(until)) return false;
+  const ageMs = Date.now() - until;
+  return ageMs > 0 && ageMs < 3 * 24 * 3600 * 1000;
 }
 
 /** mm:ss из количества секунд */
@@ -714,6 +727,9 @@ export default function App({ onExit }: AppProps = {}) {
                   typeof msg.used_seconds_today === "number"
                     ? msg.used_seconds_today
                     : 0,
+                trial_active: !!msg.trial_active,
+                trial_until:
+                  typeof msg.trial_until === "string" ? msg.trial_until : null,
               });
             } else if (msg.type === "limit_reached") {
               // Расходован весь дневной лимит — сервер сейчас закроет сокет (4004)
@@ -728,6 +744,10 @@ export default function App({ onExit }: AppProps = {}) {
                   typeof msg.used_seconds_today === "number"
                     ? msg.used_seconds_today
                     : 600,
+                // Сохраняем то, что уже знали: limit_reached приходит без
+                // триал-полей, а пейволлу нужно решить, какой текст показать.
+                trial_active: false,
+                trial_until: limitsRef.current?.trial_until ?? null,
               });
               setLockMessage("");
               setLockState("limit_reached");
@@ -1465,6 +1485,7 @@ export default function App({ onExit }: AppProps = {}) {
         <LockScreen
           kind={lockState}
           message={lockMessage}
+          trialEnded={_trialJustEnded(limits)}
           botUsername={BOT_USERNAME}
           onOpenSubscribe={() => setSubscribeOpen(true)}
         />

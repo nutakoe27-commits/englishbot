@@ -130,6 +130,11 @@ class UserDetail(UserBrief):
     # Grammar Learn: пройдено тем / всего активных тем в каталоге.
     grammar_topics_done: int = 0
     grammar_topics_total: int = 0
+    # Приветственные дни полного доступа (миграция 0033). has_subscription
+    # в UserBrief остаётся «настоящей» подпиской — триал показываем отдельно,
+    # иначе в поддержке не отличить оплатившего от новичка.
+    trial_active: bool = False
+    trial_until: Optional[str] = None
 
 
 class GrantRequest(BaseModel):
@@ -237,6 +242,11 @@ async def _user_to_detail(repo: Repo, u) -> UserDetail:
         achievements_total=achievements_total,
         grammar_topics_done=grammar_done,
         grammar_topics_total=grammar_total,
+        trial_active=Repo.in_free_trial(u),
+        trial_until=(
+            Repo.free_trial_until(u).isoformat()
+            if Repo.free_trial_until(u) else None
+        ),
     )
 
 

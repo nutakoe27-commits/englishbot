@@ -181,8 +181,10 @@ class Payment(Base):
     plan: Mapped[str] = mapped_column(
         # 'org' — оплата пакета мест школой (B2B), личную подписку не продлевает.
         # 'referral' — бонусные дни за приглашение (миграция 0032).
-        SAEnum("trial3", "monthly", "yearly", "twoyear", "gift", "admin_grant", "manual_pay",
-               "org", "referral", name="payment_plan"),
+        # 'trial7' — платный пробный период 7 дней (миграция 0033).
+        SAEnum("trial3", "trial7", "monthly", "yearly", "twoyear", "gift",
+               "admin_grant", "manual_pay", "org", "referral",
+               name="payment_plan"),
         nullable=False,
     )
     status: Mapped[str] = mapped_column(
@@ -621,4 +623,22 @@ class AdLinkHit(Base):
     link_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     is_new_user: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class UserNudge(Base):
+    """Дедупликация проактивных сообщений юзеру (миграция 0033).
+
+    UNIQUE(user_id, kind, dedup_key) + INSERT IGNORE даёт «отправить ровно
+    один раз». dedup_key — то, что делает повод уникальным: id платежа,
+    дата окончания подписки, значение стрика. Пустая строка = «один раз
+    за всё время» (например, окончание бесплатных 3 дней).
+    """
+
+    __tablename__ = "user_nudges"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    dedup_key: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

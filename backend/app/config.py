@@ -38,6 +38,16 @@ class Settings(BaseSettings):
     REFERRAL_DAYS_INVITED: int = 0
     REFERRAL_DAYS_REFERRER: int = 7
 
+    # ─── Активация новых пользователей (миграция 0033) ───────────────────
+    # Первые N дней после регистрации — полный доступ без лимитов. Окно
+    # считается от users.created_at, отдельной колонки нет. 0 = выключить.
+    FREE_TRIAL_DAYS: int = 3
+    # Апсейл после платного триала trial7: сколько дней из 7 нужно было
+    # позаниматься, чтобы получить предложение года со скидкой.
+    TRIAL7_UPSELL_MIN_ACTIVE_DAYS: int = 4
+    # Промокод для этого предложения (создаётся миграцией 0033).
+    TRIAL7_UPSELL_PROMO: str = "HABIT30"
+
     # ─── Веб-авторизация (миграция 0020 + 0021) ──────────────────────────
     # Секрет для подписи JWT сессий. Генерируй: openssl rand -hex 32
     # Если не задан — выдача/проверка JWT отключена (работает только Mini App).
@@ -71,6 +81,9 @@ class Settings(BaseSettings):
     # Цены подписки в рублях (синхронизированы с bot/app/main.py).
     # TRIAL3 больше не предлагается, но константа оставлена для back-compat.
     SUBSCRIPTION_PRICE_TRIAL3_RUB: int = 99
+    # Платный триал-ступень: 7 дней за 199 ₽ (миграция 0033). Первый шаг
+    # лестницы — дальше апсейл на год тем, кто реально занимался.
+    SUBSCRIPTION_PRICE_TRIAL7_RUB: int = 199
     SUBSCRIPTION_PRICE_MONTHLY_RUB: int = 999
     SUBSCRIPTION_PRICE_YEARLY_RUB: int = 5999
     SUBSCRIPTION_PRICE_TWOYEAR_RUB: int = 9999

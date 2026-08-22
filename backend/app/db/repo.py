@@ -3207,3 +3207,67 @@ class Repo:
             }
             for uid, new, created, tg, uname, fname, sub in res.all()
         ]
+
+    # ─── Бесплатный welcome-триал и проактивные сообщения (0033) ────────
+    # Первые FREE_TRIAL_DAYS дней после регистрации — полный доступ.
+    # Окно считаем от users.created_at: так оно само работает для всех
+    # путей создания юзера (бот, мини-апп, веб-регистрация) и не требует
+    # ни колонки, ни правки каждого INSERT'а.
+
+    @staticmethod
+    def free_trial_until(user) -> Optional[datetime]:
+        """Момент окончания welcome-триала. None — если триал отключён."""
+        from ..config import settings
+        days = int(getattr(settings, "FREE_TRIAL_DAYS", 0) or 0)
+        if days <= 0 or user is None or user.created_at is None:
+            return None
+        return user.created_at + timedelta(days=days)
+
+    @classmethod
+    def in_free_trial(cls, user) -> bool:
+        until = cls.free_trial_until(user)
+        return until is not None and until > utcnow()
+
+    async def has_full_access(self, user) -> bool:
+        """Полный доступ = активная подписка/место в школе ИЛИ welcome-триал."""
+        if self.in_free_trial(user):
+            return True
+        return await self.has_active_subscription(user)
+
+    async def nudge_once(
+        self, *, user_id: int, kind: str, dedup_key: str = "",
+    ) -> bool:
+        """Отметить проактивное сообщение. True — отправляем (ещё не слали),
+        False — уже слали такое. Коммит на вызывающей стороне."""
+        from .models import UserNudge
+        ins = mysql_insert(UserNudge).values(
+            user_id=int(user_id), kind=kind, dedup_key=(dedup_key or "")[:64],
+            created_at=utcnow(),
+        ).prefix_with("IGNORE")
+        res = await self.s.execute(ins)
+        return bool(res.rowcount)
+
+    async def count_active_days(
+        self, user_id: int, *, start: date, end: date,
+    ) -> int:
+        """Сколько дней в [start, end] юзер вообще занимался."""
+        res = await self.s.execute(
+            select(func.count(func.distinct(DailyUsage.usage_date))).where(
+                DailyUsage.user_id == int(user_id),
+                DailyUsage.usage_date >= start,
+                DailyUsage.usage_date <= end,
+                DailyUsage.used_seconds > 0,
+            )
+        )
+        return int(res.scalar_one_or_none() or 0)
+
+    async def has_used_plan(self, user_id: int, plan: str) -> bool:
+        """Покупал ли юзер этот тариф (успешно). Для разовых — trial7."""
+        res = await self.s.execute(
+            select(func.count(Payment.id)).where(
+                Payment.user_id == int(user_id),
+                Payment.plan == plan,
+                Payment.status == "succeeded",
+            )
+        )
+        return int(res.scalar_one_or_none() or 0) > 0

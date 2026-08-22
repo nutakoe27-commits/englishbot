@@ -45,6 +45,10 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
   // manualOpen — юзер сам открыл через «Открыть гид» в Аккаунте (не помечаем).
   const [onboardingAuto, setOnboardingAuto] = useState<boolean>(false);
   const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
+  // Приветственные дни полного доступа (миграция 0033): показываем, сколько
+  // осталось. Человек должен знать, что у него есть — иначе потом нечего
+  // терять, а именно потеря и продаёт.
+  const [trialDaysLeft, setTrialDaysLeft] = useState<number | null>(null);
   // Если юзер вернулся с ЮKassa — в URL ?payment_id=N. Открываем SubscribeScreen
   // в режиме «return» с поллингом статуса.
   const [returnPaymentId, setReturnPaymentId] = useState<number | null>(() => {
@@ -53,6 +57,22 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
     const v = p.get("payment_id");
     return v && !isNaN(Number(v)) ? Number(v) : null;
   });
+  // Из бота приходит ссылка ?subscribe=1 — открываем тарифы сразу, чтобы
+  // человек не искал их в Профиле.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("subscribe") !== "1") return;
+    setSubscribeOpen(true);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("subscribe");
+      window.history.replaceState(
+        null, "", url.pathname + (url.search ? url.search : "") + url.hash,
+      );
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     if (returnPaymentId == null) return;
     // Открываем SubscribeScreen и чистим query, чтобы при reload не открывалось снова.
@@ -79,6 +99,13 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
       if (!user?.first_name && me?.first_name) setUserName(me.first_name);
       if (me && me.tutorial_done === false) {
         setOnboardingAuto(true);
+      }
+      if (me?.trial_active && me.trial_until) {
+        const iso = me.trial_until.endsWith("Z") ? me.trial_until : me.trial_until + "Z";
+        const ms = Date.parse(iso) - Date.now();
+        setTrialDaysLeft(ms > 0 ? Math.max(1, Math.ceil(ms / 86400000)) : null);
+      } else {
+        setTrialDaysLeft(null);
       }
     });
 
@@ -110,6 +137,22 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
 
       <main className="mode-selector__main">
         <LevelProgressBar />
+        {trialDaysLeft !== null && (
+          <button
+            type="button"
+            className="ms-trial-banner"
+            onClick={() => setSubscribeOpen(true)}
+          >
+            <span className="ms-trial-banner__title">
+              ✨ Полный доступ ещё {trialDaysLeft}{" "}
+              {trialDaysLeft === 1 ? "день" : trialDaysLeft < 5 ? "дня" : "дней"}
+            </span>
+            <span className="ms-trial-banner__sub">
+              Все режимы без лимитов. Успей попробовать всё — потом останется
+              5 минут разговора в день.
+            </span>
+          </button>
+        )}
         <SerifH as="h1" size={32}>Что тренируем сегодня?</SerifH>
         <p className="mode-selector__subtitle">
           Выбери режим — слова и прогресс общие.

@@ -52,6 +52,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
   const [promoApplied, setPromoApplied] = useState<{ code: string; pct: number } | null>(null);
   const [promoMsg, setPromoMsg] = useState<string>("");
   const [promoBusy, setPromoBusy] = useState<boolean>(false);
+  const [promoOpen, setPromoOpen] = useState<boolean>(!!initialPromoCode);
   const [returnPaymentId, setReturnPaymentId] = useState<number | null>(
     initialReturnPaymentId ?? null,
   );
@@ -182,6 +183,9 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
       } else if (r.error === "promo_invalid") {
         setPromoApplied(null);
         setError("Промокод недействителен.");
+      } else if (r.error === "plan_already_used") {
+        setError("Пробную неделю можно купить один раз. Выбери месяц или год.");
+        void listPlans().then(setPlans);
       } else if (r.error === "yookassa_not_configured") {
         setError("Оплата временно недоступна. Сообщи в @kmo_ai, разберёмся.");
       } else {
@@ -202,9 +206,8 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
     void launchPayment(askEmailFor, v);
   };
 
-  // Recommended plan — годовой (лучшее соотношение цена/срок).
-  const recommendedKey: string | undefined =
-    plans.find((p) => p.key === "yearly")?.key ?? plans[1]?.key ?? plans[0]?.key;
+  // Бейджи («Рекомендуем», «Попробовать») приходят с backend'а — цены и
+  // акценты живут в одном месте, фронт их не додумывает.
 
   return (
     <div className="sub-screen">
@@ -293,7 +296,19 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
                 </p>
               )}
 
-              {/* Промокод */}
+              {/* Промокод. Открытое пустое поле — известная утечка конверсии:
+                  человек уходит искать код и не возвращается. Поэтому по
+                  умолчанию свёрнуто в ссылку. */}
+              {!promoOpen && !promoApplied && (
+                <button
+                  type="button"
+                  className="sub-promo-toggle"
+                  onClick={() => setPromoOpen(true)}
+                >
+                  У меня есть промокод
+                </button>
+              )}
+              {(promoOpen || promoApplied) && (
               <div className="sub-promo">
                 <input
                   className="sub-input"
@@ -314,6 +329,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
                   {promoBusy ? "…" : "Применить"}
                 </Button>
               </div>
+              )}
               {promoMsg && (
                 <p className={promoApplied ? "sub-promo-ok" : "sub-error"} style={{ margin: 0 }}>
                   {promoMsg}
@@ -322,7 +338,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
 
               <div className="sub-plans-v2">
                 {plans.map((p) => {
-                  const isRecommended = p.key === recommendedKey;
+                  const isRecommended = p.badge === "Рекомендуем";
                   const finalPrice = _discounted(p.amount_rub);
                   const hasDiscount = !!promoApplied && finalPrice !== p.amount_rub;
                   return (
@@ -335,16 +351,27 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
                     >
                       <div className="sub-plan-v2__head">
                         <span className="sub-plan-v2__title">{p.title}</span>
-                        {isRecommended && <span className="sub-plan-v2__badge">Рекомендуем</span>}
+                        {p.badge && <span className="sub-plan-v2__badge">{p.badge}</span>}
                       </div>
                       <div className="sub-plan-v2__price">
                         {hasDiscount && <s className="sub-plan-v2__old">{p.amount_rub} ₽</s>}
                         {finalPrice} ₽
                       </div>
                       <div className="sub-plan-v2__days">{p.days} {_daysWord(p.days)}</div>
+                      {p.note && <div className="sub-plan-v2__note">{p.note}</div>}
                     </button>
                   );
                 })}
+              </div>
+
+              <div className="sub-includes">
+                <div className="sub-includes__title">Что входит в полный доступ</div>
+                <ul className="sub-includes__list">
+                  <li>🎙 Разговор с AI-репетитором — <b>без лимита по времени</b> (на бесплатном — 5 минут в день)</li>
+                  <li>🎧 Подкасты под твой уровень — сколько угодно (на бесплатном — 1 в день)</li>
+                  <li>📝 Грамматика: 50 уроков A1–C1 и разбор твоих ошибок (на бесплатном — 1 урок в день)</li>
+                  <li>📚 Словарь с интервальным повторением</li>
+                </ul>
               </div>
 
               <p className="sub-hint">

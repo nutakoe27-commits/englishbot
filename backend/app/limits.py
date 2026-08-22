@@ -35,6 +35,11 @@ class LimitsSnapshot:
     free_seconds_per_day: int
     used_seconds_today: int
     bonus_seconds_today: int = 0  # квест-бонус, сбрасывается в полночь МСК
+    # Welcome-триал (миграция 0033): первые FREE_TRIAL_DAYS дней полный
+    # доступ. has_subscription при этом True — клиенту нужно знать, что
+    # это триал, чтобы показать «полный доступ ещё N дней».
+    trial_active: bool = False
+    trial_until: Optional[str] = None
 
     @property
     def remaining_seconds(self) -> int:
@@ -50,6 +55,8 @@ class LimitsSnapshot:
             "used_seconds_today": self.used_seconds_today,
             "bonus_seconds_today": self.bonus_seconds_today,
             "remaining_seconds": self.remaining_seconds,
+            "trial_active": self.trial_active,
+            "trial_until": self.trial_until,
         }
 
 
@@ -73,9 +80,13 @@ class LimitsContext:
         bonus_seconds_today: int,
         is_blocked: bool,
         repo_factory,  # () -> async-context-manager c Repo
+        trial_active: bool = False,
+        trial_until: Optional[str] = None,
     ) -> None:
         self.user_db_id = user_db_id
         self.tg_id = tg_id
+        self.trial_active = trial_active
+        self.trial_until = trial_until
         self.has_subscription = has_subscription
         self.free_seconds_per_day = free_seconds_per_day
         self.used_seconds_today = used_seconds_today
@@ -99,6 +110,8 @@ class LimitsContext:
             free_seconds_per_day=self.free_seconds_per_day,
             used_seconds_today=self.used_seconds_today,
             bonus_seconds_today=self.bonus_seconds_today,
+            trial_active=self.trial_active,
+            trial_until=self.trial_until,
         )
 
     async def heartbeat(self, seconds: int) -> int:
@@ -140,7 +153,12 @@ class LimitsContext:
 
 async def context_for_user(repo: Repo, repo_factory, user) -> LimitsContext:
     """Собрать LimitsContext для уже резолвнутого User (веб/JWT-путь)."""
-    has_sub = await repo.has_active_subscription(user)
+    # Welcome-триал (0033): первые FREE_TRIAL_DAYS дней — те же права, что
+    # у подписчика. Флаг держим отдельно, чтобы клиент показал «полный
+    # доступ ещё N дней», а не «подписка активна».
+    trial_until_dt = repo.free_trial_until(user)
+    trial_active = repo.in_free_trial(user)
+    has_sub = trial_active or await repo.has_active_subscription(user)
     if settings.FREE_PERIOD:
         has_sub = True
     free_seconds = await repo.get_kv_int(
@@ -151,6 +169,8 @@ async def context_for_user(repo: Repo, repo_factory, user) -> LimitsContext:
     return LimitsContext(
         user_db_id=user.id,
         tg_id=int(user.tg_id) if user.tg_id is not None else 0,
+        trial_active=trial_active,
+        trial_until=trial_until_dt.isoformat() if trial_until_dt else None,
         has_subscription=has_sub,
         free_seconds_per_day=free_seconds,
         used_seconds_today=used,
@@ -198,7 +218,9 @@ async def is_section_limit_reached(repo: Repo, user, *, section: str) -> bool:
     """
     if settings.FREE_PERIOD:
         return False
-    if await repo.has_active_subscription(user):
+    # Welcome-триал снимает и посекционные квоты — человек должен успеть
+    # попробовать подкасты и грамматику, а не только разговор.
+    if await repo.has_full_access(user):
         return False
     cfg = _SECTION_QUOTA.get(section)
     if cfg is None:
