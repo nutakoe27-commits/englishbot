@@ -235,6 +235,7 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
         open={onboardingAuto || onboardingManual}
         markDoneOnFinish={onboardingAuto && !onboardingManual}
         onClose={() => { setOnboardingAuto(false); setOnboardingManual(false); }}
+        onStart={() => onPick("speaking")}
       />
     </div>
   );

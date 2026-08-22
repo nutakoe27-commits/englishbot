@@ -1,5 +1,5 @@
 /**
- * OnboardingModal.tsx — модалка-слайдер с 4 шагами для новых юзеров.
+ * OnboardingModal.tsx — онбординг новых юзеров и ручной гид.
  *
  * Показывается, когда в /api/auth/me пришло `tutorial_done: false`. После
  * прохождения или клика «Пропустить» зовём /api/auth/tutorial/complete —
@@ -23,8 +23,11 @@ import { useLucide } from "./lucide";
 
 interface Props {
   open: boolean;
+  /** true — это первый заход юзера (а не ручной гид из Аккаунта). */
   markDoneOnFinish: boolean;
   onClose: () => void;
+  /** Увести сразу в разговор. Новичку нужно одно действие, а не тур. */
+  onStart?: () => void;
 }
 
 interface Step {
@@ -77,25 +80,28 @@ const STEPS: Step[] = [
   {
     icon: "heart",
     tone: "warn",
-    title: "Подписка и бесплатный лимит",
+    title: "Доступ и тарифы",
     body: (
       <>
-        На бесплатном тарифе — <b>5 минут разговора в день</b>. Подписка
-        снимает все ограничения. Тарифы — во вкладке <b>Профиль</b> →
-        «Оформить подписку» (от <b>999 ₽</b> в месяц).<br />
-        Нет возможности оплатить? Это не повод бросать английский — напиши
-        мне лично:{" "}
-        <a href="https://t.me/NuTak0e" target="_blank" rel="noreferrer">@NuTak0e</a>
-        {" "}— разберёмся и найдём вариант.
+        Первые <b>3 дня</b> после регистрации всё открыто без ограничений.
+        Дальше на бесплатном тарифе остаётся <b>5 минут разговора в день</b>,
+        один подкаст и один урок грамматики.<br />
+        Подписка снимает лимиты: пробная неделя — <b>199 ₽</b>, месяц —{" "}
+        <b>999 ₽</b>. Тарифы во вкладке <b>Профиль</b> → «Оформить подписку».
       </>
     ),
   },
 ];
 
-export function OnboardingModal({ open, markDoneOnFinish, onClose }: Props) {
+export function OnboardingModal({ open, markDoneOnFinish, onClose, onStart }: Props) {
   const [step, setStep] = useState(0);
+  // Новичку показываем ОДИН экран с одним действием. Тур из четырёх
+  // модалок отодвигал первую фразу по-английски на минуту-полторы и
+  // спрашивал про привязку логина у человека, который ещё ничего не
+  // получил. Полный тур остался — но только по кнопке «Открыть гид».
+  const activation = markDoneOnFinish;
 
-  useLucide(`${open}-${step}`);
+  useLucide(`${open}-${step}-${activation}`);
 
   useEffect(() => {
     if (!open) return;
@@ -112,7 +118,58 @@ export function OnboardingModal({ open, markDoneOnFinish, onClose }: Props) {
     onClose();
   }, [markDoneOnFinish, onClose, step]);
 
+  const startTalking = useCallback(async () => {
+    ymReachGoal("onboarding_start_talking");
+    await finish("completed");
+    onStart?.();
+  }, [finish, onStart]);
+
   if (!open) return null;
+
+  // ── Активационный экран: один шаг, одно действие ──────────────────
+  if (activation) {
+    return (
+      <div className="ob-v2" onClick={() => void finish("skipped")}>
+        <div className="ob-v2__card" onClick={(e) => e.stopPropagation()}>
+          <div className="ob-v2__top">
+            <IconButton
+              icon="x" variant="surface" size="sm" label="Закрыть"
+              onClick={() => void finish("skipped")}
+            />
+          </div>
+
+          <div className="ob-v2__icon ob-v2__icon--sage" aria-hidden>
+            <Icon name="mic" size={28} />
+          </div>
+          <SerifH as="h2" size={24} className="ob-v2__title">
+            3 дня полного доступа уже открыты
+          </SerifH>
+          <div className="ob-v2__body">
+            Я — твой AI-репетитор. Говори со мной вслух: пойму, отвечу и
+            объясню ошибки <b>по-русски</b>.<br /><br />
+            Ближайшие 3 дня — <b>без ограничений</b>: разговор, подкасты,
+            грамматика, словарь. Настраивать ничего не нужно, просто скажи
+            первую фразу — хоть «hello, how are you».
+          </div>
+
+          <div className="ob-v2__nav">
+            <Button variant="primary" fullWidth onClick={() => void startTalking()}>
+              🎤 Сказать первую фразу
+            </Button>
+          </div>
+          <button
+            type="button"
+            className="ob-v2__secondary"
+            onClick={() => void finish("skipped")}
+          >
+            Осмотреться самому
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Полный гид (Аккаунт → «Открыть гид») ──────────────────────────
   const isLast = step === STEPS.length - 1;
   const current = STEPS[step];
 

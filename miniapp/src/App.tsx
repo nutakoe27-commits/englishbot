@@ -21,6 +21,7 @@ import { SubscribeScreen } from "./SubscribeScreen";
 import { TranslatePopover } from "./TranslatePopover";
 import { ExplainPopover } from "./ExplainPopover";
 import { SessionSummary } from "./SessionSummary";
+import { ymReachGoal } from "./metrika";
 import { WordsScreen } from "./WordsScreen";
 import { ProgressScreen } from "./ProgressScreen";
 import { ModalScreen } from "./ModalScreen";
@@ -522,6 +523,11 @@ export default function App({ onExit }: AppProps = {}) {
       return true;
     } catch (err) {
       console.error("Ошибка захвата микрофона:", err);
+      // Без этой цели провал «зарегистрировался → так и не заговорил»
+      // не отличить от «передумал»: браузер мог просто не дать микрофон.
+      ymReachGoal("mic_permission_denied", {
+        reason: (err as { name?: string } | null)?.name || "unknown",
+      });
       return false;
     }
   }, []);
@@ -656,6 +662,7 @@ export default function App({ onExit }: AppProps = {}) {
         audioGateOpenRef.current = true;
         // Засекаем старт сессии для post-session summary.
         sessionStartRef.current = Date.now();
+        ymReachGoal("session_started", { mode: settingsRef.current.mode });
       };
 
       ws.onmessage = (event) => {
@@ -899,6 +906,10 @@ export default function App({ onExit }: AppProps = {}) {
     sessionStartRef.current = null;
     if (startedAt === null) return false;
     const sec = Math.floor((Date.now() - startedAt) / 1000);
+    ymReachGoal("session_completed", {
+      mode: settingsRef.current.mode,
+      seconds: sec,
+    });
     if (sec >= SUMMARY_MIN_SECONDS) {
       setSummarySeconds((prev) => prev ?? sec);
       return true;

@@ -1506,6 +1506,44 @@ button {
   text-align: center;
   margin: 0;
 }
+/* Остаток приветственных дней полного доступа (миграция 0033). */
+.summary-trial {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-accent);
+  background: var(--accent-tint);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+/* Крючки на завтра: напоминание и приглашение друга. */
+.summary-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.summary-action {
+  flex: 1 1 46%;
+  min-width: 0;
+  padding: 10px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-1);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  cursor: pointer;
+}
+.summary-action:active { filter: brightness(0.97); }
+.summary-tip {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px dashed var(--border-strong);
+}
 .summary-close {
   width: 100%;
   padding: 12px;

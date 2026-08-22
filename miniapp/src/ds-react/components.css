@@ -2115,3 +2115,18 @@
   line-height: 1.45;
   color: var(--text-dim);
 }
+
+/* Вторичное действие на активационном экране онбординга. */
+.ob-v2__secondary {
+  margin-top: 10px;
+  background: transparent;
+  border: 0;
+  padding: 4px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.ob-v2__secondary:hover { color: var(--text); }
