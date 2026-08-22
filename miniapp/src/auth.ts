@@ -288,10 +288,14 @@ export interface MeIdentity {
 
 // ─── Подписка / оплата (PR-8: ЮKassa) ────────────────────────────────
 export interface Plan {
-  key: "monthly" | "yearly" | "twoyear";
+  key: "trial7" | "monthly" | "yearly" | "twoyear";
   days: number;
   amount_rub: number;
   title: string;
+  /** Бейдж на карточке («Рекомендуем», «Попробовать»). Решает backend. */
+  badge?: string | null;
+  /** Мелкая строка под ценой — условия тарифа. */
+  note?: string | null;
 }
 
 export async function listPlans(): Promise<Plan[]> {
@@ -509,6 +513,10 @@ export interface MeInfo {
   has_subscription?: boolean;
   subscription_until?: string | null;
   tutorial_done?: boolean;
+  /** Первые дни после регистрации — полный доступ (миграция 0033).
+   *  has_subscription при этом тоже true. */
+  trial_active?: boolean;
+  trial_until?: string | null;
   // B2B: школа юзера. role teacher/admin → в Профиле кнопка «Кабинет школы».
   org?: { name: string; role: "student" | "teacher" | "admin" } | null;
 }

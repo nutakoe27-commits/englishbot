@@ -652,6 +652,55 @@
   color: var(--text-faint);
   margin-top: 4px;
 }
+/* Условия тарифа мелкой строкой («один раз на аккаунт»). */
+.sub-plan-v2__note {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-faint);
+  margin-top: 6px;
+}
+/* Промокод свёрнут в ссылку — открытое пустое поле уводит искать скидку. */
+.sub-promo-toggle {
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.sub-promo-toggle:hover { color: var(--text); }
+/* Что входит в полный доступ — до этого на экране оплаты не было
+   ни одного аргумента в пользу покупки. */
+.sub-includes {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  background: var(--bg-1);
+}
+.sub-includes__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.sub-includes__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.sub-includes__list li {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.sub-includes__list b { color: var(--text); }
 .sub-lead {
   margin: 0;
   font-size: 14px;
@@ -2040,4 +2089,29 @@
   text-transform: uppercase;
   color: var(--text-faint);
   padding-left: 2px;
+}
+
+/* Баннер приветственных дней полного доступа (миграция 0033). */
+.ms-trial-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-accent);
+  background: var(--accent-tint);
+  cursor: pointer;
+  font: inherit;
+}
+.ms-trial-banner__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent-deep);
+}
+.ms-trial-banner__sub {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
 }

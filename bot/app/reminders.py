@@ -1164,3 +1164,346 @@ async def org_expiry_loop(bot: Bot) -> None:
         except Exception as exc:
             logger.error("[org-expiry] ошибка в цикле: %s", exc, exc_info=True)
             await asyncio.sleep(60)
+
+
+# ─── Монетизационные касания (миграция 0033) ─────────────────────────────────
+# Просить оплату не только у стены лимита. Раз в день один проход по
+# четырём поводам; дедупликация — таблица user_nudges (INSERT IGNORE),
+# поэтому пропущенный запуск не приводит ни к дублям, ни к потере повода
+# (окна намеренно шире одного дня).
+
+MONETIZATION_PUSH_HOURS_MSK = {12}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+FREE_TRIAL_DAYS = _env_int("FREE_TRIAL_DAYS", 3)
+TRIAL7_UPSELL_MIN_ACTIVE_DAYS = _env_int("TRIAL7_UPSELL_MIN_ACTIVE_DAYS", 4)
+TRIAL7_UPSELL_PROMO = os.getenv("TRIAL7_UPSELL_PROMO", "") or "HABIT30"
+STREAK_MILESTONES = (7, 14, 30, 50, 100)
+_STREAK_SQL_LIST = ", ".join(str(int(m)) for m in STREAK_MILESTONES)
+
+# Юзер с активным местом в живой школе — не наш клиент для подписки.
+_NOT_IN_ACTIVE_ORG = (
+    "NOT EXISTS (SELECT 1 FROM org_members om "
+    "  JOIN organizations o ON o.id = om.org_id "
+    "  WHERE om.user_id = u.id AND om.active = 1 AND o.active = 1 "
+    "    AND (o.valid_until IS NULL OR o.valid_until > UTC_TIMESTAMP()))"
+)
+
+
+def _subscribe_keyboard(miniapp_url: str) -> InlineKeyboardMarkup:
+    base = miniapp_url.rstrip("/")
+    sep = "&" if "?" in base else "?"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 Открыть тарифы",
+                    web_app=WebAppInfo(url=f"{base}{sep}subscribe=1"),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🎤 Начать разговор",
+                    web_app=WebAppInfo(url=miniapp_url),
+                )
+            ],
+        ]
+    )
+
+
+async def _nudge_once(user_id: int, kind: str, dedup_key: str = "") -> bool:
+    """True — этот повод для этого юзера ещё не отправляли (и мы его заняли)."""
+    if not is_db_ready():
+        return False
+    assert _SessionMaker is not None
+    try:
+        async with _SessionMaker() as s:
+            res = await s.execute(text(
+                "INSERT IGNORE INTO user_nudges (user_id, kind, dedup_key, created_at) "
+                "VALUES (:uid, :kind, :dk, UTC_TIMESTAMP())"
+            ), {"uid": int(user_id), "kind": kind, "dk": (dedup_key or "")[:64]})
+            await s.commit()
+            return bool(res.rowcount)
+    except Exception as exc:
+        logger.warning("[monetization] nudge_once(%s) failed: %s", kind, exc)
+        return False
+
+
+async def _fetch(sql: str, params: dict) -> list:
+    if not is_db_ready():
+        return []
+    assert _SessionMaker is not None
+    try:
+        async with _SessionMaker() as s:
+            res = await s.execute(text(sql), params)
+            return list(res.all())
+    except Exception as exc:
+        logger.warning("[monetization] запрос упал: %s", exc)
+        return []
+
+
+async def _send_nudge(
+    bot: Bot, *, tg_id: int, text_msg: str, kb: InlineKeyboardMarkup,
+) -> bool:
+    try:
+        await bot.send_message(
+            chat_id=tg_id, text=text_msg, parse_mode="HTML", reply_markup=kb,
+        )
+        return True
+    except TelegramForbiddenError:
+        try:
+            await set_user_reminder(tg_id, enabled=False)
+        except Exception:
+            pass
+    except TelegramRetryAfter as exc:
+        await asyncio.sleep(exc.retry_after + 1)
+    except Exception as exc:
+        logger.warning("[monetization] не отправлено tg_id=%s: %s", tg_id, exc)
+    return False
+
+
+def _name(raw: Optional[str]) -> str:
+    return (raw or "").strip() or "друг"
+
+
+async def _pass_trial_ended(bot: Bot, kb: InlineKeyboardMarkup) -> int:
+    """Закончились бесплатные N дней полного доступа. Момент потери —
+    самый сильный повод для покупки, который у нас есть."""
+    if FREE_TRIAL_DAYS <= 0:
+        return 0
+    rows = await _fetch(
+        "SELECT u.id, u.tg_id, u.first_name, "
+        "  COALESCE((SELECT SUM(d.used_seconds) FROM daily_usage d "
+        "            WHERE d.user_id = u.id), 0) AS secs "
+        "FROM users u "
+        "WHERE u.tg_id IS NOT NULL AND u.is_blocked = 0 "
+        "  AND u.created_at + INTERVAL :td DAY <= UTC_TIMESTAMP() "
+        "  AND u.created_at + INTERVAL :td DAY > UTC_TIMESTAMP() - INTERVAL 2 DAY "
+        "  AND (u.subscription_until IS NULL "
+        "       OR u.subscription_until <= UTC_TIMESTAMP()) "
+        "  AND EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id) "
+        f"  AND {_NOT_IN_ACTIVE_ORG}",
+        {"td": FREE_TRIAL_DAYS},
+    )
+    sent = 0
+    for uid, tg_id, first_name, secs in rows:
+        if not await _nudge_once(int(uid), "trial_ended"):
+            continue
+        minutes = max(1, int(secs or 0) // 60)
+        msg = (
+            f"{_name(first_name)}, твои {FREE_TRIAL_DAYS} дня полного доступа "
+            "закончились. 🕐\n\n"
+            f"За это время у тебя вышло <b>{minutes} мин</b> практики. "
+            "С сегодняшнего дня снова 5 минут разговора в сутки — этого хватает, "
+            "чтобы не забыть язык, но не хватает, чтобы заговорить.\n\n"
+            "Если хочешь продолжить в том же темпе — открой тарифы. "
+            "Начать можно с пробной недели, это дешевле чашки кофе."
+        )
+        if await _send_nudge(bot, tg_id=int(tg_id), text_msg=msg, kb=kb):
+            sent += 1
+        await asyncio.sleep(0.05)
+    return sent
+
+
+async def _pass_streak_milestone(bot: Bot, kb: InlineKeyboardMarkup) -> int:
+    """Стрик добрался до круглой цифры — человек на пике мотивации."""
+    rows = await _fetch(
+        "SELECT u.id, u.tg_id, u.first_name, u.streak_days "
+        "FROM users u "
+        "WHERE u.tg_id IS NOT NULL AND u.is_blocked = 0 "
+        # Значения milestone'ов — наши же константы, поэтому подставляем
+        # литералом: text() не умеет разворачивать кортеж в IN без
+        # bindparam(expanding=True).
+        f"  AND u.streak_days IN ({_STREAK_SQL_LIST}) "
+        "  AND (u.subscription_until IS NULL "
+        "       OR u.subscription_until <= UTC_TIMESTAMP()) "
+        f"  AND {_NOT_IN_ACTIVE_ORG}",
+        {},
+    )
+    sent = 0
+    for uid, tg_id, first_name, streak in rows:
+        streak = int(streak or 0)
+        if not await _nudge_once(int(uid), "streak_milestone", str(streak)):
+            continue
+        msg = (
+            f"🔥 <b>{streak} дней подряд!</b> {_name(first_name)}, это уже "
+            "не порыв, это привычка — до неё доходят единицы.\n\n"
+            "И теперь обидная часть: каждый день ты упираешься в 5 минут "
+            "ровно тогда, когда разговор только разошёлся. "
+            "Сними лимит — на таком темпе это даст больше всего."
+        )
+        if await _send_nudge(bot, tg_id=int(tg_id), text_msg=msg, kb=kb):
+            sent += 1
+        await asyncio.sleep(0.05)
+    return sent
+
+
+async def _pass_sub_expiring(bot: Bot, kb: InlineKeyboardMarkup) -> int:
+    """За 3 дня до конца подписки — напоминание о продлении."""
+    rows = await _fetch(
+        "SELECT u.id, u.tg_id, u.first_name, u.subscription_until, u.streak_days "
+        "FROM users u "
+        "WHERE u.tg_id IS NOT NULL AND u.is_blocked = 0 "
+        "  AND u.subscription_until > UTC_TIMESTAMP() "
+        "  AND u.subscription_until <= UTC_TIMESTAMP() + INTERVAL 3 DAY "
+        f"  AND {_NOT_IN_ACTIVE_ORG}",
+        {},
+    )
+    sent = 0
+    for uid, tg_id, first_name, until, streak in rows:
+        key = until.strftime("%Y-%m-%d") if until else ""
+        if not await _nudge_once(int(uid), "sub_expiring", key):
+            continue
+        until_msk = (
+            until.replace(tzinfo=timezone.utc).astimezone(MSK).strftime("%d.%m")
+            if until else ""
+        )
+        streak_line = (
+            f"\n\nУ тебя сейчас стрик <b>{int(streak)} дн.</b> — жалко ронять."
+            if int(streak or 0) >= 3 else ""
+        )
+        msg = (
+            f"{_name(first_name)}, подписка заканчивается <b>{until_msk}</b>."
+            f"{streak_line}\n\n"
+            "После этого останется 5 минут разговора в день. "
+            "Продлить можно заранее — дни просто прибавятся к текущему сроку, "
+            "ничего не сгорит."
+        )
+        if await _send_nudge(bot, tg_id=int(tg_id), text_msg=msg, kb=kb):
+            sent += 1
+        await asyncio.sleep(0.05)
+    return sent
+
+
+async def _pass_paid_checkin(bot: Bot, miniapp_url: str) -> int:
+    """Оплатил и три дня молчит. Отток платящих рождается здесь."""
+    rows = await _fetch(
+        "SELECT u.id, u.tg_id, u.first_name, p.pid "
+        "FROM users u "
+        "JOIN (SELECT user_id, MAX(id) AS pid, MAX(created_at) AS paid_at "
+        "      FROM payments WHERE status = 'succeeded' AND amount_rub > 0 "
+        "      GROUP BY user_id) p ON p.user_id = u.id "
+        "WHERE u.tg_id IS NOT NULL AND u.is_blocked = 0 "
+        "  AND p.paid_at >= UTC_TIMESTAMP() - INTERVAL 30 DAY "
+        "  AND u.subscription_until > UTC_TIMESTAMP() "
+        "  AND (u.last_practice_date IS NULL "
+        "       OR u.last_practice_date <= CURDATE() - INTERVAL 3 DAY)",
+        {},
+    )
+    kb = _reminder_keyboard(miniapp_url)
+    sent = 0
+    for uid, tg_id, first_name, pid in rows:
+        if not await _nudge_once(int(uid), "paid_checkin", str(pid)):
+            continue
+        msg = (
+            f"{_name(first_name)}, оплата прошла, а в приложении тебя нет "
+            "уже три дня. Пишу не чтобы пристыдить — чтобы вернуть. 🙂\n\n"
+            "Самое трудное в языке — не грамматика, а вернуться после паузы. "
+            "Дальше проще: одна тема, десять минут, без подготовки.\n\n"
+            "Что-то не работает или неудобно — просто ответь на это сообщение, "
+            "я читаю."
+        )
+        if await _send_nudge(bot, tg_id=int(tg_id), text_msg=msg, kb=kb):
+            sent += 1
+        await asyncio.sleep(0.05)
+    return sent
+
+
+async def _pass_trial7_upsell(bot: Bot, kb: InlineKeyboardMarkup) -> int:
+    """Пробная неделя закончилась. Год предлагаем только тем, кто реально
+    занимался: так годовую подписку покупают люди с привычкой, а не те,
+    кто отвалится через неделю."""
+    rows = await _fetch(
+        "SELECT u.id, u.tg_id, u.first_name, p.id AS pid, p.created_at AS paid_at, "
+        "       p.days_granted "
+        "FROM payments p JOIN users u ON u.id = p.user_id "
+        "WHERE p.plan = 'trial7' AND p.status = 'succeeded' "
+        "  AND u.tg_id IS NOT NULL AND u.is_blocked = 0 "
+        "  AND DATE_ADD(p.created_at, INTERVAL p.days_granted DAY) <= UTC_TIMESTAMP() "
+        "  AND DATE_ADD(p.created_at, INTERVAL p.days_granted DAY) "
+        "      > UTC_TIMESTAMP() - INTERVAL 3 DAY",
+        {},
+    )
+    sent = 0
+    for uid, tg_id, first_name, pid, paid_at, days_granted in rows:
+        if not await _nudge_once(int(uid), "trial7_end", str(pid)):
+            continue
+        active = await _fetch(
+            "SELECT COUNT(DISTINCT usage_date) FROM daily_usage "
+            "WHERE user_id = :uid AND used_seconds > 0 "
+            "  AND usage_date >= DATE(:start) "
+            "  AND usage_date <= DATE(:start) + INTERVAL :d DAY",
+            {"uid": int(uid), "start": paid_at, "d": int(days_granted or 7)},
+        )
+        active_days = int(active[0][0]) if active else 0
+        if active_days >= TRIAL7_UPSELL_MIN_ACTIVE_DAYS:
+            msg = (
+                f"{_name(first_name)}, пробная неделя закончилась — и ты "
+                f"занимался <b>{active_days} дней из "
+                f"{int(days_granted or 7)}</b>. Это уже привычка, а не попытка.\n\n"
+                "Таким я даю особые условия на год: промокод "
+                f"<code>{TRIAL7_UPSELL_PROMO}</code> — <b>минус 30%</b>. "
+                "Введи его на экране тарифов.\n\n"
+                "Год берут не ради экономии, а чтобы больше не возвращаться "
+                "к этому вопросу и просто заниматься."
+            )
+        else:
+            msg = (
+                f"{_name(first_name)}, пробная неделя закончилась. "
+                "С сегодняшнего дня снова 5 минут разговора в день.\n\n"
+                "Если неделя не сложилась — это нормально, начать заново "
+                "всегда трудно. Возьми месяц и договорись с собой о простом: "
+                "10 минут в день, пять дней в неделю. Этого достаточно."
+            )
+        if await _send_nudge(bot, tg_id=int(tg_id), text_msg=msg, kb=kb):
+            sent += 1
+        await asyncio.sleep(0.05)
+    return sent
+
+
+async def run_monetization_passes(bot: Bot, miniapp_url: str) -> None:
+    """Один дневной проход по всем поводам. Каждый пас изолирован:
+    падение одного не должно ронять остальные."""
+    kb = _subscribe_keyboard(miniapp_url)
+    passes = (
+        ("trial_ended", _pass_trial_ended(bot, kb)),
+        ("streak_milestone", _pass_streak_milestone(bot, kb)),
+        ("sub_expiring", _pass_sub_expiring(bot, kb)),
+        ("paid_checkin", _pass_paid_checkin(bot, miniapp_url)),
+        ("trial7_end", _pass_trial7_upsell(bot, kb)),
+    )
+    for name, coro in passes:
+        try:
+            n = await coro
+            if n:
+                logger.info("[monetization] %s: отправлено %d", name, n)
+        except Exception as exc:
+            logger.error("[monetization] пас %s упал: %s", name, exc, exc_info=True)
+
+
+async def monetization_loop(bot: Bot, miniapp_url: str) -> None:
+    """Раз в день в 12:00 МСК — проактивные касания по монетизации."""
+    logger.info(
+        "[monetization] цикл запущен (hour=%s, trial=%dд, upsell>=%dд)",
+        sorted(MONETIZATION_PUSH_HOURS_MSK), FREE_TRIAL_DAYS,
+        TRIAL7_UPSELL_MIN_ACTIVE_DAYS,
+    )
+    await asyncio.sleep(35)
+    while True:
+        try:
+            await asyncio.sleep(_seconds_until_next_msk_hour())
+            if datetime.now(MSK).hour in MONETIZATION_PUSH_HOURS_MSK:
+                await run_monetization_passes(bot, miniapp_url)
+        except asyncio.CancelledError:
+            logger.info("[monetization] цикл остановлен")
+            raise
+        except Exception as exc:
+            logger.error("[monetization] ошибка в цикле: %s", exc, exc_info=True)
+            await asyncio.sleep(60)

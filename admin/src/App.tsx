@@ -1024,6 +1024,13 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
             }
             tone={u.has_subscription ? "success" : "muted"}
           />
+          {u.trial_active && (
+            <StatusPill
+              label="Приветственные дни"
+              value={u.trial_until ? `до ${fmtDate(u.trial_until)}` : "активны"}
+              tone="success"
+            />
+          )}
           <StatusPill
             label="Блокировка"
             value={u.is_blocked ? "заблокирован" : "активен"}
@@ -1682,7 +1689,7 @@ function DeleteAccountCard({
 
 // ─── Payments ────────────────────────────────────────────────────────────────
 const PAYMENT_STATUSES = ["", "succeeded", "pending", "canceled", "refunded"];
-const PAYMENT_PLANS = ["", "trial3", "monthly", "yearly", "twoyear", "gift", "admin_grant", "manual_pay", "org", "referral"];
+const PAYMENT_PLANS = ["", "trial3", "trial7", "monthly", "yearly", "twoyear", "gift", "admin_grant", "manual_pay", "org", "referral"];
 const PAYMENTS_PAGE = 50;
 
 const STATUS_LABEL: Record<string, string> = {
@@ -1693,6 +1700,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 const PLAN_LABEL: Record<string, string> = {
   trial3: "3 дня",
+  trial7: "пробная неделя",
   monthly: "месяц",
   yearly: "год",
   gift: "подарок",

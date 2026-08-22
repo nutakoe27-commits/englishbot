@@ -450,6 +450,14 @@ async def auth_me(authorization: Optional[str] = Header(None)) -> dict:
         user.subscription_until.isoformat() if user.subscription_until else None
     )
     out["tutorial_done"] = user.tutorial_done_at is not None
+    # Welcome-триал (0033): первые FREE_TRIAL_DAYS дней полный доступ.
+    # has_subscription при этом тоже True — иначе мини-апп покажет лимиты.
+    trial_until = Repo.free_trial_until(user)
+    trial_active = Repo.in_free_trial(user)
+    out["trial_active"] = trial_active
+    out["trial_until"] = trial_until.isoformat() if trial_until else None
+    if trial_active:
+        out["has_subscription"] = True
     # B2B: школа юзера (любая роль). По role='teacher'/'admin' фронт
     # показывает кнопку «Кабинет школы» в Профиле.
     out["org"] = (

@@ -38,10 +38,17 @@ router = APIRouter(prefix="/api/payments", tags=["Payments"])
 
 
 # ─── Каталог тарифов (синхронизирован с bot/app/main.py:_PLAN_CATALOG) ──
+# Порядок ключей = порядок карточек на экране подписки.
+# trial7 — первая ступень лестницы: дешёвый вход, дальше апсейл на год тем,
+# кто реально занимался. «Рекомендуем» стоит на месяце: рекомендовать год
+# незнакомому продукту — поднимать тревожность там, где её надо снимать.
 def _plan_catalog() -> dict[str, dict]:
     return {
+        "trial7":  {"days": 7,   "amount_rub": settings.SUBSCRIPTION_PRICE_TRIAL7_RUB,
+                    "title": "Пробная неделя", "badge": "Попробовать",
+                    "note": "Полный доступ на 7 дней. Один раз на аккаунт."},
         "monthly": {"days": 30,  "amount_rub": settings.SUBSCRIPTION_PRICE_MONTHLY_RUB,
-                    "title": "Подписка на месяц"},
+                    "title": "Подписка на месяц", "badge": "Рекомендуем"},
         "yearly":  {"days": 365, "amount_rub": settings.SUBSCRIPTION_PRICE_YEARLY_RUB,
                     "title": "Подписка на год"},
         "twoyear": {"days": 730, "amount_rub": settings.SUBSCRIPTION_PRICE_TWOYEAR_RUB,
@@ -49,8 +56,12 @@ def _plan_catalog() -> dict[str, dict]:
     }
 
 
+# Тариф, который можно купить только один раз на аккаунт.
+ONE_TIME_PLANS = ("trial7",)
+
+
 class _CreatePaymentIn(BaseModel):
-    plan: str                          # monthly | yearly | twoyear
+    plan: str                          # trial7 | monthly | yearly | twoyear
     email: Optional[str] = None        # для 54-ФЗ чека, если у юзера ещё нет
     promo_code: Optional[str] = None   # промокод для скидки (опционально)
 
@@ -73,11 +84,32 @@ def _org_return_url(payment_id: int) -> str:
 
 
 @router.get("/plans")
-async def list_plans() -> dict:
-    """Список тарифов для отображения на странице подписки. Без auth."""
+async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
+    """Список тарифов для страницы подписки.
+
+    Auth необязателен: с ним прячем разовые тарифы (trial7), которые юзер
+    уже покупал, — чтобы не показывать кнопку, которая всё равно откажет.
+    """
+    used_one_time: set[str] = set()
+    if authorization and settings.DATABASE_URL:
+        from .db import Repo
+        try:
+            async with db_session() as session:
+                repo = Repo(session)
+                user = await auth_lib.resolve_user(repo, authorization=authorization)
+                for plan_key in ONE_TIME_PLANS:
+                    if await repo.has_used_plan(user.id, plan_key):
+                        used_one_time.add(plan_key)
+        except Exception:
+            # Неавторизованный/битый токен — просто показываем полный список.
+            used_one_time = set()
     return {"plans": [
-        {"key": k, "days": v["days"], "amount_rub": v["amount_rub"], "title": v["title"]}
+        {
+            "key": k, "days": v["days"], "amount_rub": v["amount_rub"],
+            "title": v["title"], "badge": v.get("badge"), "note": v.get("note"),
+        }
         for k, v in _plan_catalog().items()
+        if k not in used_one_time
     ]}
 
 
@@ -132,6 +164,11 @@ async def create_payment(
     async with db_session() as session:
         repo = Repo(session)
         user = await auth_lib.resolve_user(repo, authorization=authorization)
+
+        # Разовые тарифы (пробная неделя) — строго один раз на аккаунт,
+        # иначе вместо подписки люди будут покупать триал по кругу.
+        if plan in ONE_TIME_PLANS and await repo.has_used_plan(user.id, plan):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "plan_already_used")
 
         # Промокод: валидируем, проверяем «1 раз на юзера», применяем скидку.
         if body.promo_code:
@@ -247,6 +284,57 @@ async def payment_status(
         }
 
 
+
+def _notify_payment_success(*, tg_id: int, plan: str, days: int, until) -> None:
+    """Онбординг после оплаты (миграция 0033).
+
+    Первая неделя решает, останется человек или нет. Поэтому вместо
+    «лимиты сняты» даём конкретный план: сколько, как часто и что делать
+    после занятия. Fire-and-forget, ошибки только в лог.
+    """
+    import asyncio
+    from .auth import send_bot_message
+
+    until_str = ""
+    if until is not None:
+        try:
+            until_str = until.strftime("%d.%m.%Y")
+        except Exception:
+            until_str = ""
+
+    head = (
+        "✅ <b>Оплата прошла. Полный доступ открыт"
+        + (f" до {until_str}" if until_str else "")
+        + ".</b>"
+    )
+    plan_lines = (
+        "<b>План на неделю:</b>\n"
+        "• 15–20 минут разговора в день, лучше в одно и то же время\n"
+        "• 5 дней в неделю — это важнее, чем два раза по часу\n"
+        "• после каждого разговора смотри разбор ошибок — рост именно там"
+    )
+    if plan == "trial7":
+        tail = (
+            "У тебя <b>7 дней</b> без ограничений. Этого хватит, чтобы понять, "
+            "твоё это или нет — но только если заниматься, а не откладывать.\n\n"
+            + plan_lines
+            + "\n\nПозанимаешься 4 дня из 7 — в конце пришлю особые условия на год."
+        )
+    else:
+        tail = plan_lines + (
+            f"\n\nЧерез {min(max(days, 1), 7)} дней загляну, как идёт. "
+            "Если пропадёшь — напомню. 🙂"
+        )
+    text = (
+        f"{head}\n\n{tail}\n\n"
+        "Поставь удобное время напоминания: /reminder"
+    )
+    try:
+        asyncio.create_task(send_bot_message(int(tg_id), text))
+    except RuntimeError:
+        logger.warning("[payments] нет event loop для welcome-сообщения")
+
+
 @router.post("/yookassa/webhook")
 async def yookassa_webhook(request: Request) -> dict:
     """Нотификация от ЮKassa. Доверяем не телу запроса, а **проверке через
@@ -302,11 +390,35 @@ async def yookassa_webhook(request: Request) -> dict:
                 )
             else:
                 await repo.credit_subscription_for_payment(int(payment.id))
+                # Онбординг после оплаты: без него человек остаётся один на
+                # один с «лимиты сняты» и отваливается на первой неделе.
+                # nudge_once — чтобы ретрай вебхука не прислал второе.
+                should_welcome = await repo.nudge_once(
+                    user_id=int(payment.user_id), kind="paid_welcome",
+                    dedup_key=str(payment.id),
+                )
+                # Читаем скаляром, а не через ORM-объект: identity map мог бы
+                # отдать subscription_until до только что сделанного UPDATE.
+                from sqlalchemy import select as _sel
+                from .db.models import User as _U
+                _row = (await repo.s.execute(
+                    _sel(_U.tg_id, _U.subscription_until).where(
+                        _U.id == int(payment.user_id)
+                    )
+                )).one_or_none()
+                buyer_tg_id, buyer_until = _row if _row else (None, None)
                 await session.commit()
                 logger.info(
                     "[yookassa/webhook] credited user_id=%s plan=%s days=%s amount=%s",
                     payment.user_id, payment.plan, payment.days_granted, payment.amount_rub,
                 )
+                if should_welcome and buyer_tg_id:
+                    _notify_payment_success(
+                        tg_id=int(buyer_tg_id),
+                        plan=str(payment.plan),
+                        days=int(payment.days_granted or 0),
+                        until=buyer_until,
+                    )
         elif real_status == "canceled":
             if payment.status != "succeeded":  # не отменяем то, что уже зачтено
                 await repo.mark_payment_status(int(payment.id), "canceled")

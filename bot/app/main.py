@@ -1479,6 +1479,12 @@ async def main() -> None:
         from .reminders import org_expiry_loop
         asyncio.create_task(org_expiry_loop(bot))
         logger.info("Starting org expiry loop (DB ready)")
+        # Монетизация: окончание бесплатных дней, milestone стрика,
+        # продление подписки, чек-ин молчащему подписчику, апсейл
+        # после пробной недели (миграция 0033).
+        from .reminders import monetization_loop
+        asyncio.create_task(monetization_loop(bot, MINIAPP_URL))
+        logger.info("Starting monetization loop (DB ready)")
     else:
         logger.warning(
             "Reminders loop NOT started — DATABASE_URL not set or DB not reachable"

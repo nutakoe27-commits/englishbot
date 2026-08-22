@@ -5,6 +5,9 @@ type LockKind = "limit_reached" | "maintenance" | "blocked";
 interface Props {
   kind: LockKind;
   message?: string; // для maintenance / blocked
+  /** Приветственные дни полного доступа закончились недавно — показываем
+   *  текст про потерю вместо обычного «лимит на сегодня». */
+  trialEnded?: boolean;
   botUsername?: string; // например "kmo_ai_english_bot" — без @
   onDismiss?: () => void; // например, кнопка «Закрыть» в режиме админа/dev
   /** Открыть SubscribeScreen внутри приложения (для веб-флоу через ЮKassa).
@@ -19,22 +22,30 @@ const TITLES: Record<LockKind, string> = {
   blocked: "Доступ ограничен",
 };
 
+// Тексты пейволла. Раньше первой строкой шло «возвращайся завтра» — мы сами
+// предлагали бесплатный путь раньше, чем показывали цену. Теперь фокус на
+// том, что теряется, и на том, сколько это стоит на самом деле.
 const BODIES: Record<LockKind, string> = {
   limit_reached:
-    "Сегодня ты использовал бесплатные 5 минут разговора. Возвращайся завтра — лимит сбросится в полночь по МСК.",
+    "Бесплатные 5 минут разговора на сегодня закончились. Это 2,5 часа практики в год — примерно столько же выходит за одну неделю без лимита.",
   maintenance:
     "Бот временно недоступен. Возвращайся через 10–15 минут.",
   blocked:
     "Твой аккаунт заблокирован. Свяжись с поддержкой через бота.",
 };
 
+/** Отдельный текст для тех, у кого только что закончились приветственные
+ *  дни полного доступа: это не «мне не дают», а «у меня отняли». */
+const TRIAL_ENDED_BODY =
+  "Твои дни полного доступа закончились. Дальше — 5 минут разговора в сутки: этого хватает, чтобы не забыть язык, но не хватает, чтобы заговорить.";
+
 const CTA_LABEL: Record<LockKind, string> = {
-  limit_reached: "Перейти к подписке",
+  limit_reached: "Снять лимит",
   maintenance: "Открыть бота",
   blocked: "Открыть бота",
 };
 
-export function LockScreen({ kind, message, botUsername, onDismiss, onOpenSubscribe }: Props) {
+export function LockScreen({ kind, message, trialEnded, botUsername, onDismiss, onOpenSubscribe }: Props) {
   // Простой fade-in при монтировании
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -66,27 +77,29 @@ export function LockScreen({ kind, message, botUsername, onDismiss, onOpenSubscr
     if (tg?.close) tg.close();
   };
 
-  const handleOpenChannel = () => {
-    // Личка автора — там можно попросить доступ, если нет возможности оплатить.
-    const url = "https://t.me/NuTak0e";
-    const tg = (window as any).Telegram?.WebApp;
-    if (tg?.openTelegramLink) {
-      tg.openTelegramLink(url);
-    } else {
-      window.open(url, "_blank");
-    }
-  };
-
   return (
     <div className={`lock-screen ${visible ? "lock-screen--visible" : ""}`}>
       <div className="lock-screen__card">
         <div className="lock-screen__icon" aria-hidden>
           {kind === "maintenance" ? "🔧" : kind === "blocked" ? "🚫" : "⏳"}
         </div>
-        <h2 className="lock-screen__title">{TITLES[kind]}</h2>
-        <p className="lock-screen__body">{message || BODIES[kind]}</p>
+        <h2 className="lock-screen__title">
+          {kind === "limit_reached" && trialEnded
+            ? "Полный доступ закончился"
+            : TITLES[kind]}
+        </h2>
+        <p className="lock-screen__body">
+          {message
+            || (kind === "limit_reached" && trialEnded
+              ? TRIAL_ENDED_BODY
+              : BODIES[kind])}
+        </p>
         {kind === "limit_reached" && (
           <div className="lock-screen__pricing">
+            <div className="lock-screen__price">
+              <span className="lock-screen__price-amount">199 ₽</span>
+              <span className="lock-screen__price-period">/ пробная неделя</span>
+            </div>
             <div className="lock-screen__price">
               <span className="lock-screen__price-amount">999 ₽</span>
               <span className="lock-screen__price-period">/ месяц</span>
@@ -95,29 +108,11 @@ export function LockScreen({ kind, message, botUsername, onDismiss, onOpenSubscr
               <span className="lock-screen__price-amount">5 999 ₽</span>
               <span className="lock-screen__price-period">/ год</span>
             </div>
-            <div className="lock-screen__price">
-              <span className="lock-screen__price-amount">9 999 ₽</span>
-              <span className="lock-screen__price-period">/ 2 года</span>
-            </div>
           </div>
         )}
         <button className="lock-screen__cta" onClick={handleCta}>
           {CTA_LABEL[kind]}
         </button>
-        {kind === "limit_reached" && (
-          <p className="lock-screen__charity">
-            Нет возможности оплатить? Это не повод бросать английский — напиши
-            мне лично:{" "}
-            <button
-              type="button"
-              className="lock-screen__charity-link"
-              onClick={handleOpenChannel}
-            >
-              @NuTak0e
-            </button>
-            {" "}— разберёмся и найдём вариант. 💛
-          </p>
-        )}
         {onDismiss && (
           <button className="lock-screen__dismiss" onClick={onDismiss}>
             Закрыть
