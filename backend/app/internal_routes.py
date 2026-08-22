@@ -250,6 +250,8 @@ def _notify_referrer(res: dict) -> None:
     tg_id = res.get("referrer_tg_id")
     if not tg_id or res.get("status") != "rewarded":
         return
+    if not res.get("days_referrer"):
+        return
     who = (res.get("invited_name") or "").strip() or "Друг"
     if res.get("invited_username"):
         who += f" (@{res['invited_username']})"

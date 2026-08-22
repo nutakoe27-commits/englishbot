@@ -2981,12 +2981,16 @@ function ReferralProgramTab({ isMobile }: { isMobile: boolean }) {
       <div style={S.card}>
         <div style={{ fontSize: 13, color: colors.textMuted, lineHeight: 1.6 }}>
           Пользователь берёт свою ссылку командой <b>/invite</b> в боте
-          (<code>t.me/…?start=ref_КОД</code>). Если по ней приходит{" "}
-          <b>новый</b> человек — приглашённый получает{" "}
-          <b>{data.days_invited} дней</b>, пригласивший —{" "}
-          <b>{data.days_referrer} дней</b>, и так за каждого без лимита.
-          Если человек <b>уже был зарегистрирован в боте</b>, дни не получает
-          никто — такие переходы считаются как «без бонуса».
+          (<code>t.me/…?start=ref_КОД</code>). Схема односторонняя: если по
+          ссылке приходит <b>новый</b> человек, <b>{data.days_referrer} дней
+          </b> полного доступа получает <b>пригласивший</b>, и так за каждого
+          без лимита. Пришедшему дни не начисляются
+          {data.days_invited > 0 && (
+            <> (сейчас в .env выставлено <b>{data.days_invited}</b> — схема
+            двусторонняя)</>
+          )}
+          . Если человек <b>уже был зарегистрирован в боте</b>, дни не
+          получает никто — такие переходы считаются как «без бонуса».
         </div>
       </div>
 
@@ -3114,7 +3118,7 @@ function ReferralProgramTab({ isMobile }: { isMobile: boolean }) {
                             color: colors.success,
                           }}
                         >
-                          +{f.days_invited}/+{f.days_referrer} дн.
+                          +{f.days_referrer} дн.
                         </span>
                       ) : (
                         <span
