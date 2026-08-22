@@ -19,6 +19,10 @@ import {
   type PromoActivation,
   type OrgItem,
   type OrgMemberItem,
+  type ReferralsResponse,
+  type AdLinkItem,
+  type AdLinkHit,
+  type UserReferral,
 } from "./api";
 import {
   ResponsiveContainer,
@@ -232,6 +236,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     view = <PromosPage />;
   } else if (route === "/orgs") {
     view = <OrgsPage />;
+  } else if (route === "/referrals") {
+    view = <ReferralsPage />;
   } else if (route === "/broadcast") {
     view = <BroadcastPage />;
   } else if (route === "/settings") {
@@ -294,6 +300,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           {navBtn("/payments", "Платежи")}
           {navBtn("/promo", "Промокоды")}
           {navBtn("/orgs", "Школы")}
+          {navBtn("/referrals", "Рефералка")}
           {navBtn("/broadcast", "Массовые")}
           {navBtn("/settings", "Настройки")}
         </nav>
@@ -1051,6 +1058,9 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
         </div>
       </div>
 
+      {/* ── Рефералка ───────────────────── */}
+      <UserReferralCard userId={id} />
+
       {/* ── Активность (стрик / режимы / словарь / медали) ── */}
       <div style={{ ...S.card, marginTop: 16 }}>
         <h3 style={S.h3}>Активность</h3>
@@ -1672,7 +1682,7 @@ function DeleteAccountCard({
 
 // ─── Payments ────────────────────────────────────────────────────────────────
 const PAYMENT_STATUSES = ["", "succeeded", "pending", "canceled", "refunded"];
-const PAYMENT_PLANS = ["", "trial3", "monthly", "yearly", "gift", "admin_grant", "manual_pay"];
+const PAYMENT_PLANS = ["", "trial3", "monthly", "yearly", "twoyear", "gift", "admin_grant", "manual_pay", "org", "referral"];
 const PAYMENTS_PAGE = 50;
 
 const STATUS_LABEL: Record<string, string> = {
@@ -1688,6 +1698,9 @@ const PLAN_LABEL: Record<string, string> = {
   gift: "подарок",
   admin_grant: "админ-грант",
   manual_pay: "ручная оплата",
+  twoyear: "2 года",
+  org: "школа (B2B)",
+  referral: "🎁 рефералка",
 };
 
 function PaymentsPage() {
@@ -2893,6 +2906,537 @@ function BroadcastCard() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Рефералка + ссылки для аналитики (миграция 0032) ────────────────────────
+function ReferralsPage() {
+  const isMobile = useIsMobile();
+  const [tab, setTab] = useState<"program" | "links">("program");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <h2 style={S.h2}>🎁 Рефералка</h2>
+      <div style={S.tabs}>
+        <button
+          style={tab === "program" ? S.tabActive : S.tab}
+          onClick={() => setTab("program")}
+        >
+          Программа «приведи друга»
+        </button>
+        <button
+          style={tab === "links" ? S.tabActive : S.tab}
+          onClick={() => setTab("links")}
+        >
+          Ссылки для аналитики
+        </button>
+      </div>
+      {tab === "program" ? (
+        <ReferralProgramTab isMobile={isMobile} />
+      ) : (
+        <AdLinksTab isMobile={isMobile} />
+      )}
+    </div>
+  );
+}
+
+function refWho(
+  name: string | null,
+  username: string | null,
+  userId: number,
+): string {
+  if (username) return `@${username}`;
+  if (name && name.trim()) return `${name.trim()} #${userId}`;
+  return `#${userId}`;
+}
+
+function ReferralProgramTab({ isMobile }: { isMobile: boolean }) {
+  const [days, setDays] = useState<number>(30);
+  const [data, setData] = useState<ReferralsResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setData(null);
+    setErr(null);
+    api.referrals(days, 50)
+      .then((r) => { if (alive) setData(r); })
+      .catch((e) => {
+        if (alive) setErr(e instanceof Error ? e.message : String(e));
+      });
+    return () => { alive = false; };
+  }, [days]);
+
+  if (err) return <div style={S.error}>{err}</div>;
+  if (!data) return <div style={{ color: colors.textMuted }}>Загрузка…</div>;
+
+  const o = data.overview;
+  const conv = o.total > 0 ? Math.round((o.rewarded / o.total) * 100) : 0;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={S.card}>
+        <div style={{ fontSize: 13, color: colors.textMuted, lineHeight: 1.6 }}>
+          Пользователь берёт свою ссылку командой <b>/invite</b> в боте
+          (<code>t.me/…?start=ref_КОД</code>). Если по ней приходит{" "}
+          <b>новый</b> человек — приглашённый получает{" "}
+          <b>{data.days_invited} дней</b>, пригласивший —{" "}
+          <b>{data.days_referrer} дней</b>, и так за каждого без лимита.
+          Если человек <b>уже был зарегистрирован в боте</b>, дни не получает
+          никто — такие переходы считаются как «без бонуса».
+        </div>
+      </div>
+
+      <div style={S.metricsGrid}>
+        <div style={S.metricCard}>
+          <div style={S.metricValue}>{o.rewarded}</div>
+          <div style={S.metricLabel}>Приведено новых</div>
+        </div>
+        <div style={S.metricCard}>
+          <div style={S.metricValue}>{o.skipped_existing}</div>
+          <div style={S.metricLabel}>Переходов без бонуса</div>
+        </div>
+        <div style={S.metricCard}>
+          <div style={S.metricValue}>{conv}%</div>
+          <div style={S.metricLabel}>Доля новых из переходов</div>
+        </div>
+        <div style={S.metricCard}>
+          <div style={S.metricValue}>{o.referrers}</div>
+          <div style={S.metricLabel}>Активных пригласивших</div>
+        </div>
+        <div style={S.metricCard}>
+          <div style={S.metricValue}>{o.days_granted}</div>
+          <div style={S.metricLabel}>Выдано дней всего</div>
+        </div>
+        <div style={S.metricCard}>
+          <div style={S.metricValue}>{o.period_rewarded}</div>
+          <div style={S.metricLabel}>Новых за {o.period_days} дн.</div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        {[7, 30, 90].map((d) => (
+          <button
+            key={d}
+            style={days === d ? S.tabActive : S.tab}
+            onClick={() => setDays(d)}
+          >
+            {d} дн.
+          </button>
+        ))}
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.h3}>🏆 Топ пригласивших</h3>
+        {data.top.length === 0 && (
+          <div style={{ color: colors.textMuted }}>Пока никто никого не привёл.</div>
+        )}
+        {data.top.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table style={tableStyle(isMobile)}>
+              <thead>
+                <tr>
+                  <th style={S.th}>Пользователь</th>
+                  <th style={S.th}>Новых</th>
+                  <th style={S.th}>Переходов</th>
+                  <th style={S.th}>Дней получено</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.top.map((t) => (
+                  <tr key={t.user_id}>
+                    <td style={S.td}>
+                      <a
+                        href={`#/user/${t.user_id}`}
+                        style={{ color: colors.primary, textDecoration: "none" }}
+                      >
+                        {refWho(t.first_name, t.username, t.user_id)}
+                      </a>
+                    </td>
+                    <td style={{ ...S.td, fontWeight: 600 }}>{t.rewarded}</td>
+                    <td style={S.td}>{t.total}</td>
+                    <td style={S.td}>{t.days_earned}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.h3}>Последние приглашения</h3>
+        {data.feed.length === 0 && (
+          <div style={{ color: colors.textMuted }}>Пусто.</div>
+        )}
+        {data.feed.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table style={tableStyle(isMobile)}>
+              <thead>
+                <tr>
+                  <th style={S.th}>Когда</th>
+                  <th style={S.th}>Кто привёл</th>
+                  <th style={S.th}>Кого</th>
+                  <th style={S.th}>Итог</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.feed.map((f) => (
+                  <tr key={f.id}>
+                    <td style={{ ...S.td, fontSize: 12, color: colors.textMuted }}>
+                      {f.created_at ? fmtDate(f.created_at) : "—"}
+                    </td>
+                    <td style={S.td}>
+                      <a
+                        href={`#/user/${f.referrer_user_id}`}
+                        style={{ color: colors.primary, textDecoration: "none" }}
+                      >
+                        {refWho(f.referrer_name, f.referrer_username, f.referrer_user_id)}
+                      </a>
+                    </td>
+                    <td style={S.td}>
+                      <a
+                        href={`#/user/${f.invited_user_id}`}
+                        style={{ color: colors.primary, textDecoration: "none" }}
+                      >
+                        {refWho(f.invited_name, f.invited_username, f.invited_user_id)}
+                      </a>
+                    </td>
+                    <td style={S.td}>
+                      {f.status === "rewarded" ? (
+                        <span
+                          style={{
+                            ...S.badge,
+                            background: colors.successBg,
+                            color: colors.success,
+                          }}
+                        >
+                          +{f.days_invited}/+{f.days_referrer} дн.
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            ...S.badge,
+                            background: colors.warningBg,
+                            color: colors.warning,
+                          }}
+                        >
+                          был зарегистрирован
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AdLinksTab({ isMobile }: { isMobile: boolean }) {
+  const [items, setItems] = useState<AdLinkItem[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [title, setTitle] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [hits, setHits] = useState<Record<number, AdLinkHit[]>>({});
+
+  const reload = () => {
+    setItems(null);
+    api.listAdLinks()
+      .then((r) => setItems(r.items))
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  };
+  useEffect(reload, []);
+
+  const create = async () => {
+    const c = code.trim();
+    const t = title.trim();
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(c)) {
+      setErr("Код: латиница, цифры, _ и -, до 32 символов");
+      return;
+    }
+    if (!t) { setErr("Введите название"); return; }
+    setBusy(true); setErr(null);
+    try {
+      await api.createAdLink({ code: c, title: t, note: note.trim() || undefined });
+      setCode(""); setTitle(""); setNote("");
+      reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  };
+
+  const copy = async (l: AdLinkItem) => {
+    try {
+      await navigator.clipboard.writeText(l.link);
+      setCopied(l.id);
+      setTimeout(() => setCopied(null), 1500);
+    } catch { /* clipboard недоступен */ }
+  };
+
+  const toggle = async (l: AdLinkItem) => {
+    try {
+      await api.toggleAdLink(l.id, !l.active);
+      reload();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const remove = async (l: AdLinkItem) => {
+    if (!confirm(`Удалить ссылку «${l.title}» вместе со статистикой?`)) return;
+    try {
+      await api.deleteAdLink(l.id);
+      reload();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const showHits = async (id: number) => {
+    if (expanded === id) { setExpanded(null); return; }
+    setExpanded(id);
+    if (!hits[id]) {
+      try {
+        const r = await api.adLinkHits(id);
+        setHits((m) => ({ ...m, [id]: r.items }));
+      } catch { /* ignore */ }
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={S.card}>
+        <h3 style={S.h3}>Создать ссылку</h3>
+        <div style={{ fontSize: 13, color: colors.textMuted, marginBottom: 12, lineHeight: 1.6 }}>
+          Метка источника для рекламы: <code>t.me/…?start=src_КОД</code>.
+          Бонусных дней не даёт — только считает переходы, новых пользователей
+          и их последующие оплаты.
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 12, color: colors.textMuted }}>Код</span>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="yandex_aug"
+              style={{ ...S.input, maxWidth: 180 }}
+              maxLength={32}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 12, color: colors.textMuted }}>Название</span>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Яндекс.Директ, август"
+              style={{ ...S.input, maxWidth: 260 }}
+              maxLength={128}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 12, color: colors.textMuted }}>Заметка</span>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="необязательно"
+              style={{ ...S.input, maxWidth: 240 }}
+              maxLength={255}
+            />
+          </label>
+          <button style={S.btn} onClick={create} disabled={busy}>
+            {busy ? "…" : "Создать"}
+          </button>
+        </div>
+        {err && <div style={{ ...S.error, marginTop: 12 }}>{err}</div>}
+      </div>
+
+      <div style={S.card}>
+        {!items && <div style={{ color: colors.textMuted }}>Загрузка…</div>}
+        {items && items.length === 0 && (
+          <div style={{ color: colors.textMuted }}>Ссылок пока нет.</div>
+        )}
+        {items && items.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table style={tableStyle(isMobile)}>
+              <thead>
+                <tr>
+                  <th style={S.th}>Название</th>
+                  <th style={S.th}>Ссылка</th>
+                  <th style={S.th}>Клики</th>
+                  <th style={S.th}>Людей</th>
+                  <th style={S.th}>Новых</th>
+                  <th style={S.th}>Оплатили</th>
+                  <th style={S.th}>Выручка</th>
+                  <th style={S.th}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((l) => (
+                  <>
+                    <tr key={l.id}>
+                      <td style={{ ...S.td, fontWeight: 600 }}>
+                        {l.title}
+                        {l.note && (
+                          <div style={{ fontSize: 12, fontWeight: 400, color: colors.textMuted }}>
+                            {l.note}
+                          </div>
+                        )}
+                      </td>
+                      <td style={S.td}>
+                        <button
+                          onClick={() => copy(l)}
+                          style={{
+                            ...S.btnSecondary,
+                            padding: "4px 10px",
+                            fontSize: 12,
+                          }}
+                          title={l.link}
+                        >
+                          {copied === l.id ? "скопировано ✓" : `src_${l.code}`}
+                        </button>
+                      </td>
+                      <td style={S.td}>{l.clicks}</td>
+                      <td style={S.td}>
+                        <button
+                          onClick={() => showHits(l.id)}
+                          style={{
+                            background: "transparent", border: 0,
+                            color: colors.primary, cursor: "pointer",
+                            padding: 0, font: "inherit",
+                          }}
+                        >
+                          {l.unique_users} {expanded === l.id ? "▲" : "▼"}
+                        </button>
+                      </td>
+                      <td style={{ ...S.td, fontWeight: 600 }}>{l.new_users}</td>
+                      <td style={S.td}>{l.payers}</td>
+                      <td style={S.td}>{fmtRub(l.revenue_rub)}</td>
+                      <td style={S.td}>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            onClick={() => toggle(l)}
+                            style={{
+                              ...S.btnSecondary,
+                              padding: "4px 10px",
+                              fontSize: 12,
+                              color: l.active ? colors.success : colors.textMuted,
+                            }}
+                          >
+                            {l.active ? "вкл" : "выкл"}
+                          </button>
+                          <button
+                            onClick={() => remove(l)}
+                            style={{ ...S.btnDanger, padding: "4px 10px", fontSize: 12 }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {expanded === l.id && (
+                      <tr key={`${l.id}-hits`}>
+                        <td colSpan={8} style={{ ...S.td, background: colors.bg }}>
+                          {!hits[l.id] && (
+                            <span style={{ color: colors.textMuted }}>Загрузка…</span>
+                          )}
+                          {hits[l.id] && hits[l.id].length === 0 && (
+                            <span style={{ color: colors.textMuted }}>
+                              По ссылке ещё никто не переходил.
+                            </span>
+                          )}
+                          {hits[l.id] && hits[l.id].length > 0 && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              {hits[l.id].map((h, i) => (
+                                <div key={i} style={{ fontSize: 13 }}>
+                                  <a
+                                    href={`#/user/${h.user_id}`}
+                                    style={{ color: colors.primary, textDecoration: "none" }}
+                                  >
+                                    {refWho(h.first_name, h.username, h.user_id)}
+                                  </a>
+                                  {h.is_new_user ? " · новый" : " · уже был"}
+                                  {h.subscribed ? " · подписка активна" : ""}
+                                  {h.created_at ? ` · ${fmtDate(h.created_at)}` : ""}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Реферальная карточка юзера (миграция 0032) ──────────────────────────────
+function UserReferralCard({ userId }: { userId: number }) {
+  const [data, setData] = useState<UserReferral | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setData(null);
+    api.userReferral(userId)
+      .then((r) => { if (alive) setData(r); })
+      .catch((e) => {
+        if (alive) setErr(e instanceof Error ? e.message : String(e));
+      });
+    return () => { alive = false; };
+  }, [userId]);
+
+  const copy = async () => {
+    if (!data) return;
+    try {
+      await navigator.clipboard.writeText(data.link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard недоступен */ }
+  };
+
+  return (
+    <div style={{ ...S.card, marginTop: 16 }}>
+      <h3 style={S.h3}>Рефералка</h3>
+      {err && <div style={S.error}>{err}</div>}
+      {!data && !err && <div style={{ color: colors.textMuted }}>Загрузка…</div>}
+      {data && (
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <StatusPill
+            label="Привёл новых"
+            value={String(data.invited_rewarded)}
+            tone={data.invited_rewarded > 0 ? "success" : "muted"}
+          />
+          <StatusPill
+            label="Переходов всего"
+            value={String(data.invited_total)}
+            tone="muted"
+          />
+          <StatusPill
+            label="Дней получено"
+            value={String(data.days_earned)}
+            tone="muted"
+          />
+          <button
+            onClick={copy}
+            style={{ ...S.btnSecondary, padding: "6px 12px", fontSize: 12 }}
+            title={data.link}
+          >
+            {copied ? "скопировано ✓" : `ref_${data.code} — копировать ссылку`}
+          </button>
         </div>
       )}
     </div>

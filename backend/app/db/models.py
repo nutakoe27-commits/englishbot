@@ -81,6 +81,13 @@ class User(Base):
     bot_activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     tutorial_done_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
+    # ── Рефералка (миграция 0032) ──
+    # Личный код приглашения: t.me/<bot>?start=ref_<ref_code>. Выдаётся лениво
+    # при первом открытии /invite — у старых юзеров NULL.
+    ref_code: Mapped[Optional[str]] = mapped_column(String(16))
+    # Аналитическая ссылка (ad_links.id), по которой юзер впервые пришёл.
+    source_link_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+
 
 class UserIdentity(Base):
     """Личность пользователя у внешнего провайдера (миграция 0020).
@@ -173,8 +180,9 @@ class Payment(Base):
     amount_rub: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     plan: Mapped[str] = mapped_column(
         # 'org' — оплата пакета мест школой (B2B), личную подписку не продлевает.
+        # 'referral' — бонусные дни за приглашение (миграция 0032).
         SAEnum("trial3", "monthly", "yearly", "twoyear", "gift", "admin_grant", "manual_pay",
-               "org", name="payment_plan"),
+               "org", "referral", name="payment_plan"),
         nullable=False,
     )
     status: Mapped[str] = mapped_column(
@@ -559,3 +567,58 @@ class UserGrammarProgress(Base):
     best_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+# ─── Рефералка и аналитические ссылки (миграция 0032) ───────────────────────
+
+class Referral(Base):
+    """Факт приглашения. UNIQUE(invited_user_id) — человека можно пригласить
+    только один раз за всё время.
+
+    status:
+      rewarded         — получатель был новым, оба получили дни;
+      skipped_existing — получатель уже был зарегистрирован в боте, поэтому
+                         по требованию продукта НИКТО бонус не получил.
+                         Строку всё равно пишем: она закрывает возможность
+                         «привести» этого же человека повторно другой ссылкой.
+    """
+
+    __tablename__ = "referrals"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    referrer_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    invited_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(
+        SAEnum("rewarded", "skipped_existing", name="referral_status"), nullable=False,
+    )
+    days_invited: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    days_referrer: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AdLink(Base):
+    """Ссылка для аналитики, создаётся в админке: t.me/<bot>?start=src_<code>.
+    Никаких бонусов не даёт — только считает переходы и регистрации."""
+
+    __tablename__ = "ad_links"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(String(255))
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    clicks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AdLinkHit(Base):
+    """Уникальный переход (link_id, user_id). Повторные клики того же юзера
+    увеличивают только ad_links.clicks."""
+
+    __tablename__ = "ad_link_hits"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    link_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    is_new_user: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
