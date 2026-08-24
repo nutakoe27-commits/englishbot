@@ -207,6 +207,33 @@ def _parse_exercises_json(raw: str) -> list[dict]:
     return []
 
 
+# Любая последовательность подчёркиваний → ровно три. Модель пишет то ____,
+# то __, то _____ — фронту и проверке нужен один вид.
+_UNDERSCORES_RE = re.compile(r"_{2,}")
+
+
+def _ensure_gap(prompt: str, correct: str) -> Optional[str]:
+    """Гарантировать, что в задании есть пропуск `___`.
+
+    Модель регулярно возвращает предложение с УЖЕ вставленным ответом
+    («I saw that movie two weeks ago.» при correct='saw') — тогда варианты
+    ответа бессмысленны, задание сломано. Чиним детерминированно: вырезаем
+    правильный ответ обратно в пропуск. Если ответа в тексте нет — задание
+    непригодно, возвращаем None, вызывающий его отбросит.
+    """
+    p = _UNDERSCORES_RE.sub("___", prompt or "")
+    if "___" in p:
+        # Вырожденный случай: задание состоит из одного пропуска.
+        return p if len(p.replace("___", "").strip()) >= 3 else None
+    correct = (correct or "").strip()
+    if not correct:
+        return None
+    m = re.search(r"(?<!\w)" + re.escape(correct) + r"(?!\w)", p, re.IGNORECASE)
+    if m:
+        return p[:m.start()] + "___" + p[m.end():]
+    return None
+
+
 def _coerce_exercises(raw_items: list, default_category: str) -> list[Exercise]:
     """Жёсткая нормализация: фильтруем некорректные элементы, чиним поля,
     обрезаем до EXERCISES_PER_SESSION.
@@ -225,6 +252,15 @@ def _coerce_exercises(raw_items: list, default_category: str) -> list[Exercise]:
         explanation = str(item.get("explanation") or "").strip()
         if not prompt or not correct:
             continue
+        # Без пропуска задание нерешаемо — чиним или выбрасываем.
+        fixed = _ensure_gap(prompt, correct)
+        if fixed is None:
+            logger.info("[grammar] задание без пропуска отброшено: %r", prompt[:80])
+            continue
+        if fixed != prompt:
+            logger.info("[grammar] пропуск восстановлен: %r → %r",
+                        prompt[:60], fixed[:60])
+        prompt = fixed
         choices_raw = item.get("choices") or []
         choices = (
             [str(c).strip() for c in choices_raw if str(c).strip()]
@@ -251,7 +287,54 @@ def _coerce_exercises(raw_items: list, default_category: str) -> list[Exercise]:
     return out
 
 
+async def _generate_exercises(
+    sys_prompt: str, usr_prompt: str, *, default_category: str, tag: str,
+) -> list[Exercise]:
+    """LLM → JSON → нормализация. Одна повторная попытка, если валидных
+    заданий не набралось: раньше пользователь просто получал 502.
+
+    На второй попытке добавляем корректирующее указание — чаще всего
+    отбраковка происходит из-за отсутствия `___`.
+    """
+    for attempt in (1, 2):
+        usr = usr_prompt
+        if attempt == 2:
+            usr += (
+                "\n\nIMPORTANT: every 'prompt' MUST contain the gap ___ "
+                "instead of the answer. Never write the answer inside the "
+                "sentence. Return the JSON array only."
+            )
+        raw = await _call_llm(sys_prompt, usr, max_tokens=2500)
+        items = _coerce_exercises(
+            _parse_exercises_json(raw), default_category=default_category,
+        )
+        if len(items) >= 4:
+            if attempt == 2:
+                logger.info("[%s] со второй попытки: %d заданий", tag, len(items))
+            return items
+        logger.warning(
+            "[%s] попытка %d: валидных заданий %d, raw=%s",
+            tag, attempt, len(items), raw[:200],
+        )
+    return []
+
+
 # ─── Prompt-builder ──────────────────────────────────────────────────────────
+
+# Общий кусок промпта про пропуск. Модель регулярно возвращала предложение
+# с уже вставленным ответом — задание получалось нерешаемым (варианты есть,
+# выбирать нечего). Явный отрицательный пример помогает заметно сильнее,
+# чем просто «use ___».
+GAP_RULE = (
+    "CRITICAL — the gap: every 'prompt' MUST contain the literal gap ___ "
+    "(three underscores) where the answer goes. NEVER write the answer "
+    "inside the sentence. "
+    'WRONG: {"prompt":"I saw that movie two weeks ago.","correct":"saw"} '
+    "— the answer is already there, nothing to choose. "
+    'RIGHT: {"prompt":"I ___ that movie two weeks ago.","correct":"saw"}. '
+    "The prompt with ___ replaced by 'correct' must read as a correct "
+    "English sentence. "
+)
 
 
 def _build_prompt(
@@ -290,7 +373,7 @@ def _build_prompt(
         "options including the correct one. "
         "Each exercise must include an 'explanation' field IN RUSSIAN, "
         "1–2 short sentences, explaining the rule plainly. "
-        "Mark the slot to fill in the prompt with three underscores: ___ "
+        + GAP_RULE +
         "Distractors must be plausible but clearly wrong by the grammar rule. "
         "Output STRICT JSON: a single top-level array of objects. NO markdown, "
         "NO code fences, NO commentary — just the JSON array."
@@ -379,20 +462,13 @@ async def generate_exercises(
             category=default_category,
             recent_mistakes=recent_mistakes,
         )
-        raw = await _call_llm(sys_prompt, usr_prompt, max_tokens=2500)
+        exercises = await _generate_exercises(
+            sys_prompt, usr_prompt,
+            default_category=default_category, tag="grammar",
+        )
         if await request.is_disconnected():
             raise HTTPException(499, "client_disconnected")
-
-        raw_items = _parse_exercises_json(raw)
-        if not raw_items:
-            logger.warning("[grammar] LLM не вернул JSON: %s", raw[:300])
-            raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY, "llm_bad_json",
-            )
-        exercises = _coerce_exercises(raw_items, default_category=default_category)
         if len(exercises) < 4:
-            # Если совсем мало валидных — не стоит отдавать
-            logger.warning("[grammar] слишком мало валидных упражнений: %d", len(exercises))
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY, "too_few_exercises",
             )
@@ -618,9 +694,10 @@ def _build_lesson_exercises_prompt(
         f"Generate EXACTLY {LESSON_EXERCISES} exercises that practise "
         "PRECISELY the rules and traps described in this theory. "
         "ALL exercises are multiple-choice (type='mcq'). "
-        "Each: {id, type ('mcq'), category, prompt (use ___ for the "
-        "blank), choices (exactly 4 plausible options including the correct "
-        "one), correct, explanation (in Russian, 1-2 sentences)}. "
+        "Each: {id, type ('mcq'), category, prompt, choices (exactly 4 "
+        "plausible options including the correct one), correct, "
+        "explanation (in Russian, 1-2 sentences)}. "
+        + GAP_RULE +
         "Vary vocabulary and situations — do not copy the "
         "theory examples verbatim. "
         "Output STRICT JSON: a single top-level array. NO markdown fences, "
@@ -762,16 +839,13 @@ async def get_lesson_exercises(
         category=topic_category,
         theory=theory,
     )
-    raw = await _call_llm(sys_prompt, usr_prompt, max_tokens=2500)
+    exercises = await _generate_exercises(
+        sys_prompt, usr_prompt,
+        default_category=topic_category, tag="grammar lesson",
+    )
     if await request.is_disconnected():
         raise HTTPException(499, "client_disconnected")
-    raw_items = _parse_exercises_json(raw)
-    exercises = _coerce_exercises(raw_items, default_category=topic_category)
     if len(exercises) < 4:
-        logger.warning(
-            "[grammar lesson] слишком мало упражнений: %d, raw=%s",
-            len(exercises), raw[:300],
-        )
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "too_few_exercises")
 
     from .db import Repo

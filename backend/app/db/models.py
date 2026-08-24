@@ -642,3 +642,20 @@ class UserNudge(Base):
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     dedup_key: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class ListeningTopic(Base):
+    """Тема подкаста, которую юзер уже слушал (миграция 0034).
+
+    Категория лежит в sessions.role, но она широкая («история»); повторы
+    случались именно на уровне конкретных сюжетов. Здесь храним то, что
+    вернула модель, и подставляем в промпт как «этих тем избегай».
+    """
+
+    __tablename__ = "listening_topics"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    topic: Mapped[str] = mapped_column(String(160), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

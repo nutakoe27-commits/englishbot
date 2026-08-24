@@ -21,6 +21,8 @@ import asyncio
 import io
 import json
 import logging
+import random
+import re
 import secrets
 import struct
 import time
@@ -72,6 +74,84 @@ CATEGORY_HINTS = {
     "culture": "culture, arts, music, film, or literature",
 }
 
+# Ракурсы внутри категории. Промпт для одной категории был байт-в-байт
+# одинаковым при каждой генерации, поэтому модель раз за разом сваливалась
+# в одни и те же сюжеты («история» → Рим, Титаник, Вторая мировая).
+# Случайный ракурс сдвигает её в сторону, ничего не сохраняя.
+CATEGORY_ANGLES = {
+    "news": [
+        "a shift in how people work", "an environmental story with a hopeful turn",
+        "a change in everyday city life", "something new in transport",
+        "a story about food supply", "an unexpected scientific announcement",
+        "a change in how people use money", "a story about education",
+        "a sports story that says something bigger", "a story about ageing societies",
+    ],
+    "tech": [
+        "a device that quietly disappeared", "how a everyday app actually works",
+        "a technology that failed and why", "the cost of convenience",
+        "how data centres eat electricity", "an old technology still in use today",
+        "the story of one programming idea", "how phones changed sleep",
+        "robots doing unglamorous jobs", "why software gets slower",
+    ],
+    "psychology": [
+        "why we procrastinate", "how habits actually form", "the science of boredom",
+        "why groups make worse decisions", "memory and why it edits itself",
+        "the psychology of queues and waiting", "why compliments feel awkward",
+        "loneliness in crowded places", "how mood follows the body",
+        "why deadlines change behaviour",
+    ],
+    "history": [
+        "a history of an everyday object", "a lesser-known explorer",
+        "how a city got its shape", "a failed invention that mattered",
+        "daily life of ordinary people in one century", "the story of a trade route",
+        "a misunderstanding that changed events", "history of a food dish",
+        "how a border was drawn", "a forgotten woman scientist or engineer",
+    ],
+    "science": [
+        "something surprising about sleep", "how materials fail",
+        "a small animal with a big trick", "why ice behaves strangely",
+        "how sound travels in odd places", "the physics of cooking",
+        "microbes doing useful work", "how plants communicate",
+        "what deep sea pressure does", "why the sky is not always blue",
+    ],
+    "travel": [
+        "a city best seen on foot", "travel by train instead of plane",
+        "a small island with a strange rule", "markets as a window into a culture",
+        "travelling in the off season", "a mountain village and its economy",
+        "what airports reveal about a country", "food you only find in one region",
+        "a river journey", "a place changed by tourism",
+    ],
+    "business": [
+        "how a small shop survives", "pricing tricks customers never notice",
+        "why some companies stay small on purpose", "the economics of coffee",
+        "supply chains explained through one product", "how subscriptions changed spending",
+        "a business that failed for a boring reason", "remote work and city economies",
+        "the second-hand economy", "how brands change names",
+    ],
+    "culture": [
+        "how a music genre was born", "the craft behind film sound",
+        "why some books never go out of print", "street art and city rules",
+        "translation and what gets lost", "how museums choose what to show",
+        "a dance and where it came from", "photography before phones",
+        "fashion and climate", "storytelling traditions passed by voice",
+    ],
+}
+
+# Первая строка ответа модели: «TOPIC: <короткое название>». Вырезаем её из
+# скрипта до TTS — иначе синтез зачитает служебную строку вслух.
+_TOPIC_LINE_RE = re.compile(r"^\s*TOPIC\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def _split_topic(raw: str) -> tuple[str, str]:
+    """(topic, script). topic = "" если модель строку не дала."""
+    text = (raw or "").lstrip()
+    m = _TOPIC_LINE_RE.match(text)
+    if not m:
+        return "", text
+    topic = m.group(1).strip().strip('"').strip("«»")[:160]
+    return topic, text[m.end():].lstrip()
+
+
 # In-memory store: audio_id → (wav_bytes, expires_at_unix). TTL 1 час.
 _AUDIO_STORE: dict[str, tuple[bytes, float]] = {}
 _AUDIO_TTL_SEC = 3600
@@ -107,10 +187,32 @@ def _build_listening_prompt(
     duration_min: int,
     level: str,
     vocab_words: list[str],
+    avoid_topics: Optional[list[str]] = None,
 ) -> tuple[str, str]:
     """Возвращает (system_prompt, user_prompt) для одного complete()-вызова."""
     target_words = duration_min * WORDS_PER_MINUTE
     cat_hint = CATEGORY_HINTS.get(category, category)
+
+    # Случайный ракурс — против сваливания в один и тот же сюжет.
+    angles = CATEGORY_ANGLES.get(category) or []
+    angle_clause = ""
+    if angles:
+        angle_clause = (
+            f"\n\nFor this episode take this angle: {random.choice(angles)}. "
+            "Treat it as a starting point, not a title — pick one concrete, "
+            "specific story or idea inside it."
+        )
+
+    # Явный запрет на то, что юзер уже слышал.
+    avoid_clause = ""
+    if avoid_topics:
+        joined = "; ".join(t for t in avoid_topics[:12] if t)
+        if joined:
+            avoid_clause = (
+                f"\n\nThe learner has ALREADY heard episodes on these topics: "
+                f"{joined}. Choose something clearly different — not a variation "
+                "of any of them."
+            )
 
     vocab_clause = ""
     if vocab_words:
@@ -133,11 +235,18 @@ def _build_listening_prompt(
         "no chapter markers, no music cues. Plain prose only. "
         "Open with a hook, develop one or two concrete ideas, close with a "
         "brief takeaway."
+        + angle_clause
+        + avoid_clause
         + vocab_clause
+        + "\n\nFORMAT: the very first line must be exactly "
+          "'TOPIC: <short title, 3-7 words in English>'. Then ONE blank line. "
+          "Then the script itself. Do not mention the topic line inside the "
+          "script."
     )
     user = (
         "/no_think\n"
-        f"Write the podcast script now. Plain text only. ~{target_words} words."
+        f"Write the podcast script now. Start with the TOPIC line, then the "
+        f"script as plain text. ~{target_words} words."
     )
     return system, user
 
@@ -266,6 +375,7 @@ async def generate_podcast(
     # ── Подгружаем user-слова если включён тумблер ──────────────────────
     user_id: Optional[int] = None
     vocab_words: list[str] = []
+    avoid_topics: list[str] = []
     if settings.DATABASE_URL:
         from .db import Repo
         from .limits import is_section_limit_reached
@@ -283,6 +393,14 @@ async def generate_podcast(
                 raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "limit_reached")
             if body.use_vocab:
                 vocab_words = await repo.get_user_words_for_prompt(user.id, limit=10)
+            # Что юзер уже слушал — чтобы не выдать это повторно.
+            # Таблицы может не быть (до миграции 0034) — не роняем генерацию.
+            try:
+                avoid_topics = await repo.recent_listening_topics(
+                    user.id, category=body.category, limit=12,
+                )
+            except Exception as exc:
+                logger.warning("[listening] история тем недоступна: %r", exc)
             await session.commit()
 
     # Онлайн-присутствие: на время генерации юзер виден в админке как 🎧.
@@ -303,10 +421,18 @@ async def generate_podcast(
             duration_min=body.duration_min,
             level=body.level,
             vocab_words=vocab_words,
+            avoid_topics=avoid_topics,
         )
         # Запас по токенам: ~2 токена на слово + buffer.
         max_tokens = max(512, body.duration_min * WORDS_PER_MINUTE * 2 + 256)
-        transcript = await _call_llm_for_script(sys_prompt, usr_prompt, max_tokens=max_tokens)
+        raw_script = await _call_llm_for_script(
+            sys_prompt, usr_prompt, max_tokens=max_tokens,
+        )
+        # Служебную строку TOPIC: обязательно снимаем до синтеза — иначе
+        # Kokoro зачитает её вслух.
+        episode_topic, transcript = _split_topic(raw_script)
+        if not episode_topic:
+            logger.info("[listening] модель не вернула TOPIC-строку")
 
         # Если клиент отвалился пока ждали LLM — не тратим TTS.
         if await request.is_disconnected():
@@ -346,6 +472,17 @@ async def generate_podcast(
                     session_id=row.id,
                     used_seconds=duration_seconds,
                 )
+                # Тема эпизода — чтобы в следующий раз попросить другую.
+                # До миграции 0034 таблицы нет: подкаст важнее истории тем.
+                if episode_topic:
+                    try:
+                        await repo.add_listening_topic(
+                            user_id=user_id,
+                            category=body.category,
+                            topic=episode_topic,
+                        )
+                    except Exception as exc:
+                        logger.warning("[listening] тема не сохранена: %r", exc)
                 # DailyUsage — чтобы listening шёл в общий счётчик минут (ProgressScreen,
                 # «Мой прогресс» использует user_total_seconds + daily series).
                 await repo.add_used_seconds(user_id=user_id, seconds=duration_seconds)
