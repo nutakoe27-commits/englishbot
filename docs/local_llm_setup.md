@@ -174,7 +174,9 @@ sudo journalctl -u vllm-tunnel.service -f
 GPU0. Поэтому именно GPU0 является узким местом по памяти, а не GPU1.
 
 Запуск лежит в `~/1Cat-vLLM/start_vllm.sh` (3.6, откат) и
-`~/1Cat-vLLM/start_vllm38.sh` (3.8, текущая). Актуальная команда:
+`~/1Cat-vLLM/start_vllm38.sh` (3.8, текущая); какой из них поднимается
+автоматически — задаёт `ExecStart` в `vllm.service`, см.
+[`v100_vllm_systemd.md`](v100_vllm_systemd.md). Актуальная команда:
 
 ```bash
 python -m vllm.entrypoints.openai.api_server \
@@ -327,9 +329,9 @@ chmod +x ~/fix_model_config.py
 Один запуск старого скрипта, копировать ничего не надо:
 
 ```bash
-tmux kill-session -t vllm 2>/dev/null; pkill -f "[a]pi_server"; sleep 8
-tmux new-session -d -s vllm "~/1Cat-vLLM/start_vllm.sh 2>&1 | tee ~/vllm.log"
-tail -f ~/vllm.log
+sudo sed -i 's|start_vllm38.sh|start_vllm.sh|' /etc/systemd/system/vllm.service
+sudo systemctl daemon-reload && sudo systemctl restart vllm
+sudo journalctl -u vllm -f
 ```
 
 Старая модель остаётся в HF-кэше — не удаляйте её, пока новая не

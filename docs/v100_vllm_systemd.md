@@ -1,42 +1,57 @@
 # Автозапуск vLLM на V100 через systemd
 
-**Состояние на 2026-08-24: юнита нет, vLLM запущен в tmux.** Это дыра:
-после перезагрузки сервера `kokoro-tts`, `whisper-stt` и `vllm-tunnel`
-поднимутся сами (у них юниты есть), а vLLM — нет. Бот будет отвечать
-«не удалось связаться с сервером», пока кто-то не зайдёт руками.
+**Состояние на 2026-08-24: юнит `vllm.service` заведён и включён.**
+После перезагрузки сервера vLLM поднимается сам, наравне с
+`kokoro-tts`, `whisper-stt` и `vllm-tunnel`.
 
-Ниже — как это починить. Пока не сделано, **держите в голове**: любой
-`reboot` V100 требует ручного запуска.
-
----
-
-## Как запущено сейчас (факт, а не пожелание)
-
-```bash
-tmux ls
-# vllm: 1 windows
-
-ps -eo pid,ppid,args | grep [a]pi_server
-# родитель: bash -c ~/1Cat-vLLM/start_vllm.sh 2>&1 | tee ~/vllm.log
-```
-
-Ручной рестарт:
-
-```bash
-tmux kill-session -t vllm 2>/dev/null; pkill -f "[a]pi_server"; sleep 8
-tmux new-session -d -s vllm "~/1Cat-vLLM/start_vllm.sh 2>&1 | tee ~/vllm.log"
-tail -f ~/vllm.log
-```
-
-Готовность — строка `Application startup complete` (обычно через 90-120 с).
+До этого vLLM жил в tmux и после `reboot` не возвращался — бот отвечал
+«не удалось связаться с сервером», пока кто-то не заходил руками.
 
 ---
 
-## Перевод на systemd
+## Ежедневное управление
 
-Скрипты запуска уже лежат в `~/1Cat-vLLM/` (см.
-[`local_llm_setup.md`](local_llm_setup.md) — там их актуальное содержимое).
-Юнит просто оборачивает тот, что нужен.
+```bash
+sudo systemctl status vllm
+sudo systemctl restart vllm       # модель грузится заново, ~2-3 мин
+sudo systemctl stop vllm
+sudo journalctl -u vllm -f        # следить за прогревом
+sudo journalctl -u vllm -n 200    # последние 200 строк
+tail -f /var/log/vllm.log
+
+curl -s http://localhost:23333/v1/models | python3 -m json.tool
+```
+
+Готовность — строка `Application startup complete` в логе.
+Поле `root` в ответе `/v1/models` показывает, какая модель реально
+загружена; `id` — постоянный алиас для VPS.
+
+---
+
+## Смена модели и откат
+
+`ExecStart` указывает на конкретный скрипт запуска. Два скрипта рядом —
+это и есть механизм отката:
+
+```bash
+# ~/1Cat-vLLM/start_vllm.sh    — Qwen3.6 (откат)
+# ~/1Cat-vLLM/start_vllm38.sh  — Qwen3.8 (текущая)
+
+sudo sed -i 's|start_vllm38.sh|start_vllm.sh|' /etc/systemd/system/vllm.service
+sudo systemctl daemon-reload && sudo systemctl restart vllm
+sudo journalctl -u vllm -f
+```
+
+Обратно — та же команда с заменой в другую сторону. На VPS при этом
+не меняется ничего: `--served-model-name` держит имя постоянным.
+
+---
+
+## Как юнит устроен (справочно)
+
+Скрипты запуска лежат в `~/1Cat-vLLM/` (см.
+[`local_llm_setup.md`](local_llm_setup.md) — там их актуальное
+содержимое). Юнит просто оборачивает тот, что нужен.
 
 ```bash
 sudo tee /etc/systemd/system/vllm.service >/dev/null <<'EOF'
@@ -71,11 +86,10 @@ EOF
 sudo touch /var/log/vllm.log && sudo chown user:user /var/log/vllm.log
 ```
 
-Перед включением обязательно погасить tmux-версию, иначе два процесса
-подерутся за GPU:
+Включение (уже сделано, оставлено для воспроизведения на новой машине):
 
 ```bash
-tmux kill-session -t vllm 2>/dev/null; pkill -f "[a]pi_server"; sleep 8
+# Никаких ручных процессов быть не должно — иначе подерутся за GPU
 pgrep -f "[a]pi_server" && echo "ещё жив — остановите вручную"
 
 sudo systemctl daemon-reload
@@ -83,19 +97,22 @@ sudo systemctl enable --now vllm
 sudo journalctl -u vllm -f
 ```
 
-## Управление
+## Ручной запуск — только для отладки
+
+Если нужно поднять vLLM в обход systemd (посмотреть вывод вживую,
+поиграть с флагами), сначала остановите сервис, иначе два процесса
+подерутся за GPU:
 
 ```bash
-sudo systemctl status vllm
-sudo systemctl restart vllm       # модель грузится заново, ~2-3 мин
 sudo systemctl stop vllm
-sudo journalctl -u vllm -n 200
-curl -s http://localhost:23333/v1/models | python3 -m json.tool
+~/1Cat-vLLM/start_vllm38.sh 2>&1 | tee ~/vllm-debug.log
+# закончили — Ctrl+C и обратно:
+sudo systemctl start vllm
 ```
 
 ## Проверка после перезагрузки
 
-Ради этого всё и делается:
+Ради этого всё и делалось:
 
 ```bash
 sudo reboot
