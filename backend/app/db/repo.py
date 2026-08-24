@@ -3271,3 +3271,29 @@ class Repo:
             )
         )
         return int(res.scalar_one_or_none() or 0) > 0
+
+    # ─── История тем подкастов (миграция 0034) ──────────────────────────
+    async def recent_listening_topics(
+        self, user_id: int, *, category: Optional[str] = None, limit: int = 12,
+    ) -> list[str]:
+        """Последние темы юзера — чтобы попросить модель их не повторять."""
+        from .models import ListeningTopic
+        q = select(ListeningTopic.topic).where(ListeningTopic.user_id == int(user_id))
+        if category:
+            q = q.where(ListeningTopic.category == category)
+        res = await self.s.execute(
+            q.order_by(ListeningTopic.id.desc()).limit(int(limit))
+        )
+        return [t for (t,) in res.all() if t]
+
+    async def add_listening_topic(
+        self, *, user_id: int, category: str, topic: str,
+    ) -> None:
+        from .models import ListeningTopic
+        topic = (topic or "").strip()[:160]
+        if not topic:
+            return
+        self.s.add(ListeningTopic(
+            user_id=int(user_id), category=(category or "")[:32],
+            topic=topic, created_at=utcnow(),
+        ))
