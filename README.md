@@ -42,7 +42,7 @@ AI-стек (LLM, распознавание и синтез речи) — **sel
 | Bot | Python 3.11, aiogram 3.13 (long polling) + внутренний HTTP-сервер |
 | Mini App | React 18 + Vite 5 + TypeScript 5.5 + `@twa-dev/sdk` |
 | Admin | React 18 + Vite 5 + TypeScript + recharts |
-| LLM | **vLLM** (OpenAI-совместимый), Qwen3.5-35B-A3B-AWQ |
+| LLM | **vLLM** (форк 1Cat под V100), Qwen3.8-27B-AWQ на 2× Tesla V100-32GB |
 | STT | **faster-whisper** (WebSocket) |
 | TTS | **Kokoro-82M** (WebSocket) |
 | GPU | NVIDIA V100, проброс на VPS через reverse SSH-туннель |
