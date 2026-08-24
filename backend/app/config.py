@@ -125,7 +125,10 @@ class Settings(BaseSettings):
     VLLM_BASE_URL: Optional[str] = None
 
     # Имя модели, как его выставил vLLM (--served-model-name).
-    # Пример: "QuantTrio/Qwen3.5-35B-A3B-AWQ"
+    # Пример: "QuantTrio/Qwen3.5-35B-A3B-AWQ".
+    # Это постоянный алиас, а не имя реальной модели: он держится
+    # неизменным при смене модели на V100, чтобы не трогать прод.
+    # Реальную модель показывает поле "root" в GET /v1/models.
     VLLM_MODEL_NAME: Optional[str] = None
 
     # API-ключ vLLM. По умолчанию vLLM его не требует — используем "not-needed".

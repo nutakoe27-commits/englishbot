@@ -1,8 +1,11 @@
 # Local LLM Setup — V100 + SSH Reverse Tunnel
 
-End-to-end guide for running EnglishBot on a local
-Qwen3.5-35B-A3B-AWQ running on a V100 home server, connected to the
-RF VPS via an SSH reverse tunnel (no open ports on the V100 router).
+End-to-end guide for running EnglishBot on a local LLM: два Tesla
+V100-SXM2-32GB на домашнем сервере, подключённые к RF VPS через SSH
+reverse tunnel (портов на роутере V100 открывать не нужно).
+
+Актуальная модель на 2026-08-24 — `mattbucci/Qwen3.8-27B-AWQ`, отдаётся
+под старым именем `QuantTrio/Qwen3.5-35B-A3B-AWQ` (см. «Смена модели»).
 
 ---
 
@@ -10,7 +13,7 @@ RF VPS via an SSH reverse tunnel (no open ports on the V100 router).
 
 ```
 ┌──────────────────────┐           ┌────────────────────────────┐
-│ V100 server (home)   │           │ VPS 89.111.143.45 (RF)     │
+│ V100 server (2×32GB) │           │ VPS 89.111.143.45 (RF)     │
 │                      │           │                            │
 │  1Cat-vLLM           │           │  englishbot backend        │
 │  OpenAI API :23333   │◀──────────│  docker, host net          │
@@ -111,7 +114,7 @@ separate VPS shell:
 curl -s http://localhost:23333/v1/models | python3 -m json.tool
 ```
 
-Expected: JSON with `QuantTrio/Qwen3.5-35B-A3B-AWQ` and `max_model_len: 262144`.
+Expected: JSON с `id: QuantTrio/Qwen3.5-35B-A3B-AWQ`, `root: mattbucci/Qwen3.8-27B-AWQ` и `max_model_len: 32768`.
 
 Close the manual tunnel with Ctrl+C before continuing.
 
@@ -164,37 +167,185 @@ sudo journalctl -u vllm-tunnel.service -f
 
 ---
 
-## Part 3 — vLLM on V100 (reference)
+## Part 3 — vLLM on V100 (факт, а не пожелание)
 
-The existing 1Cat-vLLM launch command that works with this model:
+Железо: **2× Tesla V100-SXM2-32GB** (sm70, Volta), драйвер 580.173.02.
+На тех же картах живут Kokoro (~4.0 ГБ) и Whisper (~2.4 ГБ) — обе на
+GPU0. Поэтому именно GPU0 является узким местом по памяти, а не GPU1.
+
+Запуск лежит в `~/1Cat-vLLM/start_vllm.sh` (3.6, откат) и
+`~/1Cat-vLLM/start_vllm38.sh` (3.8, текущая). Актуальная команда:
 
 ```bash
 python -m vllm.entrypoints.openai.api_server \
-  --model QuantTrio/Qwen3.5-35B-A3B-AWQ \
+  --model mattbucci/Qwen3.8-27B-AWQ \
+  --tokenizer QuantTrio/Qwen3.6-27B-AWQ \
+  --chat-template ~/.cache/huggingface/hub/models--mattbucci--Qwen3.8-27B-AWQ/snapshots/<hash>/chat_template.jinja \
+  --served-model-name QuantTrio/Qwen3.5-35B-A3B-AWQ \
   --quantization awq --dtype float16 \
-  --gpu-memory-utilization 0.90 \
-  --max-model-len 262144 \
-  --tensor-parallel-size 4 \
-  --max-num-seqs 8 --max-num-batched-tokens 65536 \
-  --attention-backend TRITON_ATTN \
+  --gpu-memory-utilization 0.82 \
+  --max-model-len 32768 \
+  --tensor-parallel-size 2 \
+  --max-num-seqs 4 --max-num-batched-tokens 8192 \
+  --attention-backend FLASH_ATTN_V100 \
   --skip-mm-profiling \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
+  --compilation-config '{"cudagraph_mode":"piecewise","cudagraph_capture_sizes":[1,2,4]}' \
   --disable-custom-all-reduce \
   --host 0.0.0.0 --port 23333
 ```
 
-For a systemd unit that auto-starts vLLM itself, see
-[`v100_vllm_systemd.md`](v100_vllm_systemd.md).
+Почему именно так:
 
-### Reasoning suppression
+- **`--dtype float16`** — V100 не умеет bfloat16 аппаратно. vLLM сам
+  кастует и пишет `Casting torch.bfloat16 to torch.float16`.
+- **`--attention-backend FLASH_ATTN_V100`** — бэкенд из форка 1Cat-vLLM,
+  специально под sm70. Стоковые FA2-ядра на Volta не работают.
+- **`--quantization awq`** — только классический AWQ (`version: gemm`).
+  `compressed-tensors` и `quark` уходят в Marlin-ядра, а Marlin требует
+  sm80+. Это отсекает большинство современных сборок с HF.
+- **`--tensor-parallel-size 2`** — карт две. В старой версии этого
+  документа стояло 4, и это было неправдой.
+- **`--served-model-name`** — держит старое имя, чтобы `.env` на VPS не
+  трогать при смене модели. См. следующий раздел.
+- **`--limit-mm-per-prompt` в нули** — модель мультимодальная, но нам
+  нужен только текст. В логе появляется `running in text-only mode`.
+  Визуальная башня при этом всё равно **строится** при инициализации,
+  поэтому её квантование должно быть корректно описано в конфиге.
 
-Qwen3.5-35B-A3B is a reasoning model. Without suppression it emits
-chain-of-thought into `content` (`Thinking Process:...` /
-`<think>...</think>`), which is fatal for a voice bot (TTS would
-vocalize the thinking).
+Форк: `1Cat-vLLM`, версия `0.0.3.dev9+gfeb8402e9` (в баннере рисует
+`1.0.0`), venv в `~/1Cat-vLLM/venv`. Это **не апстрим** — `pip install -U
+vllm` сломает V100-патчи. Поддержка новых архитектур зависит от форка:
 
-The quantized QuantTrio build **ignores the `/no_think` soft switch**.
-The working solution is the strict switch via request payload:
+```bash
+python -c "from vllm.model_executor.models.registry import ModelRegistry; \
+print([a for a in sorted(ModelRegistry.get_supported_archs()) if 'wen' in a])"
+```
+
+---
+
+## Смена модели
+
+Меняется **только на V100**. На VPS не трогается ничего: благодаря
+`--served-model-name` бэкенд продолжает видеть прежнее имя.
+
+### Порядок
+
+1. **Проверить пригодность до скачивания.** У кандидата в `config.json`
+   должно быть `architectures`, которое есть в реестре форка, и
+   `quantization_config.quant_method == "awq"` с `version: gemm`.
+   Всё остальное (compressed-tensors, quark, NVFP4, FP8, GGUF, MLX) на
+   V100 не заведётся.
+2. **Скачать заранее**, не в даунтайме: `hf download <repo>` (~25 мин на
+   19 ГБ).
+3. **Снять эталон на текущей модели** — `~/bench_llm.py`. После
+   переключения сравнивать будет не с чем.
+4. **Новый скрипт запуска отдельным файлом.** Старый не трогать —
+   он и есть откат.
+5. Включить режим техработ в админке, переключиться, прогнать
+   `~/accept38.py` и `~/quality38.py`, снять техработы.
+
+### Пороги приёмки
+
+| Метрика | Порог | 3.6 | 3.8 |
+|---|---|---|---|
+| TTFT (короткий ответ) | ≤ 0.40 с | 0.221 | 0.215 |
+| tok/s (длинная генерация) | ≥ 20 | 28.5 | 31.0 |
+| утечки reasoning | 0 | 0 | 0 |
+| валидный JSON (грамматика) | 5/5 | — | 5/5 |
+| свободно на GPU0 | ≥ 1.5 ГБ | 5.7 ГБ | 7.4 ГБ |
+
+### Грабли, на которые мы уже наступили
+
+**Токенизатор.** Сборки, сохранённые новым `transformers`, пишут
+`tokenizer_class: "TokenizersBackend"`, которого нет в `transformers
+4.57.6` из venv. Симптом: `ValueError: Tokenizer class TokenizersBackend
+does not exist`. Лечится флагом `--tokenizer` с указанием на репозиторий
+рабочей модели — если `vocab.json` и `merges.txt` у них побайтово
+совпадают (проверять md5) и совпадают id спецтокенов `<|im_start|>` /
+`<|im_end|>`. У 3.6 и 3.8 они совпадают.
+
+**Пустой `modules_to_not_convert`.** Симптом: `ValueError: The input size
+is not aligned with the quantized weight shape` внутри
+`Qwen3_VisionTransformer`. Причина: в конфиге сборки список исключений
+пуст, хотя визуальная башня в файле лежит **неквантованной**, и vLLM
+пытается применить к ней AWQ. Лечится приведением метаданных к правде —
+скрипт ниже.
+
+> **Важно:** патч правит `config.json` **внутри HF-кэша**. Любой
+> повторный `hf download` или чистка кэша его сотрёт, и vLLM перестанет
+> стартовать с той же ошибкой. Скрипт идемпотентный — прогоняйте после
+> любых манипуляций с кэшем.
+
+```bash
+cat > ~/fix_model_config.py <<'EOF'
+#!/usr/bin/env python3
+"""Приводит modules_to_not_convert в соответствие с содержимым весов.
+Идемпотентно. Запускать после любого hf download этой модели."""
+import json, os, shutil, sys
+from huggingface_hub import snapshot_download
+from safetensors import safe_open
+
+REPO = sys.argv[1] if len(sys.argv) > 1 else "mattbucci/Qwen3.8-27B-AWQ"
+p = snapshot_download(REPO, local_files_only=True)
+
+idx = os.path.join(p, "model.safetensors.index.json")
+if os.path.exists(idx):
+    ks = list(json.load(open(idx))["weight_map"].keys())
+else:
+    ks = []
+    for f in sorted(os.listdir(p)):
+        if f.endswith(".safetensors"):
+            with safe_open(os.path.join(p, f), framework="pt") as fh:
+                ks += list(fh.keys())
+
+quant = {k[:-8] for k in ks if k.endswith(".qweight")}
+plain = {k[:-7] for k in ks if k.endswith(".weight")} - quant
+CAND = ["visual", "linear_attn.in_proj_a", "linear_attn.in_proj_b",
+        "self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj",
+        "layers.0.", "mtp", "lm_head", "embed_tokens"]
+need = [c for c in CAND
+        if any(c in x for x in plain) and not any(c in x for x in quant)]
+
+cfg = os.path.join(p, "config.json")
+if not os.path.exists(cfg + ".orig"):
+    shutil.copy(cfg, cfg + ".orig")
+c = json.load(open(cfg))
+cur = c.get("quantization_config", {}).get("modules_to_not_convert")
+if cur == need:
+    print("уже верно:", need)
+else:
+    c["quantization_config"]["modules_to_not_convert"] = need
+    json.dump(c, open(cfg, "w"), ensure_ascii=False, indent=2)
+    print(f"было {cur} → стало {need}")
+EOF
+chmod +x ~/fix_model_config.py
+```
+
+### Откат
+
+Один запуск старого скрипта, копировать ничего не надо:
+
+```bash
+tmux kill-session -t vllm 2>/dev/null; pkill -f "[a]pi_server"; sleep 8
+tmux new-session -d -s vllm "~/1Cat-vLLM/start_vllm.sh 2>&1 | tee ~/vllm.log"
+tail -f ~/vllm.log
+```
+
+Старая модель остаётся в HF-кэше — не удаляйте её, пока новая не
+отработает хотя бы неделю.
+
+---
+
+## Подавление reasoning
+
+Вся линейка Qwen3.x — reasoning-модели. Без подавления они пишут
+chain-of-thought прямо в `content` (`Thinking Process:...` /
+`<think>...</think>`), а для голосового бота это катастрофа: TTS
+озвучит размышления вслух.
+
+Квантованные сборки **игнорируют мягкий переключатель `/no_think`**.
+Работает строгий — через payload запроса:
 
 ```json
 {
@@ -202,9 +353,15 @@ The working solution is the strict switch via request payload:
 }
 ```
 
-The `VLLMProvider` in `backend/app/llm_providers.py` sends this on
-every request. As defence-in-depth it also injects `/no_think` and
-strips `<think>...</think>` tags from the response.
+`VLLMProvider` в `backend/app/llm_providers.py` шлёт это на каждом
+запросе; то же делают `grammar.py` и `listening.py`. Вторым эшелоном
+идёт `/no_think` в user-реплике и вырезание `<think>...</think>`
+регулярками из ответа.
+
+**Обязательно проверять при смене модели:** в `chat_template.jinja`
+новой сборки должно присутствовать `enable_thinking`, иначе строгий
+переключатель молча ничего не сделает. Приёмочный тест `~/accept38.py`
+считает утечки — порог нулевой. На 3.8 проверено: 0 из 15.
 
 ---
 
@@ -219,6 +376,9 @@ LLM_PROVIDER=vllm
 # backend container (see extra_hosts in docker-compose.yml). The SSH
 # tunnel exposes vLLM on the VPS host at port 23333.
 VLLM_BASE_URL=http://host.docker.internal:23333/v1
+# Это НЕ имя файла модели, а --served-model-name: постоянный алиас,
+# чтобы менять модель на V100, не трогая VPS. Реальную модель показывает
+# поле "root" в ответе /v1/models.
 VLLM_MODEL_NAME=QuantTrio/Qwen3.5-35B-A3B-AWQ
 ```
 

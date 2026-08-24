@@ -1,45 +1,47 @@
-# Автозапуск 1Cat-vLLM через systemd
+# Автозапуск vLLM на V100 через systemd
 
-Чтобы после перезагрузки V100 (или случайного `Ctrl+C`) сервер автоматически
-поднимался — оформим запуск как systemd-сервис. Без этого Cloudflare Tunnel
-будет «отлично работать», но отдавать 502 пока vLLM не запустят вручную.
+**Состояние на 2026-08-24: юнита нет, vLLM запущен в tmux.** Это дыра:
+после перезагрузки сервера `kokoro-tts`, `whisper-stt` и `vllm-tunnel`
+поднимутся сами (у них юниты есть), а vLLM — нет. Бот будет отвечать
+«не удалось связаться с сервером», пока кто-то не зайдёт руками.
 
-## 1. Создать start-скрипт (если ещё не создан)
+Ниже — как это починить. Пока не сделано, **держите в голове**: любой
+`reboot` V100 требует ручного запуска.
+
+---
+
+## Как запущено сейчас (факт, а не пожелание)
 
 ```bash
-cat > ~/1Cat-vLLM/start_vllm.sh <<'EOF'
-#!/usr/bin/env bash
-set -e
-cd "$(dirname "$0")"
-source venv/bin/activate
+tmux ls
+# vllm: 1 windows
 
-exec python -m vllm.entrypoints.openai.api_server \
-    --model QuantTrio/Qwen3.5-35B-A3B-AWQ \
-    --quantization awq \
-    --dtype float16 \
-    --gpu-memory-utilization 0.90 \
-    --max-model-len 262144 \
-    --tensor-parallel-size 4 \
-    --max-num-seqs 8 \
-    --max-num-batched-tokens 65536 \
-    --attention-backend TRITON_ATTN \
-    --skip-mm-profiling \
-    --limit-mm-per-prompt '{"image":0,"video":0}' \
-    --compilation-config '{"cudagraph_mode":"full_and_piecewise","cudagraph_capture_sizes":[1,2,4,8,16,32]}' \
-    --disable-custom-all-reduce \
-    --reasoning-parser qwen3 \
-    --host 0.0.0.0 \
-    --port 23333
-EOF
-chmod +x ~/1Cat-vLLM/start_vllm.sh
+ps -eo pid,ppid,args | grep [a]pi_server
+# родитель: bash -c ~/1Cat-vLLM/start_vllm.sh 2>&1 | tee ~/vllm.log
 ```
 
-## 2. Создать systemd-юнит
+Ручной рестарт:
+
+```bash
+tmux kill-session -t vllm 2>/dev/null; pkill -f "[a]pi_server"; sleep 8
+tmux new-session -d -s vllm "~/1Cat-vLLM/start_vllm.sh 2>&1 | tee ~/vllm.log"
+tail -f ~/vllm.log
+```
+
+Готовность — строка `Application startup complete` (обычно через 90-120 с).
+
+---
+
+## Перевод на systemd
+
+Скрипты запуска уже лежат в `~/1Cat-vLLM/` (см.
+[`local_llm_setup.md`](local_llm_setup.md) — там их актуальное содержимое).
+Юнит просто оборачивает тот, что нужен.
 
 ```bash
 sudo tee /etc/systemd/system/vllm.service >/dev/null <<'EOF'
 [Unit]
-Description=1Cat-vLLM OpenAI-compatible server (Qwen3.5-35B-A3B-AWQ)
+Description=1Cat-vLLM OpenAI-compatible server (V100)
 After=network-online.target
 Wants=network-online.target
 
@@ -48,60 +50,56 @@ Type=simple
 User=user
 Group=user
 WorkingDirectory=/home/user/1Cat-vLLM
-ExecStart=/home/user/1Cat-vLLM/start_vllm.sh
+# Меняете модель — меняете ExecStart на нужный скрипт и делаете
+# daemon-reload. Держать два скрипта проще, чем править один: откат
+# сводится к смене одной строки.
+ExecStart=/home/user/1Cat-vLLM/start_vllm38.sh
 Restart=on-failure
-RestartSec=10s
-# Модель грузится несколько минут — даём запас
+RestartSec=15s
+# Загрузка 19 ГБ на две карты + torch.compile — до 3 минут
 TimeoutStartSec=600s
 StandardOutput=append:/var/log/vllm.log
 StandardError=append:/var/log/vllm.log
 
-# CUDA нужна переменная, иначе процесс не увидит GPU
-Environment=CUDA_VISIBLE_DEVICES=0,1,2,3
-# HuggingFace cache — если модель не локально
+Environment=CUDA_VISIBLE_DEVICES=0,1
 Environment=HF_HOME=/home/user/.cache/huggingface
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-sudo touch /var/log/vllm.log
-sudo chown user:user /var/log/vllm.log
+sudo touch /var/log/vllm.log && sudo chown user:user /var/log/vllm.log
 ```
 
-Проверьте, что user/group в юните совпадают с вашими (у нас из `ps -ef` —
-`user`). Если не совпадают — отредактируйте строки `User=` и `Group=`.
-
-## 3. Включить и запустить
+Перед включением обязательно погасить tmux-версию, иначе два процесса
+подерутся за GPU:
 
 ```bash
-# Сначала убедитесь, что ручной процесс не запущен (pgrep покажет PID):
-pgrep -f "vllm.entrypoints.openai" && echo "Процесс ещё жив — остановите"
+tmux kill-session -t vllm 2>/dev/null; pkill -f "[a]pi_server"; sleep 8
+pgrep -f "[a]pi_server" && echo "ещё жив — остановите вручную"
 
 sudo systemctl daemon-reload
-sudo systemctl enable vllm
-sudo systemctl start vllm
-
-# Следить за прогревом модели (2-4 минуты):
+sudo systemctl enable --now vllm
 sudo journalctl -u vllm -f
-# или:
-tail -f /var/log/vllm.log
-```
-
-Как только в логе появится `Uvicorn running on http://0.0.0.0:23333` —
-сервер готов.
-
-## 4. Проверка
-
-```bash
-curl http://localhost:23333/v1/models
 ```
 
 ## Управление
 
 ```bash
-sudo systemctl status vllm       # статус
-sudo systemctl restart vllm      # рестарт (модель грузится заново)
-sudo systemctl stop vllm         # остановка
-sudo journalctl -u vllm -n 200   # последние 200 строк лога
+sudo systemctl status vllm
+sudo systemctl restart vllm       # модель грузится заново, ~2-3 мин
+sudo systemctl stop vllm
+sudo journalctl -u vllm -n 200
+curl -s http://localhost:23333/v1/models | python3 -m json.tool
+```
+
+## Проверка после перезагрузки
+
+Ради этого всё и делается:
+
+```bash
+sudo reboot
+# после загрузки:
+systemctl is-active vllm kokoro-tts whisper-stt vllm-tunnel
+curl -s http://localhost:23333/v1/models | head -3
 ```
