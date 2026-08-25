@@ -726,14 +726,33 @@ export async function verifySession(): Promise<boolean> {
 // калиброванного банка, поэтому каждый шаг — обычный быстрый POST.
 
 export interface LevelQuestion {
+  kind: "quiz";
+  /** grammar — предложение с пропуском, vocab — слово, listening — вопрос по подкасту. */
+  subkind: "grammar" | "vocab" | "listening";
   id: string;
   index: number;
   total: number;
-  level: string;
+  level: string | null;
   skill: string;
   prompt: string;
   choices: string[];
 }
+
+/** Экран прослушивания. ready=false — подкаст ещё генерится в фоне,
+ *  клиент опрашивает /listen и не листает дальше. */
+export interface LevelAudio {
+  kind: "listen_audio";
+  block: number;
+  index: number;
+  total: number;
+  ready: boolean;
+  failed: boolean;
+  level: string | null;
+  audio_url: string | null;
+  seconds: number | null;
+}
+
+export type LevelScreen = LevelQuestion | LevelAudio;
 
 export interface LevelResult {
   cefr: string;
@@ -742,11 +761,13 @@ export interface LevelResult {
   by_level: Record<string, { correct: number; total: number }>;
   by_skill: Record<string, { correct: number; total: number }>;
   weak_skills: string[];
+  /** null, если оба подкаста не сгенерировались. */
+  listening: { correct: number; total: number } | null;
 }
 
 export interface LevelStart {
   test_id: string;
-  question: LevelQuestion;
+  question: LevelScreen;
   previous: {
     cefr: string;
     created_at: string | null;
@@ -756,11 +777,12 @@ export interface LevelStart {
 }
 
 export interface LevelAnswer {
-  correct: boolean;
-  correct_answer: string;
-  note: string;
+  /** null на экране прослушивания — это не задание. */
+  correct: boolean | null;
+  correct_answer?: string;
+  note?: string;
   done: boolean;
-  question?: LevelQuestion;
+  question?: LevelScreen;
   result?: LevelResult;
 }
 
@@ -798,3 +820,7 @@ export const answerLevelTest = (test_id: string, question_id: string, answer: st
 
 export const fetchLevelReport = (test_id: string) =>
   _levelPost<{ report: string }>("report", { test_id });
+
+/** Готов ли подкаст блока. Опрашивается, пока ready=false. */
+export const pollLevelAudio = (test_id: string, block: number) =>
+  _levelPost<LevelAudio>("listen", { test_id, block });

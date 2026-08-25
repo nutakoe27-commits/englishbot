@@ -15,7 +15,9 @@ import {
   startLevelTest,
   answerLevelTest,
   fetchLevelReport,
-  type LevelQuestion,
+  pollLevelAudio,
+  API_BASE,
+  type LevelScreen,
   type LevelResult,
 } from "./auth";
 import { ymReachGoal } from "./metrika";
@@ -37,6 +39,15 @@ const SKILL_LABELS: Record<string, string> = {
   preposition: "предлоги",
   word_choice: "выбор слов",
   structure: "конструкции",
+  vocab: "слова",
+  listening: "на слух",
+};
+
+/** Подпись над заданием — чтобы человек понимал, что от него хотят. */
+const SUBKIND_HINT: Record<string, string> = {
+  grammar: "Выбери правильную форму",
+  vocab: "Как переводится это слово?",
+  listening: "Вопрос по подкасту",
 };
 
 const CEFR_MEANING: Record<string, string> = {
@@ -57,13 +68,14 @@ function toTutorLevel(cefr: string): Level {
 export function LevelTestScreen({ onExit }: Props) {
   const [phase, setPhase] = useState<Phase>("intro");
   const [testId, setTestId] = useState<string>("");
-  const [question, setQuestion] = useState<LevelQuestion | null>(null);
+  const [screen, setScreen] = useState<LevelScreen | null>(null);
   const [previous, setPrevious] = useState<{ cefr: string } | null>(null);
   const [picked, setPicked] = useState<string>("");
   const [feedback, setFeedback] = useState<
     { correct: boolean; correct_answer: string; note: string } | null
   >(null);
-  const [pending, setPending] = useState<LevelQuestion | null>(null);
+  const [waiting, setWaiting] = useState<boolean>(false);
+  const [pending, setPending] = useState<LevelScreen | null>(null);
   const [result, setResult] = useState<LevelResult | null>(null);
   const [report, setReport] = useState<string>("");
   const [reportFailed, setReportFailed] = useState<boolean>(false);
@@ -71,7 +83,7 @@ export function LevelTestScreen({ onExit }: Props) {
   const [error, setError] = useState<string>("");
   const [applied, setApplied] = useState<boolean>(false);
 
-  useLucide(`${phase}-${question?.id ?? ""}-${!!feedback}`);
+  useLucide(`${phase}-${screen?.index ?? 0}-${!!feedback}`);
 
   const begin = useCallback(async () => {
     setBusy(true);
@@ -84,36 +96,86 @@ export function LevelTestScreen({ onExit }: Props) {
       return;
     }
     setTestId(r.test_id);
-    setQuestion(r.question);
+    setScreen(r.question);
     setPrevious(r.previous);
     setPhase("running");
   }, []);
 
-  const choose = useCallback(async (choice: string) => {
-    if (!question || feedback || busy) return;
-    setPicked(choice);
-    setBusy(true);
-    const r = await answerLevelTest(testId, question.id, choice);
-    setBusy(false);
-    if (!r) {
-      setError("Ответ не отправился. Проверь соединение.");
-      setPicked("");
-      return;
-    }
-    setFeedback({ correct: r.correct, correct_answer: r.correct_answer, note: r.note });
+  const applyAnswer = useCallback((r: NonNullable<Awaited<ReturnType<typeof answerLevelTest>>>) => {
     if (r.done && r.result) {
       setResult(r.result);
       setPending(null);
     } else if (r.question) {
       setPending(r.question);
     }
-  }, [question, feedback, busy, testId]);
+  }, []);
+
+  const choose = useCallback(async (choice: string) => {
+    if (!screen || screen.kind !== "quiz" || feedback || busy) return;
+    setPicked(choice);
+    setBusy(true);
+    const r = await answerLevelTest(testId, screen.id, choice);
+    setBusy(false);
+    if (!r) {
+      setError("Ответ не отправился. Проверь соединение.");
+      setPicked("");
+      return;
+    }
+    setFeedback({
+      correct: !!r.correct,
+      correct_answer: r.correct_answer || "",
+      note: r.note || "",
+    });
+    applyAnswer(r);
+  }, [screen, feedback, busy, testId, applyAnswer]);
+
+  /** Подкаст прослушан — листаем дальше. Ответа тут нет. */
+  const finishAudio = useCallback(async () => {
+    if (!screen || screen.kind !== "listen_audio" || busy) return;
+    setBusy(true);
+    const r = await answerLevelTest(testId, `audio:${screen.block}`, "");
+    setBusy(false);
+    if (!r) {
+      setError("Не получилось перейти дальше. Проверь соединение.");
+      return;
+    }
+    if (r.done && r.result) {
+      setResult(r.result);
+      setPhase("result");
+      return;
+    }
+    if (r.question) setScreen(r.question);
+  }, [screen, busy, testId]);
+
+  // Подкаст готовится в фоне и почти всегда успевает. Если нет — опрашиваем,
+  // пока не будет готов, а человек видит честное «готовим подкаст».
+  useEffect(() => {
+    if (!screen || screen.kind !== "listen_audio") { setWaiting(false); return; }
+    if (screen.ready || screen.failed) { setWaiting(false); return; }
+    setWaiting(true);
+    let alive = true;
+    const tick = async () => {
+      if (!alive) return;
+      const st = await pollLevelAudio(testId, screen.block);
+      if (!alive) return;
+      if (st && (st.ready || st.failed)) {
+        setScreen(st);
+        setWaiting(false);
+        // Генерация не удалась — блок выкинут, просто идём дальше.
+        if (st.failed) void finishAudio();
+        return;
+      }
+      window.setTimeout(tick, 2000);
+    };
+    const id = window.setTimeout(tick, 1500);
+    return () => { alive = false; window.clearTimeout(id); };
+  }, [screen, testId, finishAudio]);
 
   const next = useCallback(() => {
     setFeedback(null);
     setPicked("");
     if (pending) {
-      setQuestion(pending);
+      setScreen(pending);
       setPending(null);
       return;
     }
@@ -176,11 +238,12 @@ export function LevelTestScreen({ onExit }: Props) {
         <div className="lvt-intro__icon" aria-hidden>🎯</div>
         <SerifH as="h2" size={26}>Какой у тебя уровень английского?</SerifH>
         <p className="lvt-intro__lead">
-          12 вопросов, около трёх минут. Тест адаптивный: ответил верно —
-          следующий вопрос сложнее, ошибся — проще. Так уровень определяется
-          точнее, чем стандартным набором.
+          Около семи минут. Тест адаптивный: ответил верно — следующий
+          вопрос сложнее, ошибся — проще. Так уровень определяется точнее,
+          чем стандартным набором. Задания идут вперемешку.
         </p>
         <ul className="lvt-intro__list">
+          <li>Грамматика, слова и два коротких подкаста на понимание</li>
           <li>Определим уровень по шкале CEFR: от A1 до C1</li>
           <li>Покажем, что уже уверенно, а что провисает</li>
           <li>Настроим под тебя разговор, подкасты и грамматику</li>
@@ -203,30 +266,87 @@ export function LevelTestScreen({ onExit }: Props) {
   }
 
   // ── Прохождение ───────────────────────────────────────────────────
-  if (phase === "running" && question) {
-    const pct = Math.round((question.index / question.total) * 100);
-    const isLast = question.index >= question.total;
+  if (phase === "running" && screen) {
+    const pct = Math.round((screen.index / screen.total) * 100);
+    const progress = (
+      <div className="grm-progress">
+        <div className="grm-progress__bar">
+          <div className="grm-progress__fill" style={{ width: `${pct}%` }} aria-hidden />
+        </div>
+        <span className="grm-progress__label">
+          {screen.index} / {screen.total}
+        </span>
+      </div>
+    );
+
+    // Экран прослушивания: плеер и кнопка «дальше». Ответа тут нет.
+    if (screen.kind === "listen_audio") {
+      return shell(
+        <div className="grm-exercise">
+          {progress}
+          <div className="lvt-audio">
+            <div className="lvt-audio__icon" aria-hidden>🎧</div>
+            <div className="lvt-audio__title">
+              Подкаст {screen.block + 1} из 2
+              {screen.level ? ` · уровень ${screen.level}` : ""}
+            </div>
+            <p className="lvt-audio__lead">
+              Послушай запись целиком — примерно минута. Потом будут два
+              вопроса по содержанию. Можно переслушать.
+            </p>
+            {screen.ready && screen.audio_url ? (
+              <audio
+                className="lvt-audio__player"
+                src={`${API_BASE}${screen.audio_url}`}
+                controls
+                preload="auto"
+              />
+            ) : (
+              <div className="lvt-audio__wait">
+                <div className="lvt-skeleton" aria-label="Готовим подкаст">
+                  <span /><span />
+                </div>
+                <p className="lvt-audio__waittext">
+                  {waiting ? "Готовим подкаст…" : "Почти готово…"}
+                </p>
+              </div>
+            )}
+          </div>
+          {error && <p className="lvt-error">{error}</p>}
+          <button
+            type="button"
+            className="grm-primary-btn"
+            onClick={() => void finishAudio()}
+            disabled={!screen.ready || busy}
+          >
+            {screen.ready ? "Прослушал, дальше →" : "Ждём подкаст…"}
+          </button>
+        </div>,
+      );
+    }
+
+    const isLast = screen.index >= screen.total;
     return shell(
       <div className="grm-exercise">
-        <div className="grm-progress">
-          <div className="grm-progress__bar">
-            <div className="grm-progress__fill" style={{ width: `${pct}%` }} aria-hidden />
-          </div>
-          <span className="grm-progress__label">
-            {question.index} / {question.total}
-          </span>
-        </div>
+        {progress}
 
-        {previous && !feedback && question.index === 1 && (
+        {previous && !feedback && screen.index === 1 && (
           <p className="lvt-prev">
             Прошлый результат: <b>{previous.cefr}</b>. Посмотрим, что изменилось.
           </p>
         )}
 
-        <p className="grm-prompt">{question.prompt}</p>
+        <div className="lvt-hint">{SUBKIND_HINT[screen.subkind]}</div>
+        <p
+          className={
+            screen.subkind === "vocab" ? "grm-prompt lvt-word" : "grm-prompt"
+          }
+        >
+          {screen.prompt}
+        </p>
 
         <div className="grm-choices">
-          {question.choices.map((c) => {
+          {screen.choices.map((c) => {
             let state: "idle" | "picked" | "right" | "wrong" = "idle";
             if (feedback) {
               if (c === feedback.correct_answer) state = "right";
@@ -300,6 +420,14 @@ export function LevelTestScreen({ onExit }: Props) {
         {grew && (
           <p className="lvt-prev">
             В прошлый раз было <b>{previous!.cefr}</b>.
+          </p>
+        )}
+
+        {result.listening && (
+          <p className="lvt-listen-line">
+            🎧 Понимание на слух: <b>{result.listening.correct} из{" "}
+            {result.listening.total}</b>. В уровень не входит — сложность
+            подкаста задавали мы, это отдельный показатель.
           </p>
         )}
 
