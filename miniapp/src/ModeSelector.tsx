@@ -49,6 +49,9 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
   // осталось. Человек должен знать, что у него есть — иначе потом нечего
   // терять, а именно потеря и продаёт.
   const [trialDaysLeft, setTrialDaysLeft] = useState<number | null>(null);
+  // Уровень по тесту. null — тест ещё не проходили: показываем предложение,
+  // а не сухую строчку. Для новичка это и есть первый осмысленный шаг.
+  const [cefr, setCefr] = useState<string | null>(null);
   // Если юзер вернулся с ЮKassa — в URL ?payment_id=N. Открываем SubscribeScreen
   // в режиме «return» с поллингом статуса.
   const [returnPaymentId, setReturnPaymentId] = useState<number | null>(() => {
@@ -100,6 +103,7 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
       if (me && me.tutorial_done === false) {
         setOnboardingAuto(true);
       }
+      setCefr(me?.cefr_level || null);
       if (me?.trial_active && me.trial_until) {
         const iso = me.trial_until.endsWith("Z") ? me.trial_until : me.trial_until + "Z";
         const ms = Date.parse(iso) - Date.now();
@@ -158,6 +162,27 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
           Выбери режим — слова и прогресс общие.
         </p>
 
+        {/* Не проходил тест — предлагаем начать с него, ДО карточек
+            режимов: без уровня все режимы работают на дефолтном B1. */}
+        {!cefr && (
+          <button
+            type="button"
+            className="ms-level-cta"
+            onClick={() => onPick("level")}
+          >
+            <span className="ms-level-cta__icon" aria-hidden>🎯</span>
+            <span className="ms-level-cta__title">
+              Узнай свой уровень английского
+            </span>
+            <span className="ms-level-cta__sub">
+              Грамматика, слова и два коротких подкаста — около 7 минут.
+              После теста разговор, подкасты и грамматика подстроятся под
+              тебя, а не под усреднённый уровень.
+            </span>
+            <span className="ms-level-cta__btn">Пройти тест →</span>
+          </button>
+        )}
+
         <div className="mode-cards">
           <RichModeCard
             icon="mic"
@@ -193,22 +218,23 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
           />
         </div>
 
-        {/* Тест уровня — отдельной строкой, а не пятой карточкой: это не
-            ежедневный режим, а разовое измерение. */}
-        <button
-          type="button"
-          className="ms-level-test"
-          onClick={() => onPick("level")}
-        >
-          <span className="ms-level-test__icon" aria-hidden>🎯</span>
-          <span className="ms-level-test__text">
-            <span className="ms-level-test__title">Проверить уровень английского</span>
-            <span className="ms-level-test__sub">
-              12 вопросов, 3 минуты — и все режимы настроятся под тебя
+        {/* Тест пройден — неприметная строчка «пройти заново». */}
+        {cefr && (
+          <button
+            type="button"
+            className="ms-level-test"
+            onClick={() => onPick("level")}
+          >
+            <span className="ms-level-test__icon" aria-hidden>🎯</span>
+            <span className="ms-level-test__text">
+              <span className="ms-level-test__title">Твой уровень: {cefr}</span>
+              <span className="ms-level-test__sub">
+                Пройти тест заново и посмотреть, что изменилось
+              </span>
             </span>
-          </span>
-          <span className="ms-level-test__arrow" aria-hidden>→</span>
-        </button>
+            <span className="ms-level-test__arrow" aria-hidden>→</span>
+          </button>
+        )}
 
         {stats && (
           <button

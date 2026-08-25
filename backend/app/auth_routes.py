@@ -456,6 +456,13 @@ async def auth_me(authorization: Optional[str] = Header(None)) -> dict:
     trial_active = Repo.in_free_trial(user)
     out["trial_active"] = trial_active
     out["trial_until"] = trial_until.isoformat() if trial_until else None
+    # Уровень по тесту (миграция 0035). None — тест ещё не проходили,
+    # главный экран покажет предложение его пройти.
+    out["cefr_level"] = getattr(user, "cefr_level", None)
+    out["cefr_tested_at"] = (
+        user.cefr_tested_at.isoformat()
+        if getattr(user, "cefr_tested_at", None) else None
+    )
     if trial_active:
         out["has_subscription"] = True
     # B2B: школа юзера (любая роль). По role='teacher'/'admin' фронт
