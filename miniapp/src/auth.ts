@@ -517,6 +517,9 @@ export interface MeInfo {
    *  has_subscription при этом тоже true. */
   trial_active?: boolean;
   trial_until?: string | null;
+  /** Уровень по тесту (миграция 0035). null — тест ещё не проходили. */
+  cefr_level?: string | null;
+  cefr_tested_at?: string | null;
   // B2B: школа юзера. role teacher/admin → в Профиле кнопка «Кабинет школы».
   org?: { name: string; role: "student" | "teacher" | "admin" } | null;
 }

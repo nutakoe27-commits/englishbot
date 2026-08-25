@@ -4369,3 +4369,43 @@ button {
   border-radius: var(--radius-md);
   border: 1px dashed var(--border-strong);
 }
+
+/* Предложение пройти тест уровня — для тех, кто его ещё не проходил.
+   Заметный блок: без уровня все режимы работают на дефолтном B1. */
+.ms-level-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 18px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-accent);
+  background: var(--accent-tint);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.ms-level-cta:active { transform: scale(0.99); }
+.ms-level-cta__icon { font-size: 26px; line-height: 1; }
+.ms-level-cta__title {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text);
+}
+.ms-level-cta__sub {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.ms-level-cta__btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 9px 16px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
