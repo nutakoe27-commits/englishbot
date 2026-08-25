@@ -17,7 +17,7 @@ import { TopBar } from "./ds-react/TopBar";
 import { LogoBox } from "./ds-react/LogoBox";
 import { SerifH } from "./ds-react/typography";
 
-export type Mode = "speaking" | "listening" | "grammar" | "srs";
+export type Mode = "speaking" | "listening" | "grammar" | "srs" | "level";
 
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
@@ -192,6 +192,23 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
             onClick={() => onPick("srs")}
           />
         </div>
+
+        {/* Тест уровня — отдельной строкой, а не пятой карточкой: это не
+            ежедневный режим, а разовое измерение. */}
+        <button
+          type="button"
+          className="ms-level-test"
+          onClick={() => onPick("level")}
+        >
+          <span className="ms-level-test__icon" aria-hidden>🎯</span>
+          <span className="ms-level-test__text">
+            <span className="ms-level-test__title">Проверить уровень английского</span>
+            <span className="ms-level-test__sub">
+              12 вопросов, 3 минуты — и все режимы настроятся под тебя
+            </span>
+          </span>
+          <span className="ms-level-test__arrow" aria-hidden>→</span>
+        </button>
 
         {stats && (
           <button

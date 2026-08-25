@@ -3297,3 +3297,50 @@ class Repo:
             user_id=int(user_id), category=(category or "")[:32],
             topic=topic, created_at=utcnow(),
         ))
+
+    # ─── Тест уровня (миграция 0035) ────────────────────────────────────
+    async def save_level_test(
+        self, *, user_id: int, cefr: str, correct_cnt: int, total_cnt: int,
+        answers: list[dict],
+    ) -> int:
+        """Записать прохождение и проставить уровень юзеру."""
+        from .models import LevelTest
+        row = LevelTest(
+            user_id=int(user_id), cefr=cefr,
+            correct_cnt=int(correct_cnt), total_cnt=int(total_cnt),
+            answers={"items": answers}, created_at=utcnow(),
+        )
+        self.s.add(row)
+        await self.s.flush()
+        await self.s.execute(
+            update(User).where(User.id == int(user_id)).values(
+                cefr_level=cefr, cefr_tested_at=utcnow(), updated_at=utcnow(),
+            )
+        )
+        return int(row.id)
+
+    async def attach_level_test_report(self, test_id: int, report: str) -> None:
+        from .models import LevelTest
+        await self.s.execute(
+            update(LevelTest).where(LevelTest.id == int(test_id))
+            .values(report=(report or "")[:8000])
+        )
+
+    async def last_level_test(self, user_id: int) -> Optional[dict]:
+        """Предыдущее прохождение — чтобы показать динамику уровня."""
+        from .models import LevelTest
+        res = await self.s.execute(
+            select(LevelTest.cefr, LevelTest.created_at, LevelTest.correct_cnt,
+                   LevelTest.total_cnt)
+            .where(LevelTest.user_id == int(user_id))
+            .order_by(LevelTest.id.desc()).limit(1)
+        )
+        row = res.first()
+        if row is None:
+            return None
+        cefr, created, ok, total = row
+        return {
+            "cefr": cefr,
+            "created_at": created.isoformat() if created else None,
+            "correct_cnt": int(ok or 0), "total_cnt": int(total or 0),
+        }
