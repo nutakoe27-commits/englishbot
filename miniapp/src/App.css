@@ -4319,3 +4319,53 @@ button {
 .ms-level-test__title { font-size: 14px; font-weight: 700; }
 .ms-level-test__sub { font-size: 12px; line-height: 1.4; color: var(--text-dim); }
 .ms-level-test__arrow { color: var(--accent-deep); font-size: 16px; }
+
+/* Экран прослушивания в тесте уровня. */
+.lvt-audio {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-accent);
+  background: var(--accent-tint);
+  align-items: center;
+  text-align: center;
+}
+.lvt-audio__icon { font-size: 34px; line-height: 1; }
+.lvt-audio__title { font-size: 14px; font-weight: 700; color: var(--text); }
+.lvt-audio__lead {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.lvt-audio__player { width: 100%; margin-top: 4px; }
+.lvt-audio__wait { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.lvt-audio__waittext {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+/* Подпись над заданием: грамматика / слово / вопрос по подкасту. */
+.lvt-hint {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+/* Слово на перевод — крупно и по центру, это не предложение. */
+.lvt-word {
+  text-align: center;
+  font-size: 26px;
+  font-weight: 600;
+}
+.lvt-listen-line {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border-strong);
+}

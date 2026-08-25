@@ -12,12 +12,22 @@
   ответом. AI-разбор запрашивается отдельным вызовом и подгружается уже
   поверх показанного результата — ради этого и разделены эндпоинты.
 
-AI отвечает за то, где он незаменим: пишет персональный разбор по
-фактическим ошибкам и говорит, что делать дальше.
+Тест состоит из трёх типов заданий, идущих **вперемешку**:
+
+* грамматика и лексика — из банка, мгновенно, участвуют в лестнице;
+* два блока аудирования — минутный подкаст плюс вопросы по нему.
+
+Подкасты генерируются LLM и озвучиваются Kokoro, а это десятки секунд.
+Поэтому они **готовятся в фоне**: первый запускается на старте теста,
+второй — как только лестница нащупала уровень. Пока они генерируются,
+человек отвечает на обычные вопросы, и к моменту, когда блок выпадает по
+плану, аудио уже готово. Ждать не приходится.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import random
 import re
@@ -31,12 +41,27 @@ from pydantic import BaseModel, Field
 
 from .config import settings
 from .db import db_session
-from .level_test_bank import BANK, BY_ID, BY_LEVEL, LEVELS
+from .level_test_bank import (
+    BANK, BY_ID, BY_LEVEL, LEVELS, VOCAB, VOCAB_BY_LEVEL,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/level-test", tags=["LevelTest"])
 
-TOTAL_QUESTIONS = 12
+# Счётчики заданий. Меняются здесь — план и подсчёт подстроятся сами.
+N_GRAMMAR = 10
+N_VOCAB = 10
+N_BLOCKS = 2                 # блоков аудирования
+Q_PER_BLOCK = 2              # вопросов на блок
+# Экранов всего: 10 + 10 + 2 * (1 аудио + 2 вопроса) = 26
+TOTAL_SCREENS = N_GRAMMAR + N_VOCAB + N_BLOCKS * (1 + Q_PER_BLOCK)
+# Сколько заданий засчитывается в оценку (аудио-экран — не задание).
+TOTAL_QUESTIONS = N_GRAMMAR + N_VOCAB + N_BLOCKS * Q_PER_BLOCK
+
+LISTEN_WORDS = 150           # ~1 минута речи
+# Второй подкаст запускаем, когда лестница уже нащупала уровень.
+BLOCK2_TRIGGER_ANSWER = 7
+
 START_LEVEL_IDX = LEVELS.index("B1")
 # Уровень засчитывается, если по нему было хотя бы столько попыток...
 MIN_ATTEMPTS_PER_LEVEL = 2
@@ -87,54 +112,280 @@ def validate_bank() -> list[str]:
     return problems
 
 
-def _public(q: dict, index: int) -> dict:
+def _build_plan() -> list[str]:
+    """План экранов. Токены: grammar | vocab | audio:B | q:B:K.
+
+    Грамматика и лексика перемешиваются полностью — тест не должен идти
+    блоками «сначала все слова, потом вся грамматика». Блоки аудирования
+    вставляются в фиксированные окна: первый не в начале (нужно время на
+    фоновую генерацию), второй — во второй половине.
+    """
+    plan = ["grammar"] * N_GRAMMAR + ["vocab"] * N_VOCAB
+    random.shuffle(plan)
+    quiz_len = len(plan)
+    # Окна подобраны так, чтобы блоки не слипались и не попадали в самое
+    # начало/конец. Вставляем с конца — иначе индексы «поедут».
+    windows = [(4, 8), (int(quiz_len * 0.65), quiz_len - 2)]
+    slots = []
+    for lo, hi in windows:
+        lo, hi = max(1, lo), max(2, hi)
+        slots.append(random.randint(min(lo, hi), hi))
+    for b in reversed(range(N_BLOCKS)):
+        pos = min(slots[b], len(plan))
+        plan[pos:pos] = [f"audio:{b}"] + [f"q:{b}:{k}" for k in range(Q_PER_BLOCK)]
+    return plan
+
+
+def _drop_block(state: dict, b: int) -> None:
+    """Выкинуть блок из плана целиком — и аудио, и его вопросы.
+
+    Если генерация не удалась (LLM или Kokoro недоступны), человек не
+    должен упираться в мёртвый экран: тест продолжается без этого блока,
+    а прогресс остаётся честным, потому что план укорачивается.
+    """
+    state["plan"] = [
+        t for t in state["plan"]
+        if t != f"audio:{b}" and not t.startswith(f"q:{b}:")
+    ]
+
+
+def _public(q: dict, index: int, subkind: str, total: int) -> dict:
     """Задание без правильного ответа — его клиент знать не должен."""
     choices = list(q["choices"])
     random.shuffle(choices)
     return {
+        "kind": "quiz",
+        "subkind": subkind,
         "id": q["id"],
         "index": index,
-        "total": TOTAL_QUESTIONS,
+        "total": total,
         "level": q["level"],
-        "skill": q["skill"],
+        "skill": q.get("skill", subkind),
         "prompt": q["prompt"],
         "choices": choices,
     }
 
 
-def _pick(state: dict) -> Optional[dict]:
-    """Следующее задание с текущего уровня лестницы.
+def _pick(state: dict, kind: str) -> Optional[dict]:
+    """Задание нужного типа с текущей ступени лестницы.
 
-    Если на уровне всё выдано — идём к ближайшему по расстоянию уровню,
-    где ещё есть неиспользованные задания. Так тест не обрывается, даже
-    если человек залип на одной ступени.
+    Если на ступени всё выдано — идём к ближайшему уровню, где ещё есть
+    неиспользованные. Так тест не обрывается, даже если человек залип.
     """
     used: set[str] = state["used"]
+    pool_by_level = VOCAB_BY_LEVEL if kind == "vocab" else BY_LEVEL
     idx = state["level_idx"]
     order = sorted(range(len(LEVELS)), key=lambda i: (abs(i - idx), i))
     for i in order:
-        pool = [q for q in BY_LEVEL[LEVELS[i]] if q["id"] not in used]
+        pool = [q for q in pool_by_level[LEVELS[i]] if q["id"] not in used]
         if pool:
             return random.choice(pool)
     return None
 
 
+def _block_screen(state: dict, b: int, index: int) -> dict:
+    """Экран с подкастом. ready=False — клиент показывает «готовим» и
+    опрашивает /listen, пока фоновая генерация не закончится."""
+    blk = state["blocks"].get(b) or {}
+    ready = blk.get("status") == "ready"
+    return {
+        "kind": "listen_audio",
+        "block": b,
+        "index": index,
+        "total": len(state.get("plan") or []) or TOTAL_SCREENS,
+        "ready": ready,
+        "failed": blk.get("status") == "failed",
+        "level": blk.get("level"),
+        "audio_url": (
+            f"/api/listening/audio/{blk['audio_id']}.wav" if ready else None
+        ),
+        "seconds": blk.get("seconds"),
+    }
+
+
+def _next_screen(state: dict) -> Optional[dict]:
+    """Следующий экран по плану. None — тест окончен."""
+    while state["pos"] < len(state["plan"]):
+        token = state["plan"][state["pos"]]
+        index = state["pos"] + 1
+        total = len(state["plan"])
+        if token in ("grammar", "vocab"):
+            q = _pick(state, token)
+            if q is None:                     # банк исчерпан — выкидываем шаг
+                state["plan"].pop(state["pos"])
+                continue
+            state["used"].add(q["id"])
+            state["current"] = q["id"]
+            state["current_kind"] = token
+            return _public(q, index, token, total)
+        if token.startswith("audio:"):
+            b = int(token.split(":")[1])
+            blk = state["blocks"].get(b) or {}
+            if blk.get("status") == "failed":
+                _drop_block(state, b)
+                continue
+            state["current"] = token
+            state["current_kind"] = "audio"
+            return _block_screen(state, b, index)
+        if token.startswith("q:"):
+            _, bs, ks = token.split(":")
+            b, k = int(bs), int(ks)
+            blk = state["blocks"].get(b) or {}
+            qs = blk.get("questions") or []
+            if k >= len(qs):                  # вопросов не хватило
+                state["plan"].pop(state["pos"])
+                continue
+            q = qs[k]
+            state["current"] = token
+            state["current_kind"] = "listening"
+            choices = list(q["choices"])
+            random.shuffle(choices)
+            return {
+                "kind": "quiz",
+                "subkind": "listening",
+                "id": token,
+                "index": index,
+                "total": total,
+                "level": blk.get("level"),
+                "skill": "listening",
+                "prompt": q["q"],
+                "choices": choices,
+            }
+        state["plan"].pop(state["pos"])
+    state["current"] = None
+    return None
+
+
+# ─── Фоновая генерация блоков аудирования ───────────────────────────────────
+# Минутный подкаст — это вызов LLM (~7 с) плюс синтез Kokoro (~12 с) плюс
+# генерация вопросов. Тридцать секунд ожидания посреди теста недопустимы,
+# поэтому блоки готовятся заранее, пока человек отвечает на обычные вопросы.
+
+_LISTEN_TOPICS = [
+    "a morning routine in a big city", "an unusual job someone loves",
+    "why people started drinking coffee", "a small habit that changes the day",
+    "how a street market works", "a short trip that went wrong",
+    "living with a noisy neighbour", "learning to cook one dish well",
+    "a museum that almost closed", "why some shops stay open all night",
+    "an animal that adapted to cities", "a hobby that became a business",
+]
+
+_LISTEN_SYSTEM = (
+    "You write ultra-short podcast scripts for English learners and "
+    "comprehension questions about them.\n"
+    "Return STRICT JSON, one object, no markdown and no code fences:\n"
+    '{"script": "...", "questions": [{"q": "...", "choices": ["...","...","...","..."], '
+    '"correct": "..."}]}\n'
+    "Rules for script: single-host monologue in natural spoken English, "
+    "about %d words, CEFR %s vocabulary, no headings, no speaker tags, "
+    "no stage directions — plain prose that reads aloud well.\n"
+    "Rules for questions: EXACTLY %d questions. Both the question and all "
+    "four options are IN RUSSIAN — мы проверяем понимание на слух, а не "
+    "умение читать по-английски. Exactly one option is correct, the other "
+    "three are plausible but contradict the script. Ask about facts stated "
+    "in the script, not about opinions."
+)
+
+
+async def _generate_block(test_id: str, b: int, level: str) -> None:
+    """Сгенерировать подкаст и вопросы, положить в state. Fire-and-forget:
+    падение блока не должно ронять тест — пометим failed и пропустим."""
+    from .listening import (
+        _AUDIO_STORE, _AUDIO_TTL_SEC, _call_llm_for_script, _gc_audio_store,
+        _synthesize_full, _wrap_pcm_to_wav, OUTPUT_SAMPLE_RATE,
+    )
+    state = _TESTS.get(test_id)
+    if state is None:
+        return
+    blk = state["blocks"].setdefault(b, {})
+    blk.update({"status": "running", "level": level})
+    try:
+        system = _LISTEN_SYSTEM % (LISTEN_WORDS, level, Q_PER_BLOCK)
+        topic = random.choice(_LISTEN_TOPICS)
+        user = (
+            f"/no_think\nTopic: {topic}. Write the JSON now, "
+            f"~{LISTEN_WORDS} words in the script."
+        )
+        raw = await _call_llm_for_script(system, user, max_tokens=1200)
+        raw = re.sub(r"<think>.*?</think>\s*", "", raw, flags=re.DOTALL | re.IGNORECASE)
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        data = json.loads(m.group(0) if m else raw)
+        script = (data.get("script") or "").strip()
+        questions = [
+            q for q in (data.get("questions") or [])
+            if isinstance(q, dict)
+            and (q.get("q") or "").strip()
+            and isinstance(q.get("choices"), list)
+            and len(set(str(c).strip() for c in q["choices"] if str(c).strip())) == 4
+            and str(q.get("correct") or "").strip() in [str(c).strip() for c in q["choices"]]
+        ]
+        if not script or len(questions) < Q_PER_BLOCK:
+            raise ValueError(f"плохой JSON: script={len(script)} q={len(questions)}")
+        for q in questions:
+            q["choices"] = [str(c).strip() for c in q["choices"]]
+            q["correct"] = str(q["correct"]).strip()
+
+        pcm = await _synthesize_full(script, speed=1.0)
+        wav = _wrap_pcm_to_wav(pcm)
+        _gc_audio_store()
+        audio_id = secrets.token_urlsafe(16)
+        _AUDIO_STORE[audio_id] = (wav, time.time() + _AUDIO_TTL_SEC)
+
+        state = _TESTS.get(test_id)          # мог истечь, пока генерировали
+        if state is None:
+            return
+        state["blocks"][b] = {
+            "status": "ready", "level": level, "audio_id": audio_id,
+            "script": script, "questions": questions[:Q_PER_BLOCK],
+            "seconds": len(pcm) // 2 // OUTPUT_SAMPLE_RATE,
+        }
+        logger.info("[level-test] блок %d готов (%s, %d с)", b, level,
+                    state["blocks"][b]["seconds"])
+    except Exception as exc:
+        logger.warning("[level-test] блок %d не сгенерирован: %r", b, exc)
+        state = _TESTS.get(test_id)
+        if state is not None:
+            state["blocks"].setdefault(b, {})["status"] = "failed"
+
+
+def _kick_block(test_id: str, b: int, level: str) -> None:
+    """Запустить генерацию, если ещё не запускали."""
+    state = _TESTS.get(test_id)
+    if state is None:
+        return
+    if (state["blocks"].get(b) or {}).get("status") in ("running", "ready"):
+        return
+    state["blocks"].setdefault(b, {})["status"] = "running"
+    try:
+        asyncio.create_task(_generate_block(test_id, b, level))
+    except RuntimeError:
+        logger.warning("[level-test] нет event loop для генерации блока")
+
+
 def _grade(answers: list[dict]) -> dict:
     """Итог: CEFR, разбивка по уровням и навыкам, слабые места.
 
-    Уровень = самый высокий, на котором было не меньше MIN_ATTEMPTS_PER_LEVEL
-    попыток и доля верных не ниже PASS_RATIO. Ступени с одной попыткой
-    игнорируются как шум.
+    Уровень = самый высокий, на котором было не меньше
+    MIN_ATTEMPTS_PER_LEVEL попыток и доля верных не ниже PASS_RATIO.
+    Ступени с одной попыткой игнорируются как шум.
+
+    Аудирование в определение уровня НЕ входит: сложность подкаста
+    задаём мы сами, это не калиброванное измерение, и две угаданные
+    догадки могли бы поднять уровень на ступень. Оно идёт отдельным
+    показателем в разбивке по навыкам.
     """
     by_level: dict[str, dict] = {lv: {"correct": 0, "total": 0} for lv in LEVELS}
     by_skill: dict[str, dict] = {}
     for a in answers:
-        lv = a["level"]
+        sk = a.get("skill") or "other"
+        st = by_skill.setdefault(sk, {"correct": 0, "total": 0})
+        st["total"] += 1
+        st["correct"] += int(bool(a["correct"]))
+        lv = a.get("level")
+        if sk == "listening" or lv not in by_level:
+            continue
         by_level[lv]["total"] += 1
         by_level[lv]["correct"] += int(bool(a["correct"]))
-        sk = by_skill.setdefault(a["skill"], {"correct": 0, "total": 0})
-        sk["total"] += 1
-        sk["correct"] += int(bool(a["correct"]))
 
     cefr = LEVELS[0]
     for lv in LEVELS:  # снизу вверх — остаётся самый высокий пройденный
@@ -155,6 +406,7 @@ def _grade(answers: list[dict]) -> dict:
         "by_level": {lv: st for lv, st in by_level.items() if st["total"]},
         "by_skill": by_skill,
         "weak_skills": weak,
+        "listening": by_skill.get("listening"),
     }
 
 
@@ -192,11 +444,38 @@ async def _resolve(init_data: Optional[str], authorization: Optional[str]) -> Op
 
 # ─── Эндпоинты ──────────────────────────────────────────────────────────────
 
+async def _finish(state: dict) -> dict:
+    """Посчитать итог и записать его. Результат возвращается в любом
+    случае: провал записи в БД не должен лишать человека результата."""
+    result = _grade(state["answers"])
+    state["result"] = result
+    if state.get("user_id") is not None:
+        from .db import Repo
+        try:
+            async with db_session() as session:
+                repo = Repo(session)
+                state["db_id"] = await repo.save_level_test(
+                    user_id=state["user_id"], cefr=result["cefr"],
+                    correct_cnt=result["correct_cnt"],
+                    total_cnt=result["total_cnt"],
+                    answers=state["answers"],
+                )
+                await session.commit()
+        except Exception as exc:
+            # До миграции 0035 таблицы нет — результат важнее записи.
+            logger.warning("[level-test] не сохранён: %r", exc)
+    return result
+
+
 @router.post("/start")
 async def start_test(
     body: _StartIn, authorization: Optional[str] = Header(None),
 ) -> dict:
-    """Начать тест. Первый вопрос отдаётся сразу — LLM не участвует."""
+    """Начать тест. Первый вопрос отдаётся сразу — LLM не участвует.
+
+    Здесь же запускается фоновая генерация первого блока аудирования: пока
+    человек отвечает на первые вопросы, подкаст успевает сгенерироваться.
+    """
     user_id = await _resolve(body.init_data, authorization)
     _gc_tests()
     test_id = secrets.token_urlsafe(16)
@@ -205,97 +484,126 @@ async def start_test(
         "level_idx": START_LEVEL_IDX,
         "used": set(),
         "answers": [],
+        "plan": _build_plan(),
+        "pos": 0,
+        "blocks": {},
         "expires_at": time.time() + _TEST_TTL_SEC,
     }
-    q = _pick(state)
-    if q is None:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "bank_empty")
-    state["used"].add(q["id"])
-    state["current"] = q["id"]
     _TESTS[test_id] = state
+
+    # Первый блок — на стартовом уровне: до ответов судить не о чем.
+    _kick_block(test_id, 0, LEVELS[START_LEVEL_IDX])
+
+    screen = _next_screen(state)
+    if screen is None:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "bank_empty")
 
     prev = None
     if user_id is not None:
         from .db import Repo
         async with db_session() as session:
             prev = await Repo(session).last_level_test(user_id)
-    return {
-        "test_id": test_id,
-        "question": _public(q, index=1),
-        "previous": prev,
-    }
+    return {"test_id": test_id, "question": screen, "previous": prev}
 
 
 @router.post("/answer")
 async def answer_question(
     body: _AnswerIn, authorization: Optional[str] = Header(None),
 ) -> dict:
-    """Принять ответ, вернуть разбор и следующий вопрос.
+    """Принять ответ (или подтверждение «прослушал»), вернуть следующий экран.
 
-    На последнем вопросе здесь же приходит готовый результат — клиент
+    На последнем задании здесь же приходит готовый результат — клиент
     показывает уровень мгновенно, не дожидаясь AI-разбора.
     """
     state = _TESTS.get(body.test_id)
     if state is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "test_not_found")
-    if state["current"] != body.question_id:
+    if state.get("current") != body.question_id:
         raise HTTPException(status.HTTP_409_CONFLICT, "wrong_question")
-    q = BY_ID.get(body.question_id)
-    if q is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "question_not_found")
-
-    is_correct = body.answer.strip() == q["correct"]
-    state["answers"].append({
-        "id": q["id"], "level": q["level"], "skill": q["skill"],
-        "correct": is_correct, "answer": body.answer.strip()[:200],
-    })
-    # Лестница: верно — ступень вверх, неверно — вниз.
-    state["level_idx"] = max(0, min(
-        len(LEVELS) - 1,
-        state["level_idx"] + (1 if is_correct else -1),
-    ))
     state["expires_at"] = time.time() + _TEST_TTL_SEC
 
-    feedback = {
-        "correct": is_correct,
-        "correct_answer": q["correct"],
-        "note": q["note"],
-    }
+    feedback: dict = {}
+    kind = state.get("current_kind")
 
-    if len(state["answers"]) >= TOTAL_QUESTIONS:
-        result = _grade(state["answers"])
-        state["result"] = result
-        state["current"] = None
-        if state["user_id"] is not None:
-            from .db import Repo
-            try:
-                async with db_session() as session:
-                    repo = Repo(session)
-                    state["db_id"] = await repo.save_level_test(
-                        user_id=state["user_id"], cefr=result["cefr"],
-                        correct_cnt=result["correct_cnt"],
-                        total_cnt=result["total_cnt"],
-                        answers=state["answers"],
-                    )
-                    await session.commit()
-            except Exception as exc:
-                # До миграции 0035 таблицы нет — результат важнее записи.
-                logger.warning("[level-test] не сохранён: %r", exc)
-        return {**feedback, "done": True, "result": result}
+    if kind == "audio":
+        # Экран прослушивания — это не задание, просто листаем дальше.
+        b = int(str(body.question_id).split(":")[1])
+        blk = state["blocks"].get(b) or {}
+        if blk.get("status") == "failed":
+            _drop_block(state, b)
+            screen = _next_screen(state)
+            if screen is not None:
+                return {"correct": None, "done": False, "question": screen}
+            return {"correct": None, "done": True,
+                    "result": await _finish(state)}
+        if blk.get("status") != "ready":
+            # Ещё генерится — клиент опрашивает /listen и не листает дальше.
+            raise HTTPException(status.HTTP_409_CONFLICT, "audio_not_ready")
+        feedback = {"correct": None}
+    else:
+        if kind == "listening":
+            _, bs, ks = str(body.question_id).split(":")
+            blk = state["blocks"].get(int(bs)) or {}
+            q = (blk.get("questions") or [])[int(ks)]
+            correct_answer, level, skill = q["correct"], blk.get("level"), "listening"
+            note = ""
+        else:
+            q = BY_ID.get(body.question_id)
+            if q is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "question_not_found")
+            correct_answer, level, skill = q["correct"], q["level"], q.get("skill", kind)
+            note = q.get("note") or ""
 
-    nxt = _pick(state)
-    if nxt is None:
-        result = _grade(state["answers"])
-        state["result"] = result
-        state["current"] = None
-        return {**feedback, "done": True, "result": result}
-    state["used"].add(nxt["id"])
-    state["current"] = nxt["id"]
-    return {
-        **feedback,
-        "done": False,
-        "question": _public(nxt, index=len(state["answers"]) + 1),
-    }
+        is_correct = body.answer.strip() == correct_answer
+        state["answers"].append({
+            "id": str(body.question_id), "level": level, "skill": skill,
+            "correct": is_correct, "answer": body.answer.strip()[:200],
+        })
+        # Лестница: верно — ступень вверх, неверно — вниз. Аудирование в
+        # ней не участвует: его сложность задаём мы сами, это не измерение.
+        if skill != "listening":
+            state["level_idx"] = max(0, min(
+                len(LEVELS) - 1,
+                state["level_idx"] + (1 if is_correct else -1),
+            ))
+        feedback = {
+            "correct": is_correct,
+            "correct_answer": correct_answer,
+            "note": note,
+        }
+
+        # Второй блок готовим, когда лестница уже нащупала уровень.
+        if len(state["answers"]) == BLOCK2_TRIGGER_ANSWER and N_BLOCKS > 1:
+            _kick_block(body.test_id, 1, LEVELS[state["level_idx"]])
+
+    state["pos"] += 1
+    screen = _next_screen(state)
+    if screen is not None:
+        return {**feedback, "done": False, "question": screen}
+
+    return {**feedback, "done": True, "result": await _finish(state)}
+
+
+class _ListenIn(BaseModel):
+    init_data: Optional[str] = None
+    test_id: str
+    block: int
+
+
+@router.post("/listen")
+async def listen_status(
+    body: _ListenIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Готов ли подкаст. Клиент опрашивает, пока идёт фоновая генерация.
+
+    В норме к моменту показа блок уже готов — этот эндпоинт нужен на
+    случай медленной генерации или холодного Kokoro.
+    """
+    state = _TESTS.get(body.test_id)
+    if state is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "test_not_found")
+    state["expires_at"] = time.time() + _TEST_TTL_SEC
+    return _block_screen(state, int(body.block), state["pos"] + 1)
 
 
 _REPORT_SYSTEM = (
@@ -332,9 +640,15 @@ async def build_report(
         if not a["correct"] and a["id"] in BY_ID
     ][:6]
     missed_lines = "\n".join(
-        f"- [{q['level']}/{q['skill']}] {q['prompt']} → правильно «{q['correct']}». {q['note']}"
+        f"- [{q['level']}/{q.get('skill')}] {q['prompt']} → правильно "
+        f"«{q['correct']}»." + (f" {q['note']}" if q.get("note") else "")
         for q in missed
     ) or "- ошибок почти не было"
+    lst = result.get("listening")
+    listen_line = (
+        f"Понимание на слух: {lst['correct']} из {lst['total']}."
+        if lst and lst.get("total") else "Аудирование не засчиталось."
+    )
     skills_line = ", ".join(
         f"{sk} {st['correct']}/{st['total']}"
         for sk, st in sorted(result["by_skill"].items())
@@ -344,6 +658,7 @@ async def build_report(
         f"Уровень по тесту: {result['cefr']}. "
         f"Верных ответов: {result['correct_cnt']} из {result['total_cnt']}.\n"
         f"По навыкам: {skills_line}.\n"
+        f"{listen_line}\n"
         f"Ошибки:\n{missed_lines}\n\n"
         "Напиши разбор по структуре из системного промпта."
     )
