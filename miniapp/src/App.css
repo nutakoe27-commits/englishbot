@@ -1528,7 +1528,7 @@ button {
   padding: 10px 8px;
   border-radius: 12px;
   border: 1px solid var(--border-strong);
-  background: var(--bg-1);
+  background: var(--bg-2);
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
@@ -4129,3 +4129,193 @@ button {
   .cab-bill__tab { font-size: 12.5px; }
   .cab-sort__btn { font-size: 11.5px; padding: 5px 8px; }
 }
+
+/* ─── Тест уровня (миграция 0035) ────────────────────────────────────
+   Прохождение переиспользует .grm-* — тот же визуальный язык, что в
+   грамматике. Здесь только вступление и экран результата. */
+.lvt-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 0 24px;
+}
+.lvt-intro__icon { font-size: 40px; line-height: 1; }
+.lvt-intro__lead {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+.lvt-intro__list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.lvt-intro__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+.lvt-error {
+  margin: 0;
+  font-size: 13px;
+  color: #d04646;
+}
+.lvt-prev {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.lvt-result {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px 0 24px;
+}
+.lvt-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 20px 16px;
+  border-radius: var(--radius-lg, 16px);
+  border: 1px solid var(--border-accent);
+  background: var(--accent-tint);
+}
+.lvt-badge__label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+.lvt-badge__cefr {
+  font-family: var(--font-display);
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent-deep);
+}
+.lvt-badge__score { font-size: 13px; color: var(--text-dim); }
+.lvt-meaning {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.lvt-skills {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-2);
+}
+.lvt-skills__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.lvt-skill {
+  display: grid;
+  grid-template-columns: 96px 1fr 38px;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.lvt-skill__bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-strong);
+  overflow: hidden;
+}
+.lvt-skill__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.lvt-skill__fill[data-weak="1"] { background: #d04646; }
+.lvt-skill__num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.lvt-report {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-2);
+}
+.lvt-report__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.lvt-report__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.lvt-report__text--muted { color: var(--text-faint); }
+/* Скелетон: уровень уже виден, разбор догружается — показываем это честно. */
+.lvt-skeleton { display: flex; flex-direction: column; gap: 8px; }
+.lvt-skeleton span {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg,
+    var(--border-strong) 25%, var(--bg-2, var(--bg-2)) 37%, var(--border-strong) 63%);
+  background-size: 400% 100%;
+  animation: lvt-shimmer 1.4s ease infinite;
+}
+.lvt-skeleton span:nth-child(2) { width: 92%; }
+.lvt-skeleton span:nth-child(3) { width: 68%; }
+@keyframes lvt-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+.lvt-secondary {
+  background: transparent;
+  border: 0;
+  padding: 6px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* Вход в тест уровня на главном экране. Не карточка режима: тест
+   проходят раз в пару месяцев, а не каждый день. */
+.ms-level-test {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border-accent);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.ms-level-test:active { transform: scale(0.99); }
+.ms-level-test__icon { font-size: 22px; line-height: 1; }
+.ms-level-test__text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.ms-level-test__title { font-size: 14px; font-weight: 700; }
+.ms-level-test__sub { font-size: 12px; line-height: 1.4; color: var(--text-dim); }
+.ms-level-test__arrow { color: var(--accent-deep); font-size: 16px; }

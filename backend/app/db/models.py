@@ -81,6 +81,12 @@ class User(Base):
     bot_activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     tutorial_done_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
+    # ── Тест уровня (миграция 0035) ──
+    # Результат последнего теста. Подхватывают все режимы, поэтому поле
+    # на юзере, а не только в истории прохождений.
+    cefr_level: Mapped[Optional[str]] = mapped_column(String(4))
+    cefr_tested_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
     # ── Рефералка (миграция 0032) ──
     # Личный код приглашения: t.me/<bot>?start=ref_<ref_code>. Выдаётся лениво
     # при первом открытии /invite — у старых юзеров NULL.
@@ -658,4 +664,24 @@ class ListeningTopic(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     category: Mapped[str] = mapped_column(String(32), nullable=False)
     topic: Mapped[str] = mapped_column(String(160), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class LevelTest(Base):
+    """Прохождение теста уровня (миграция 0035).
+
+    answers — [{id, level, skill, correct}, ...]: тексты заданий лежат в
+    коде (level_test_bank), поэтому хранить их в БД незачем, а по id
+    прохождение восстанавливается полностью.
+    """
+
+    __tablename__ = "level_tests"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    cefr: Mapped[str] = mapped_column(String(4), nullable=False)
+    correct_cnt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_cnt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    answers: Mapped[Optional[dict]] = mapped_column(JSON)
+    report: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

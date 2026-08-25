@@ -1024,6 +1024,16 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
             }
             tone={u.has_subscription ? "success" : "muted"}
           />
+          {u.cefr_level && (
+            <StatusPill
+              label="Уровень (тест)"
+              value={
+                u.cefr_level +
+                (u.cefr_tested_at ? ` · ${fmtDate(u.cefr_tested_at)}` : "")
+              }
+              tone="muted"
+            />
+          )}
           {u.trial_active && (
             <StatusPill
               label="Приветственные дни"

@@ -151,6 +151,9 @@ export interface UserDetail extends UserBrief {
   /** Приветственные дни полного доступа (миграция 0033). */
   trial_active?: boolean;
   trial_until?: string | null;
+  /** Уровень по тесту (миграция 0035). */
+  cefr_level?: string | null;
+  cefr_tested_at?: string | null;
 }
 
 export interface MaintenanceSettings {

@@ -15,6 +15,7 @@ import { BattleScreen } from "./BattleScreen";
 import { ModeSelector, type Mode } from "./ModeSelector";
 import { ListeningScreen } from "./ListeningScreen";
 import { GrammarScreen } from "./GrammarScreen";
+import { LevelTestScreen } from "./LevelTestScreen";
 import { SrsScreen } from "./SrsScreen";
 import { LoginScreen } from "./LoginScreen";
 import { LandingScreen } from "./LandingScreen";
@@ -343,6 +344,8 @@ function TabShell({
     body = <ListeningScreen onExit={exitMode} />;
   } else if (mode === "grammar") {
     body = <GrammarScreen onExit={exitMode} />;
+  } else if (mode === "level") {
+    body = <LevelTestScreen onExit={exitMode} />;
   } else if (tab === "home") {
     body = (
       <ModeSelector

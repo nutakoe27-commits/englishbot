@@ -135,6 +135,10 @@ class UserDetail(UserBrief):
     # иначе в поддержке не отличить оплатившего от новичка.
     trial_active: bool = False
     trial_until: Optional[str] = None
+    # Уровень по тесту (миграция 0035) — поддержке полезно видеть,
+    # проходил ли человек тест и что получилось.
+    cefr_level: Optional[str] = None
+    cefr_tested_at: Optional[str] = None
 
 
 class GrantRequest(BaseModel):
@@ -242,6 +246,10 @@ async def _user_to_detail(repo: Repo, u) -> UserDetail:
         achievements_total=achievements_total,
         grammar_topics_done=grammar_done,
         grammar_topics_total=grammar_total,
+        cefr_level=getattr(u, "cefr_level", None),
+        cefr_tested_at=(
+            u.cefr_tested_at.isoformat() if getattr(u, "cefr_tested_at", None) else None
+        ),
         trial_active=Repo.in_free_trial(u),
         trial_until=(
             Repo.free_trial_until(u).isoformat()

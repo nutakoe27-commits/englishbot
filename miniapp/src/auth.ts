@@ -719,3 +719,82 @@ export async function verifySession(): Promise<boolean> {
     return true;
   }
 }
+
+
+// ─── Тест уровня (миграция 0035) ─────────────────────────────────────
+// Во время прохождения LLM не участвует: вопросы приходят из
+// калиброванного банка, поэтому каждый шаг — обычный быстрый POST.
+
+export interface LevelQuestion {
+  id: string;
+  index: number;
+  total: number;
+  level: string;
+  skill: string;
+  prompt: string;
+  choices: string[];
+}
+
+export interface LevelResult {
+  cefr: string;
+  correct_cnt: number;
+  total_cnt: number;
+  by_level: Record<string, { correct: number; total: number }>;
+  by_skill: Record<string, { correct: number; total: number }>;
+  weak_skills: string[];
+}
+
+export interface LevelStart {
+  test_id: string;
+  question: LevelQuestion;
+  previous: {
+    cefr: string;
+    created_at: string | null;
+    correct_cnt: number;
+    total_cnt: number;
+  } | null;
+}
+
+export interface LevelAnswer {
+  correct: boolean;
+  correct_answer: string;
+  note: string;
+  done: boolean;
+  question?: LevelQuestion;
+  result?: LevelResult;
+}
+
+/** initData Telegram Mini App, если мы внутри Telegram. На вебе — "",
+ *  там авторизация идёт по JWT через monkeypatch window.fetch. */
+function _initData(): string {
+  try {
+    const tg = (window as unknown as {
+      Telegram?: { WebApp?: { initData?: string } };
+    }).Telegram;
+    return tg?.WebApp?.initData || "";
+  } catch {
+    return "";
+  }
+}
+
+async function _levelPost<T>(path: string, body: Record<string, unknown>): Promise<T | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/level-test/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ..._authHeaders() },
+      body: JSON.stringify({ init_data: _initData(), ...body }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+export const startLevelTest = () => _levelPost<LevelStart>("start", {});
+
+export const answerLevelTest = (test_id: string, question_id: string, answer: string) =>
+  _levelPost<LevelAnswer>("answer", { test_id, question_id, answer });
+
+export const fetchLevelReport = (test_id: string) =>
+  _levelPost<{ report: string }>("report", { test_id });
