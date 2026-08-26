@@ -21,6 +21,7 @@ import { Icon } from "./ds-react/Icon";
 import { SerifH } from "./ds-react/typography";
 import { useLucide } from "./lucide";
 import { TRIAL_PERIOD } from "./trial";
+import { PushPrompt } from "./PushPrompt";
 
 interface Props {
   open: boolean;
@@ -187,6 +188,15 @@ export function OnboardingModal({ open, markDoneOnFinish, onClose, onStart }: Pr
         </div>
         <SerifH as="h2" size={24} className="ob-v2__title">{current.title}</SerifH>
         <div className="ob-v2__body">{current.body}</div>
+
+        {/* Последний шаг — момент, когда человек уже согласился завести
+            аккаунт: барьер доверия пройден, спрашивать уместно. */}
+        {isLast && (
+          <PushPrompt
+            place="onboarding"
+            text="Напоминать о занятиях? Короткое уведомление в браузере — приходит, даже если Telegram недоступен."
+          />
+        )}
 
         <div className="ob-v2__dots" role="tablist" aria-label="Шаги">
           {STEPS.map((_, i) => (

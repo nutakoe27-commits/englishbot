@@ -33,6 +33,7 @@ import {
   type LevelResult,
 } from "./auth";
 import { LandingNav } from "./LandingNav";
+import { PushPrompt } from "./PushPrompt";
 import { TRIAL_PERIOD } from "./trial";
 import { ymHit, ymReachGoal } from "./metrika";
 import "./Landing.css";
@@ -493,6 +494,15 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
                   <span /><span /><span />
                 </div>
               )}
+
+              {/* Ниже основного блока намеренно: сюда приходит холодный
+                  трафик, и вопрос про уведомления не должен перетягивать
+                  внимание с регистрации. Зато он достаётся и тем, кто так и
+                  не зарегистрируется, — другого шанса их позвать не будет. */}
+              <PushPrompt
+                place="level"
+                text="Напоминать о занятиях? Короткое уведомление в браузере — работает без Telegram и без установки."
+              />
             </div>
 
             <Accuracy />
