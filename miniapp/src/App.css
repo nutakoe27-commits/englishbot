@@ -3779,6 +3779,18 @@ button {
   height: auto;
   padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
 }
+/* КРИТИЧНО. Раз скролл наружный (.app-shell__body), внутренняя зона
+   .mode-selector__main НЕ должна быть скролл-контейнером. Иначе она
+   ловит жест в середине экрана, прокручивать ей нечего (высота по
+   контенту), а overscroll-behavior: contain запрещает передать жест
+   родителю — палец в середине не прокручивает ничего, а у краёв, где
+   он попадает на паддинг .mode-selector, всё работает.
+   Именно этот баг ловили: «по краям крутится, в середине нет». */
+.app-shell__body > .mode-selector .mode-selector__main {
+  overflow: visible;
+  overscroll-behavior: auto;
+  flex: 0 0 auto;
+}
 
 /* Desktop (≥768px): отпускаем ВСЕ inner-scroll контейнеры. Shell растёт
  * по контенту, скроллит окно, BottomNav становится sticky внизу
