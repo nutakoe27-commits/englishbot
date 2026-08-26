@@ -73,13 +73,21 @@ LISTEN_WORDS = 150           # ~1 минута речи
 # Второй подкаст запускаем, когда лестница уже нащупала уровень.
 BLOCK2_TRIGGER_ANSWER = 7
 
-# Короткая версия для лендинга: 10 заданий из банка, без подкастов.
-# Грамматики больше, чем слов: она точнее разводит соседние ступени.
-SHORT_GRAMMAR = 6
-SHORT_VOCAB = 4
+# Версия для лендинга: 26 заданий из банка, без подкастов. Столько же
+# экранов, сколько в полном тесте, — просто вместо двух блоков аудирования
+# идут задания из банка, которые ничего не стоят и не требуют ожидания.
+#
+# Почему 26, а не 10: на симуляции тест из 10 заданий попадал точно в
+# уровень в 64% случаев, из 26 — в 80%. Сплит между грамматикой и словами
+# при этом почти не влияет. Таблица замеров — в docs/level-test.md.
+SHORT_GRAMMAR = 13
+SHORT_VOCAB = 13
 # Сколько анонимных тестов пускаем с одного IP в час. Генерации здесь нет,
-# так что защищаемся не от расходов, а от засорения _TESTS.
-ANON_STARTS_PER_HOUR = 12
+# так что защищаемся не от расходов, а от засорения _TESTS — отсюда и
+# щедрый лимит. Занижать нельзя: мобильные операторы держат десятки
+# реальных людей за одним адресом (CGNAT), и жёсткий порог отрезал бы
+# живой трафик раньше, чем ботов.
+ANON_STARTS_PER_HOUR = 60
 
 START_LEVEL_IDX = LEVELS.index("B1")
 # Уровень засчитывается, если по нему было хотя бы столько попыток...
@@ -517,6 +525,34 @@ def _trim_result(result: dict) -> dict:
     }
 
 
+# Дольше этого шаг воронки не ждём. Короткий тест — единственный сценарий,
+# который в остальном обходится без БД вообще: без таймаута недоступная
+# база превратила бы «начать тест» в зависший экран.
+_LEAD_TIMEOUT_SEC = 3.0
+
+
+async def _lead_write(method: str, **kwargs) -> None:
+    """Шаг воронки лендинга. Никогда не роняет тест.
+
+    До миграции 0036 таблицы нет, и это нормально: аналитика не должна
+    стоить человеку результата. Поэтому любая ошибка только логируется,
+    а ожидание ограничено таймаутом.
+    """
+    if not settings.DATABASE_URL:
+        return
+    from .db import Repo
+
+    async def _run() -> None:
+        async with db_session() as session:
+            await getattr(Repo(session), method)(**kwargs)
+            await session.commit()
+
+    try:
+        await asyncio.wait_for(_run(), timeout=_LEAD_TIMEOUT_SEC)
+    except Exception as exc:
+        logger.warning("[level-test] воронка (%s) не записана: %r", method, exc)
+
+
 async def _resolve(init_data: Optional[str], authorization: Optional[str]) -> Optional[int]:
     """user_id или None, если БД не настроена. Ошибку авторизации пробрасываем."""
     if not settings.DATABASE_URL:
@@ -538,6 +574,21 @@ async def _finish(state: dict) -> dict:
     случае: провал записи в БД не должен лишать человека результата."""
     result = _grade(state["answers"])
     state["result"] = result
+    public = bool(state.get("public"))
+    if public and state.get("test_id"):
+        await _lead_write(
+            "landing_lead_finish", test_id=state["test_id"],
+            cefr=result["cefr"], correct_cnt=result["correct_cnt"],
+            total_cnt=result["total_cnt"],
+        )
+        # Залогиненный проходит тест на лендинге без шага /claim — но для
+        # воронки он такой же «дошедший до аккаунта», иначе конверсия
+        # окажется занижена.
+        if state.get("user_id") is not None:
+            await _lead_write(
+                "landing_lead_claim", test_id=state["test_id"],
+                user_id=state["user_id"],
+            )
     if state.get("user_id") is not None:
         from .db import Repo
         try:
@@ -548,12 +599,13 @@ async def _finish(state: dict) -> dict:
                     correct_cnt=result["correct_cnt"],
                     total_cnt=result["total_cnt"],
                     answers=state["answers"],
+                    source="landing" if public else "app",
                 )
                 await session.commit()
         except Exception as exc:
             # До миграции 0035 таблицы нет — результат важнее записи.
             logger.warning("[level-test] не сохранён: %r", exc)
-    if state.get("public") and state.get("user_id") is None:
+    if public and state.get("user_id") is None:
         return _trim_result(result)
     return result
 
@@ -586,6 +638,7 @@ async def start_test(
     _gc_tests()
     test_id = secrets.token_urlsafe(16)
     state = {
+        "test_id": test_id,
         "user_id": user_id,
         "public": short,
         "level_idx": START_LEVEL_IDX,
@@ -600,6 +653,11 @@ async def start_test(
         "expires_at": time.time() + _TEST_TTL_SEC,
     }
     _TESTS[test_id] = state
+
+    # Воронка лендинга: без отметки о старте нельзя посчитать, сколько
+    # человек бросили тест на середине, а для лендинга это ключевая цифра.
+    if short:
+        await _lead_write("landing_lead_start", test_id=test_id)
 
     # Первый блок — на стартовом уровне: до ответов судить не о чем.
     if not short:
@@ -651,6 +709,7 @@ async def claim_test(
                 correct_cnt=result["correct_cnt"],
                 total_cnt=result["total_cnt"],
                 answers=state["answers"],
+                source="landing" if state.get("public") else "app",
             )
             if state.get("report"):
                 await repo.attach_level_test_report(
@@ -660,6 +719,14 @@ async def claim_test(
     except Exception as exc:
         # Результат человеку важнее записи — показываем разбор в любом случае.
         logger.warning("[level-test] claim не сохранён: %r", exc)
+    # Отдельной сессией: воронка — аналитика, и её проблемы не должны
+    # откатывать транзакцию с самим результатом.
+    if state.get("public"):
+        await _lead_write(
+            "landing_lead_claim",
+            test_id=str(state.get("test_id") or body.test_id),
+            user_id=user_id,
+        )
     return {"result": result}
 
 

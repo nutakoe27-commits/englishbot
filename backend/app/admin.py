@@ -1146,6 +1146,35 @@ _AD_CODE_OK = set(
 )
 
 
+@router.get("/level-tests", dependencies=[Depends(require_admin_token)])
+async def admin_level_tests(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict:
+    """Тест уровня: воронка публичного лендинга + прохождения в приложении.
+
+    Воронка считается по level_test_leads (миграция 0036): анонимный тест
+    не создаёт юзера, поэтому по level_tests не видно ни сколько человек
+    его начали, ни сколько бросили на середине.
+    """
+    async with db_session() as s:
+        repo = Repo(s)
+        overview = await repo.level_test_overview(days)
+        feed = await repo.level_test_feed(limit=limit)
+    from .level_test import (
+        SHORT_GRAMMAR, SHORT_VOCAB, TOTAL_QUESTIONS, TOTAL_SCREENS,
+    )
+    return {
+        "overview": overview,
+        "feed": feed,
+        "landing_questions": SHORT_GRAMMAR + SHORT_VOCAB,
+        "landing_grammar": SHORT_GRAMMAR,
+        "landing_vocab": SHORT_VOCAB,
+        "app_questions": TOTAL_QUESTIONS,
+        "app_screens": TOTAL_SCREENS,
+    }
+
+
 @router.get("/adlinks", dependencies=[Depends(require_admin_token)])
 async def admin_list_adlinks() -> dict:
     async with db_session() as s:

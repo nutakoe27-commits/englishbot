@@ -365,7 +365,53 @@ export const api = {
     request<{ items: AdLinkHit[]; total: number }>(
       `/api/admin/adlinks/${id}/hits?limit=${limit}`,
     ),
+
+  // ─── Тест уровня ──────────────────────────────────────
+  levelTests: (days = 30, limit = 50) =>
+    request<LevelTestsResponse>(
+      `/api/admin/level-tests?days=${days}&limit=${limit}`,
+    ),
 };
+
+// ─── Тест уровня (миграции 0035 и 0036) ──────────────────────────────────────
+
+export interface LevelTestOverview {
+  period_days: number;
+  /** Воронка публичного лендинга /level за период. */
+  started: number;
+  finished: number;
+  claimed: number;
+  /** То же самое за всё время. */
+  all_started: number;
+  all_finished: number;
+  all_claimed: number;
+  /** Распределение уровней по завершённым прохождениям с лендинга. */
+  landing_levels: Record<string, number>;
+  /** Распределение уровней по записанным в историю прохождениям. */
+  test_levels: Record<string, number>;
+  /** Записанные прохождения по источникам: app / landing. */
+  tests_by_source: Record<string, number>;
+}
+
+export interface LevelTestLeadItem {
+  started_at: string | null;
+  finished_at: string | null;
+  cefr: string | null;
+  correct_cnt: number | null;
+  total_cnt: number | null;
+  claimed_user_id: number | null;
+  claimed_at: string | null;
+}
+
+export interface LevelTestsResponse {
+  overview: LevelTestOverview;
+  feed: LevelTestLeadItem[];
+  landing_questions: number;
+  landing_grammar: number;
+  landing_vocab: number;
+  app_questions: number;
+  app_screens: number;
+}
 
 // ─── Рефералка (миграция 0032) ───────────────────────────────────────────────
 export interface ReferralOverview {

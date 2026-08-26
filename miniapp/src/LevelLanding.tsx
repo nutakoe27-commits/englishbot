@@ -12,8 +12,10 @@
  * (см. level_test._trim_result), так что «замочек» здесь настоящий, а не
  * нарисованный поверх уже полученных данных.
  *
- * Версия теста короткая: 10 заданий из банка, без подкастов. Это осознанно —
- * анонимный трафик не должен ни разу дёрнуть LLM или синтез речи.
+ * Заданий 26 — столько же экранов, сколько в полном тесте внутри
+ * приложения, но все из банка: анонимный трафик не должен ни разу дёрнуть
+ * LLM или синтез речи. На десяти заданиях тест попадал точно в уровень в
+ * 64% случаев, на двадцати шести — в 80%, поэтому длину выбрали такую.
  *
  * Переживание входа. Вход через Яндекс ID делает полную перезагрузку и
  * возвращает на корень сайта, поэтому test_id и уже показанный уровень
@@ -41,6 +43,13 @@ export const LEVEL_INTENT_KEY = "et_level_intent";
 const SAVE_KEY = "et_level_result";
 /** Столько же живёт состояние теста на сервере (_TEST_TTL_SEC). */
 const SAVE_TTL_MS = 60 * 60 * 1000;
+
+/** Сколько заданий в тесте — для текстов до его начала. Держать в согласии
+ *  с SHORT_GRAMMAR + SHORT_VOCAB в backend/app/level_test.py; во время
+ *  прохождения число берётся из ответа сервера (screen.total). */
+const QUESTIONS = 26;
+/** Оценка времени: примерно 13 секунд на задание вместе с разбором. */
+const MINUTES = "шесть";
 
 interface Props {
   /** Юзер уже вошёл — разбор открывается без стены. */
@@ -500,11 +509,11 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
       <section className="lvl-hero">
         <div className="lp-container lvl-hero__inner">
           <span className="lp-eyebrow">Бесплатно, без регистрации</span>
-          <h1 className="lp-h1">Узнай свой уровень английского за 3 минуты</h1>
+          <h1 className="lp-h1">Узнай свой настоящий уровень английского</h1>
           <p className="lvl-hero__sub">
-            Десять заданий на грамматику и слова. Тест адаптивный: ответил
-            верно — следующее сложнее, ошибся — проще. Уровень по шкале CEFR
-            увидишь сразу на этой же странице.
+            {QUESTIONS} заданий на грамматику и слова, около {MINUTES} минут.
+            Тест адаптивный: ответил верно — следующее сложнее, ошибся —
+            проще. Уровень по шкале CEFR увидишь сразу на этой же странице.
           </p>
           {error && <p className="lvl-error">{error}</p>}
           <button
@@ -519,8 +528,8 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
             Ничего вводить не нужно — просто выбирай варианты.
           </p>
           <div className="lvl-hero__facts">
-            <span className="lvl-hero__fact">10 заданий</span>
-            <span className="lvl-hero__fact">около 3 минут</span>
+            <span className="lvl-hero__fact">{QUESTIONS} заданий</span>
+            <span className="lvl-hero__fact">около {MINUTES} минут</span>
             <span className="lvl-hero__fact">результат сразу на экране</span>
           </div>
         </div>
@@ -532,7 +541,7 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
           <div className="lvl-steps">
             <div className="lvl-step">
               <span className="lvl-step__num">1</span>
-              <p className="lvl-step__title">Отвечаешь на 10 заданий</p>
+              <p className="lvl-step__title">Отвечаешь на {QUESTIONS} заданий</p>
               <p className="lvl-step__body">
                 Вопросы подстраиваются под твои ответы, поэтому уровень
                 определяется точнее, чем фиксированным списком. После каждого
@@ -599,8 +608,8 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
             <details className="lp-faq__item">
               <summary>Сколько это займёт?</summary>
               <div className="lp-faq__answer">
-                Около трёх минут. Десять заданий с вариантами ответа, писать
-                ничего не надо.
+                Около {MINUTES} минут. {QUESTIONS} заданий с вариантами
+                ответа, писать ничего не надо.
               </div>
             </details>
             <details className="lp-faq__item">
@@ -625,7 +634,9 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
 
       <section className="lp-section lp-final">
         <div className="lp-container lp-final__inner">
-          <h2 className="lp-h2 lp-h2--center">Три минуты — и ты знаешь, где ты</h2>
+          <h2 className="lp-h2 lp-h2--center">
+            Несколько минут — и гадать больше не нужно
+          </h2>
           <button
             type="button"
             className="lp-btn lp-btn--primary lp-btn--lg"
@@ -652,11 +663,12 @@ function Accuracy() {
     <div className="lvl-accuracy">
       <h2 className="lp-h2 lp-h2--center">Насколько это точно</h2>
       <p className="lvl-accuracy__text">
-        Десять заданий — экспресс-оценка. Почти всегда она попадает в твой
-        уровень или в соседний, и для «понять, где я» этого достаточно.
-        Полная версия внутри приложения длиннее: двадцать четыре задания плюс
-        два подкаста на понимание на слух. Там оценка точнее, и она же
-        настраивает разговор, подкасты и грамматику под тебя.
+        Двадцать шесть заданий — это измерение, а не викторина. На проверке
+        тест попадает точно в уровень примерно в восьми случаях из десяти, а
+        в свой или соседний — в девятнадцати из двадцати. Столько же заданий
+        в версии внутри приложения, но часть из них там — подкасты: она
+        дополнительно меряет понимание на слух, сохраняет результат в
+        историю и настраивает под него разговор, подкасты и грамматику.
       </p>
     </div>
   );

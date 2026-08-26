@@ -685,3 +685,32 @@ class LevelTest(Base):
     answers: Mapped[Optional[dict]] = mapped_column(JSON)
     report: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # 'app' — тест внутри мини-аппа, 'landing' — публичная страница /level
+    # (миграция 0036). Составы заданий разные, поэтому в статистике их
+    # нельзя складывать.
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="app")
+
+
+class LevelTestLead(Base):
+    """Воронка публичного теста на лендинге (миграция 0036).
+
+    Анонимное прохождение не создаёт юзера и до регистрации нигде не
+    оставляет следа — значит, по level_tests нельзя посчитать ни сколько
+    человек начали тест, ни сколько бросили его на середине. Эта таблица
+    закрывает ровно эту дыру: строка заводится на старте и дополняется на
+    финише и на claim.
+
+    Персональных данных здесь нет — только идентификатор теста и итог.
+    """
+
+    __tablename__ = "level_test_leads"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    test_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    cefr: Mapped[Optional[str]] = mapped_column(String(4))
+    correct_cnt: Mapped[Optional[int]] = mapped_column(Integer)
+    total_cnt: Mapped[Optional[int]] = mapped_column(Integer)
+    claimed_user_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)

@@ -3301,14 +3301,18 @@ class Repo:
     # ─── Тест уровня (миграция 0035) ────────────────────────────────────
     async def save_level_test(
         self, *, user_id: int, cefr: str, correct_cnt: int, total_cnt: int,
-        answers: list[dict],
+        answers: list[dict], source: str = "app",
     ) -> int:
-        """Записать прохождение и проставить уровень юзеру."""
+        """Записать прохождение и проставить уровень юзеру.
+
+        source: 'app' — тест в мини-аппе, 'landing' — публичная страница.
+        """
         from .models import LevelTest
         row = LevelTest(
             user_id=int(user_id), cefr=cefr,
             correct_cnt=int(correct_cnt), total_cnt=int(total_cnt),
             answers={"items": answers}, created_at=utcnow(),
+            source=(source or "app")[:16],
         )
         self.s.add(row)
         await self.s.flush()
@@ -3325,6 +3329,131 @@ class Repo:
             update(LevelTest).where(LevelTest.id == int(test_id))
             .values(report=(report or "")[:8000])
         )
+
+    # ─── Воронка теста на лендинге (миграция 0036) ──────────────────────
+    # Три метода-шага одной строки: старт → финиш → регистрация. Каждый
+    # вызывается ровно один раз за прохождение и находит строку по test_id.
+
+    async def landing_lead_start(self, test_id: str) -> None:
+        """Отметить начало анонимного прохождения.
+
+        INSERT IGNORE: повторный старт с тем же test_id невозможен (он
+        случайный), но дубль не должен ронять запрос в любом случае.
+        """
+        from .models import LevelTestLead
+        stmt = mysql_insert(LevelTestLead).values(
+            test_id=str(test_id)[:32], started_at=utcnow(),
+        ).prefix_with("IGNORE")
+        await self.s.execute(stmt)
+
+    async def landing_lead_finish(
+        self, *, test_id: str, cefr: str, correct_cnt: int, total_cnt: int,
+    ) -> None:
+        """Тест дошёл до конца — записать итог."""
+        from .models import LevelTestLead
+        await self.s.execute(
+            update(LevelTestLead)
+            .where(LevelTestLead.test_id == str(test_id)[:32])
+            .values(
+                finished_at=utcnow(), cefr=cefr,
+                correct_cnt=int(correct_cnt), total_cnt=int(total_cnt),
+            )
+        )
+
+    async def landing_lead_claim(self, *, test_id: str, user_id: int) -> None:
+        """Человек вошёл и забрал результат — конец воронки."""
+        from .models import LevelTestLead
+        await self.s.execute(
+            update(LevelTestLead)
+            .where(LevelTestLead.test_id == str(test_id)[:32])
+            .values(claimed_user_id=int(user_id), claimed_at=utcnow())
+        )
+
+    async def level_test_overview(self, days: int = 30) -> dict:
+        """Сводка для админки: воронка лендинга + прохождения в приложении."""
+        from .models import LevelTest, LevelTestLead
+        since = utcnow() - timedelta(days=int(days))
+
+        res = await self.s.execute(
+            select(
+                func.count(LevelTestLead.id),
+                func.sum(case((LevelTestLead.finished_at.isnot(None), 1), else_=0)),
+                func.sum(case((LevelTestLead.claimed_at.isnot(None), 1), else_=0)),
+            ).where(LevelTestLead.started_at >= since)
+        )
+        started, finished, claimed = res.first() or (0, 0, 0)
+
+        res = await self.s.execute(
+            select(
+                func.count(LevelTestLead.id),
+                func.sum(case((LevelTestLead.finished_at.isnot(None), 1), else_=0)),
+                func.sum(case((LevelTestLead.claimed_at.isnot(None), 1), else_=0)),
+            )
+        )
+        a_started, a_finished, a_claimed = res.first() or (0, 0, 0)
+
+        # Распределение уровней по завершённым прохождениям с лендинга.
+        res = await self.s.execute(
+            select(LevelTestLead.cefr, func.count(LevelTestLead.id))
+            .where(LevelTestLead.finished_at.isnot(None),
+                   LevelTestLead.started_at >= since)
+            .group_by(LevelTestLead.cefr)
+        )
+        landing_levels = {str(k): int(v) for k, v in res.all() if k}
+
+        # Прохождения, записанные в историю (то есть с юзером), по источникам.
+        res = await self.s.execute(
+            select(LevelTest.source, func.count(LevelTest.id))
+            .where(LevelTest.created_at >= since)
+            .group_by(LevelTest.source)
+        )
+        by_source = {str(k or "app"): int(v) for k, v in res.all()}
+
+        res = await self.s.execute(
+            select(LevelTest.cefr, func.count(LevelTest.id))
+            .where(LevelTest.created_at >= since)
+            .group_by(LevelTest.cefr)
+        )
+        app_levels = {str(k): int(v) for k, v in res.all() if k}
+
+        return {
+            "period_days": int(days),
+            "started": int(started or 0),
+            "finished": int(finished or 0),
+            "claimed": int(claimed or 0),
+            "all_started": int(a_started or 0),
+            "all_finished": int(a_finished or 0),
+            "all_claimed": int(a_claimed or 0),
+            "landing_levels": landing_levels,
+            "test_levels": app_levels,
+            "tests_by_source": by_source,
+        }
+
+    async def level_test_feed(self, limit: int = 50) -> list[dict]:
+        """Последние прохождения с лендинга — свежая лента для админки."""
+        from .models import LevelTestLead
+        res = await self.s.execute(
+            select(
+                LevelTestLead.started_at, LevelTestLead.finished_at,
+                LevelTestLead.cefr, LevelTestLead.correct_cnt,
+                LevelTestLead.total_cnt, LevelTestLead.claimed_user_id,
+                LevelTestLead.claimed_at,
+            )
+            .order_by(LevelTestLead.id.desc())
+            .limit(int(limit))
+        )
+        out: list[dict] = []
+        for started, finished, cefr, ok, total, uid, claimed in res.all():
+            out.append({
+                "started_at": started.isoformat() if started else None,
+                "finished_at": finished.isoformat() if finished else None,
+                "cefr": cefr,
+                "correct_cnt": int(ok) if ok is not None else None,
+                "total_cnt": int(total) if total is not None else None,
+                "claimed_user_id": int(uid) if uid else None,
+                "claimed_at": claimed.isoformat() if claimed else None,
+            })
+        return out
 
     async def last_level_test(self, user_id: int) -> Optional[dict]:
         """Предыдущее прохождение — чтобы показать динамику уровня."""
