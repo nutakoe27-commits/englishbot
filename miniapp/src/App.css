@@ -63,18 +63,22 @@ button {
 }
 
 /* ─── Оболочка приложения — CSS Grid с фиксированной сеткой ────── */
-/* Важно: height: 100dvh (не min-height) — чтобы лог не мог растянуть сетку
+/* Важно: height: var(--app-vh, 100dvh) (не min-height) — чтобы лог не мог растянуть сетку
    и сдвинуть кнопку. dvh (dynamic viewport) не прыгает на iOS при показе клавиатуры. */
 .tutor-app {
   position: relative;
   width: 100%;
-  height: 100dvh;
-  max-height: 100dvh;
+  height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
   max-width: 480px;
   margin: 0 auto;
   padding: 20px 20px 24px;
   display: grid;
   /* шапка / лог (занимает всё оставшееся) / футер с кнопкой */
+  /* Без явной колонки трек = auto и раздувается до min-content самого
+     широкого ребёнка: на 320px шапка и контент вылезали за экран.
+     minmax(0, 1fr) разрешает треку сжиматься. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 16px;
   background-color: var(--bg);
@@ -2091,8 +2095,8 @@ button {
 .mode-selector {
   position: relative;
   width: 100%;
-  height: 100dvh;
-  max-height: 100dvh;
+  height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
   max-width: 480px;
   margin: 0 auto;
   padding: 24px 22px 0;       /* нижний паддинг переезжает внутрь скролл-зоны */
@@ -2212,7 +2216,9 @@ button {
 .ms-stats {
   margin-top: 16px;
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  /* repeat(2, 1fr) — это minmax(auto, 1fr), а auto-минимум равен
+     min-content: на 320-360px плитки не сжимались и вылезали за экран. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   width: 100%;
   border: none;
@@ -2253,12 +2259,16 @@ button {
 .lst-screen {
   position: relative;
   width: 100%;
-  height: 100dvh;
-  max-height: 100dvh;
+  height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
   max-width: 480px;
   margin: 0 auto;
   padding: 22px 22px 24px;
   display: grid;
+  /* Без явной колонки трек = auto и раздувается до min-content самого
+     широкого ребёнка: на 320px шапка и контент вылезали за экран.
+     minmax(0, 1fr) разрешает треку сжиматься. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
   background-color: var(--bg);
@@ -2586,18 +2596,22 @@ button {
 
 /* ─── Grammar mode ─────────────────────────────────────────────── */
 
-/* Тот же каркас, что .lst-screen: фикс-высота 100dvh, шапка auto,
+/* Тот же каркас, что .lst-screen: фикс-высота var(--app-vh, 100dvh), шапка auto,
    контент (lst-main) занимает остаток и скроллится внутри. Без этого
    на маленьких экранах низ конфига обрезается. */
 .grm-screen {
   position: relative;
   width: 100%;
-  height: 100dvh;
-  max-height: 100dvh;
+  height: var(--app-vh, 100dvh);
+  max-height: var(--app-vh, 100dvh);
   max-width: 480px;
   margin: 0 auto;
   padding: 22px 22px 24px;
   display: grid;
+  /* Без явной колонки трек = auto и раздувается до min-content самого
+     широкого ребёнка: на 320px шапка и контент вылезали за экран.
+     minmax(0, 1fr) разрешает треку сжиматься. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
   background-color: var(--bg);
@@ -3694,7 +3708,7 @@ button {
   width: 100%;
   max-width: 480px;
   margin: 0 auto;
-  height: 100dvh;
+  height: var(--app-vh, 100dvh);
   display: flex;
   flex-direction: column;
   /* Копирую один-в-один .sub-screen__inner из components.css —
@@ -3718,7 +3732,7 @@ button {
   .app-shell {
     margin: 24px auto;
     height: auto;
-    min-height: calc(100dvh - 48px);
+    min-height: calc(var(--app-vh, 100dvh) - 48px);
     overflow: hidden;
   }
 }
@@ -3774,12 +3788,12 @@ button {
 @media (min-width: 768px) {
   .app-shell {
     height: auto !important;
-    min-height: 100dvh;
+    min-height: var(--app-vh, 100dvh);
   }
   .app-shell__body {
     overflow: visible !important;
   }
-  /* Сбрасываем фиксированную height: 100dvh и собственный overflow:
+  /* Сбрасываем фиксированную height: var(--app-vh, 100dvh) и собственный overflow:
    * hidden у внутренних экранов — пусть растут по контенту, скроллит
    * окно. ИСКЛЮЧЕНИЕ: .tutor-app (Speaking) — оставляем фиксированную
    * высоту чтобы chat-log не удлинял страницу при многих сообщениях. */
@@ -3806,8 +3820,8 @@ button {
    * (минус padding shell'a + bnav) + внутренний grid scroll. Так
    * chat-log не растягивается на бесконечность при длинной истории. */
   .app-shell__body > .tutor-app {
-    height: calc(100dvh - 70px - env(safe-area-inset-bottom, 0px)) !important;
-    max-height: calc(100dvh - 70px - env(safe-area-inset-bottom, 0px)) !important;
+    height: calc(var(--app-vh, 100dvh) - 70px - env(safe-area-inset-bottom, 0px)) !important;
+    max-height: calc(var(--app-vh, 100dvh) - 70px - env(safe-area-inset-bottom, 0px)) !important;
     overflow: hidden !important;
   }
   /* BottomNav на desktop — fixed к низу viewport'a, шириной как колонка
@@ -4408,4 +4422,15 @@ button {
   color: #fff;
   font-size: 14px;
   font-weight: 600;
+}
+
+/* Прямые дети grid-шеллов: min-width по умолчанию auto, поэтому длинное
+   слово или строка кнопок распирали трек. Разрешаем сжиматься. */
+.tutor-app > *,
+.lst-screen > *,
+.grm-screen > *,
+.srs-screen > *,
+.mode-v2-top,
+.lst-main {
+  min-width: 0;
 }

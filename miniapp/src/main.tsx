@@ -10,6 +10,11 @@ import "./ds/styles.css";
 import "./ds-react/components.css";
 import { initTheme } from "./theme";
 initTheme();
+// Настоящая высота видимой области Telegram → CSS-переменная --app-vh.
+// Без этого все экраны сидят на 100dvh, который в вебвью больше видимой
+// области: низ уходит под обрез, а внутренний скролл не переполняется.
+import { initViewport } from "./viewport";
+initViewport();
 import App from "./App";
 import { BattleScreen } from "./BattleScreen";
 import { ModeSelector, type Mode } from "./ModeSelector";
