@@ -23,6 +23,7 @@ import {
 } from "./auth";
 import { ThemeToggle } from "./ThemeToggle";
 import { SchoolCabinetScreen } from "./SchoolCabinetScreen";
+import { disablePush, enablePush, pushState, type PushState } from "./push";
 
 interface Props {
   onLoggedOut: () => void;
@@ -53,6 +54,11 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
   const [msg, setMsg] = useState<string>("");
   const [tgPending, setTgPending] = useState<{ token: string; url: string } | null>(null);
   const [tgBusy, setTgBusy] = useState<boolean>(false);
+  // Уведомления в браузере. Состояние читаем при монтировании: разрешение
+  // живёт в браузере, а не у нас, и человек мог поменять его в настройках
+  // сайта мимо приложения.
+  const [push, setPush] = useState<PushState>(() => pushState());
+  const [pushBusy, setPushBusy] = useState<boolean>(false);
 
   const inTelegram = (() => {
     try { return !!WebApp.initData; } catch { return false; }
@@ -273,6 +279,59 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
                   >
                     {me?.subscription_until ? "Продлить подписку" : "Оформить подписку"}
                   </button>
+                </div>
+              )}
+
+              {push !== "unsupported" && (
+                <div className="acc-link-block">
+                  <div className="acc-link-title">
+                    {push === "granted"
+                      ? "🔔 Уведомления включены"
+                      : "🔔 Напоминания о занятиях"}
+                  </div>
+                  {push === "denied" ? (
+                    <p className="acc-hint">
+                      Уведомления заблокированы в настройках браузера для этого
+                      сайта. Включить обратно можно только там — в адресной
+                      строке нажми на замок рядом с адресом.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="acc-hint">
+                        {push === "granted"
+                          ? "Будем присылать напоминание, если пропустишь пару дней. Не чаще одного раза в день."
+                          : "Короткое напоминание в браузере, если пропустишь пару дней. Работает и без Telegram."}
+                      </p>
+                      <button
+                        type="button"
+                        className={push === "granted" ? "btn btn--ghost acc-link-btn" : "btn btn--primary acc-link-btn"}
+                        disabled={pushBusy}
+                        onClick={() => void (async () => {
+                          setPushBusy(true);
+                          if (push === "granted") {
+                            await disablePush();
+                            // Разрешение остаётся выданным, но подписки больше
+                            // нет — показываем это состояние честно.
+                            setPush(pushState());
+                            setMsg("Уведомления отключены.");
+                          } else {
+                            const next = await enablePush();
+                            setPush(next);
+                            setMsg(
+                              next === "granted"
+                                ? "Готово — уведомления включены."
+                                : "Браузер не дал разрешение.",
+                            );
+                          }
+                          setPushBusy(false);
+                        })()}
+                      >
+                        {pushBusy
+                          ? "Секунду…"
+                          : push === "granted" ? "Отключить уведомления" : "Включить уведомления"}
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
 

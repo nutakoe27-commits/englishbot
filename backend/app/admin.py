@@ -1156,6 +1156,66 @@ _AD_CODE_OK = set(
 )
 
 
+class _PushSendIn(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    body: str = Field(min_length=1, max_length=300)
+    url: str = Field(default="/", max_length=300)
+    tag: Optional[str] = Field(default=None, max_length=40)
+    # Кому: None — всем подписчикам, иначе только подпискам одного юзера.
+    user_id: Optional[int] = None
+
+
+@router.get("/push/stats", dependencies=[Depends(require_admin_token)])
+async def admin_push_stats() -> dict:
+    """Сколько людей подписано на уведомления и настроены ли ключи."""
+    from . import push
+    async with db_session() as s:
+        stats = await Repo(s).push_stats()
+    return {"configured": push.is_configured(), **stats}
+
+
+@router.post("/push/send", dependencies=[Depends(require_admin_token)])
+async def admin_push_send(body: _PushSendIn) -> dict:
+    """Разослать уведомление подписчикам сайта.
+
+    Канал независим от Telegram — в этом весь смысл. Отозванные подписки
+    (браузер отвечает 404/410) удаляются здесь же: иначе таблица за год
+    превращается в кладбище, а статистика доставки врёт.
+    """
+    from . import push
+    if not push.is_configured():
+        raise HTTPException(503, "VAPID-ключи не заданы в .env — пуши отключены")
+
+    async with db_session() as s:
+        subs = await Repo(s).list_push_subscriptions(user_id=body.user_id)
+    if not subs:
+        return {"ok": True, "total": 0, "sent": 0, "gone": 0, "failed": 0}
+
+    payload = push.build_payload(
+        title=body.title, body=body.body, url=body.url or "/", tag=body.tag,
+    )
+    result = await push.send_to_subscriptions(subs, payload)
+
+    async with db_session() as s:
+        repo = Repo(s)
+        for sub_id in result["ok_ids"]:
+            await repo.mark_push_ok(sub_id)
+        for sub_id in result["gone_ids"]:
+            await repo.mark_push_failed(sub_id, drop=True)
+        for sub_id in result["fail_ids"]:
+            await repo.mark_push_failed(sub_id, drop=False)
+        await s.commit()
+
+    logger.info(
+        "[push] рассылка: всего %d, доставлено %d, отозвано %d, ошибок %d",
+        len(subs), result["sent"], result["gone"], result["failed"],
+    )
+    return {
+        "ok": True, "total": len(subs),
+        "sent": result["sent"], "gone": result["gone"], "failed": result["failed"],
+    }
+
+
 @router.get("/level-tests", dependencies=[Depends(require_admin_token)])
 async def admin_level_tests(
     days: int = Query(30, ge=1, le=365),

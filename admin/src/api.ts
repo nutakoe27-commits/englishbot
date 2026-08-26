@@ -371,7 +371,39 @@ export const api = {
     request<LevelTestsResponse>(
       `/api/admin/level-tests?days=${days}&limit=${limit}`,
     ),
+
+  // ─── Веб-пуши ─────────────────────────────────────────
+  pushStats: () => request<PushStats>("/api/admin/push/stats"),
+  pushSend: (body: {
+    title: string; body: string; url?: string; tag?: string; user_id?: number;
+  }) =>
+    request<PushSendResult>("/api/admin/push/send", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };
+
+// ─── Веб-пуши (миграция 0037) ────────────────────────────────────────────────
+
+export interface PushStats {
+  /** Заданы ли VAPID-ключи. Без них отправка недоступна. */
+  configured: boolean;
+  total: number;
+  with_user: number;
+  anonymous: number;
+  users: number;
+  ever_delivered: number;
+  last_7_days: number;
+}
+
+export interface PushSendResult {
+  ok: boolean;
+  total: number;
+  sent: number;
+  /** Отозванные подписки — удалены при отправке. */
+  gone: number;
+  failed: number;
+}
 
 // ─── Тест уровня (миграции 0035 и 0036) ──────────────────────────────────────
 

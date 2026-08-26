@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, date, time, timedelta, timezone
 from typing import Optional, Sequence
 
-from sqlalchemy import and_, case, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -3297,6 +3297,126 @@ class Repo:
             user_id=int(user_id), category=(category or "")[:32],
             topic=topic, created_at=utcnow(),
         ))
+
+    # ─── Веб-пуши (миграция 0037) ───────────────────────────────────────
+
+    async def save_push_subscription(
+        self, *, endpoint: str, p256dh: str, auth: str,
+        user_id: Optional[int] = None, user_agent: Optional[str] = None,
+        source: str = "web",
+    ) -> None:
+        """Сохранить подписку браузера.
+
+        Браузер выдаёт один endpoint на установку и присылает его при каждом
+        заходе, поэтому вставка идёт как upsert: повторная подписка обновляет
+        ключи и привязку к юзеру, а не плодит копии. Заодно обнуляем счётчик
+        ошибок — подписка только что подтвердилась живой.
+        """
+        from .models import PushSubscription
+        values = {
+            "endpoint": endpoint[:512],
+            "p256dh": p256dh[:255],
+            "auth": auth[:255],
+            "user_id": int(user_id) if user_id else None,
+            "user_agent": (user_agent or "")[:255] or None,
+            "source": (source or "web")[:16],
+            "created_at": utcnow(),
+            "last_ok_at": None,
+            "failed_count": 0,
+        }
+        stmt = mysql_insert(PushSubscription).values(**values)
+        # user_id не затираем в NULL: аноним мог подписаться до входа, а
+        # потом войти — привязка должна сохраниться.
+        stmt = stmt.on_duplicate_key_update(
+            p256dh=stmt.inserted.p256dh,
+            auth=stmt.inserted.auth,
+            user_agent=stmt.inserted.user_agent,
+            failed_count=0,
+            user_id=func.coalesce(stmt.inserted.user_id, PushSubscription.user_id),
+        )
+        await self.s.execute(stmt)
+
+    async def delete_push_subscription(self, endpoint: str) -> None:
+        from .models import PushSubscription
+        await self.s.execute(
+            delete(PushSubscription).where(PushSubscription.endpoint == endpoint[:512])
+        )
+
+    async def attach_push_subscriptions(self, *, endpoint: str, user_id: int) -> None:
+        """Привязать подписку к юзеру после входа."""
+        from .models import PushSubscription
+        await self.s.execute(
+            update(PushSubscription)
+            .where(PushSubscription.endpoint == endpoint[:512])
+            .values(user_id=int(user_id))
+        )
+
+    async def list_push_subscriptions(
+        self, *, user_id: Optional[int] = None, limit: int = 10000,
+    ) -> list[dict]:
+        """Подписки для рассылки. Без user_id — все."""
+        from .models import PushSubscription
+        q = select(
+            PushSubscription.id, PushSubscription.endpoint,
+            PushSubscription.p256dh, PushSubscription.auth,
+            PushSubscription.user_id,
+        )
+        if user_id is not None:
+            q = q.where(PushSubscription.user_id == int(user_id))
+        q = q.order_by(PushSubscription.id.desc()).limit(int(limit))
+        res = await self.s.execute(q)
+        return [
+            {"id": int(i), "endpoint": e, "p256dh": p, "auth": a,
+             "user_id": int(u) if u else None}
+            for i, e, p, a, u in res.all()
+        ]
+
+    async def mark_push_ok(self, sub_id: int) -> None:
+        from .models import PushSubscription
+        await self.s.execute(
+            update(PushSubscription).where(PushSubscription.id == int(sub_id))
+            .values(last_ok_at=utcnow(), failed_count=0)
+        )
+
+    async def mark_push_failed(self, sub_id: int, *, drop: bool) -> None:
+        """drop=True — подписка отозвана (404/410), удаляем сразу."""
+        from .models import PushSubscription
+        if drop:
+            await self.s.execute(
+                delete(PushSubscription).where(PushSubscription.id == int(sub_id))
+            )
+            return
+        await self.s.execute(
+            update(PushSubscription).where(PushSubscription.id == int(sub_id))
+            .values(failed_count=PushSubscription.failed_count + 1)
+        )
+
+    async def push_stats(self) -> dict:
+        """Сводка для админки."""
+        from .models import PushSubscription
+        res = await self.s.execute(
+            select(
+                func.count(PushSubscription.id),
+                func.sum(case((PushSubscription.user_id.isnot(None), 1), else_=0)),
+                func.sum(case((PushSubscription.last_ok_at.isnot(None), 1), else_=0)),
+                func.count(func.distinct(PushSubscription.user_id)),
+            )
+        )
+        total, with_user, delivered, users = res.first() or (0, 0, 0, 0)
+        week = utcnow() - timedelta(days=7)
+        res = await self.s.execute(
+            select(func.count(PushSubscription.id))
+            .where(PushSubscription.created_at >= week)
+        )
+        fresh = res.scalar() or 0
+        return {
+            "total": int(total or 0),
+            "with_user": int(with_user or 0),
+            "anonymous": int((total or 0) - (with_user or 0)),
+            "users": int(users or 0),
+            "ever_delivered": int(delivered or 0),
+            "last_7_days": int(fresh),
+        }
 
     # ─── Тест уровня (миграция 0035) ────────────────────────────────────
     async def save_level_test(

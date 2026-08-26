@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Нет соединения — English Tutor</title>
+    <meta name="theme-color" content="#5C7050" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      /* Страница обязана быть самодостаточной: её показывают, когда сети
+         нет, поэтому ни шрифтов, ни картинок снаружи. */
+      :root { color-scheme: light dark; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex; align-items: center; justify-content: center;
+        padding: 24px; box-sizing: border-box;
+        background: #FAF5E8; color: #2A2622;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        line-height: 1.55;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { background: #14120F; color: #F2EDE3; }
+        .card { background: #1E1B17; border-color: rgba(255,255,255,0.10); }
+        .sub { color: #B5AEA2; }
+      }
+      .card {
+        max-width: 420px; width: 100%; text-align: center;
+        background: #FFFDF7; border: 1px solid rgba(42,38,34,0.10);
+        border-radius: 20px; padding: 32px 24px;
+      }
+      .mark {
+        width: 56px; height: 56px; margin: 0 auto 20px;
+        border-radius: 14px; background: #5C7050; color: #FAF5E8;
+        display: flex; align-items: center; justify-content: center;
+        font-family: Georgia, "Times New Roman", serif;
+        font-style: italic; font-size: 24px; font-weight: 600;
+      }
+      h1 { font-size: 22px; margin: 0 0 10px; font-family: Georgia, serif; font-weight: 600; }
+      .sub { margin: 0 0 24px; font-size: 15px; color: #6B6459; }
+      button {
+        font: inherit; font-weight: 600; cursor: pointer;
+        padding: 14px 24px; min-height: 48px; width: 100%;
+        border: none; border-radius: 13px;
+        background: #5C7050; color: #FAF5E8;
+      }
+      button:active { transform: scale(0.99); }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="mark" aria-hidden>En</div>
+      <h1>Нет соединения</h1>
+      <p class="sub">
+        Занятия идут через интернет — без него ни разговор, ни подкасты не
+        работают. Проверь сеть и попробуй снова.
+      </p>
+      <button type="button" onclick="location.replace('/')">Попробовать снова</button>
+    </div>
+    <script>
+      // Как только сеть вернулась — уходим сами, без нажатий.
+      window.addEventListener("online", function () { location.replace("/"); });
+    </script>
+  </body>
+</html>

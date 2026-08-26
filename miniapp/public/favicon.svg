@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#7c5cff"/>
-      <stop offset="100%" stop-color="#6b48f5"/>
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="14" ry="14" fill="url(#g)"/>
-  <text x="32" y="46" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-        font-size="42" font-weight="900" text-anchor="middle" fill="#fff">E</text>
+<!-- Марка English Tutor: sage-квадрат и кремовое «En» курсивом — та же
+     форма, что у LogoBox в интерфейсе. Раньше здесь был фиолетовый знак от
+     старого дизайна, не совпадавший ни с приложением, ни с theme-color. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="English Tutor">
+  <rect width="64" height="64" rx="14" ry="14" fill="#5C7050"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="13.25" ry="13.25"
+        fill="none" stroke="#ffffff" stroke-opacity="0.15" stroke-width="1.5"/>
+  <text x="32" y="45" text-anchor="middle"
+        font-family="'Source Serif 4','Source Serif Pro',Georgia,'Times New Roman',serif"
+        font-size="34" font-weight="600" font-style="italic" fill="#FAF5E8">En</text>
 </svg>

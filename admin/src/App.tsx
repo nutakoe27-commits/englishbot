@@ -24,6 +24,8 @@ import {
   type AdLinkHit,
   type UserReferral,
   type LevelTestsResponse,
+  type PushStats,
+  type PushSendResult,
 } from "./api";
 import {
   ResponsiveContainer,
@@ -241,6 +243,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     view = <ReferralsPage />;
   } else if (route === "/level-tests") {
     view = <LevelTestsPage />;
+  } else if (route === "/push") {
+    view = <PushPage />;
   } else if (route === "/broadcast") {
     view = <BroadcastPage />;
   } else if (route === "/settings") {
@@ -305,6 +309,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           {navBtn("/orgs", "Школы")}
           {navBtn("/referrals", "Рефералка")}
           {navBtn("/level-tests", "Тест уровня")}
+          {navBtn("/push", "Уведомления")}
           {navBtn("/broadcast", "Массовые")}
           {navBtn("/settings", "Настройки")}
         </nav>
@@ -2935,6 +2940,165 @@ function BroadcastCard() {
 }
 
 // ─── Рефералка + ссылки для аналитики (миграция 0032) ────────────────────────
+// ─── Веб-пуши ───────────────────────────────────────────────────────────────
+// Канал до человека, не зависящий от Telegram: уведомление приходит в
+// браузер и в установленное приложение. Подписка живёт в браузере, поэтому
+// «отписался» мы узнаём только при отправке — отозванные подписки сервер
+// удаляет прямо в процессе рассылки, отсюда колонка «отозвано» в итоге.
+
+function PushPage() {
+  const isMobile = useIsMobile();
+  const [stats, setStats] = useState<PushStats | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [title, setTitle] = useState<string>("");
+  const [body, setBody] = useState<string>("");
+  const [url, setUrl] = useState<string>("/");
+  const [userId, setUserId] = useState<string>("");
+  const [busy, setBusy] = useState<boolean>(false);
+  const [result, setResult] = useState<PushSendResult | null>(null);
+
+  const reload = () => {
+    setErr(null);
+    api.pushStats()
+      .then(setStats)
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  };
+  useEffect(reload, []);
+
+  const send = async () => {
+    if (busy || !title.trim() || !body.trim()) return;
+    const who = userId.trim()
+      ? `пользователю #${userId.trim()}`
+      : `всем подписчикам (${stats?.total ?? 0})`;
+    if (!window.confirm(`Отправить уведомление ${who}?`)) return;
+    setBusy(true);
+    setResult(null);
+    setErr(null);
+    try {
+      const r = await api.pushSend({
+        title: title.trim(),
+        body: body.trim(),
+        url: url.trim() || "/",
+        user_id: userId.trim() ? Number(userId.trim()) : undefined,
+      });
+      setResult(r);
+      reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (err && !stats) return <div style={S.error}>{err}</div>;
+  if (!stats) return <div style={{ color: colors.textMuted }}>Загрузка…</div>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <h2 style={S.h2}>🔔 Уведомления</h2>
+
+      {!stats.configured && (
+        <div style={S.error}>
+          VAPID-ключи не заданы в .env — отправка недоступна. Как их
+          сгенерировать, написано в docs/pwa-push.md.
+        </div>
+      )}
+
+      <div style={S.card}>
+        <div style={{ fontSize: 13, color: colors.textMuted, lineHeight: 1.6 }}>
+          Веб-пуши идут мимо Telegram: уведомление приходит в браузер на
+          телефоне и в установленное приложение. Подписка привязывается к
+          аккаунту, если человек вошёл; подписавшиеся анонимно (например, на
+          лендинге теста) получат общую рассылку, но не персональную.
+          Уведомления не доходят на устройствах без сервисов Google, а на
+          iPhone — только если сайт добавлен на домашний экран.
+        </div>
+      </div>
+
+      <div style={metricsGridStyle(isMobile)}>
+        <div style={S.metricCard}>
+          <div style={S.metricValue}>{stats.total}</div>
+          <div style={S.metricLabel}>Подписок всего</div>
+        </div>
+        <div style={S.metricCard}>
+          <div style={S.metricValue}>{stats.users}</div>
+          <div style={S.metricLabel}>Из них с аккаунтом</div>
+        </div>
+        <div style={S.metricCard}>
+          <div style={S.metricValue}>{stats.anonymous}</div>
+          <div style={S.metricLabel}>Анонимных</div>
+        </div>
+        <div style={S.metricCard}>
+          <div style={S.metricValue}>{stats.last_7_days}</div>
+          <div style={S.metricLabel}>Новых за 7 дней</div>
+        </div>
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.h3}>✉️ Отправить уведомление</h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <div style={S.label}>Заголовок (до 80 символов)</div>
+            <input
+              style={S.input}
+              value={title}
+              maxLength={80}
+              placeholder="Пора позаниматься"
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </div>
+          <div>
+            <div style={S.label}>Текст (до 300 символов)</div>
+            <textarea
+              style={{ ...S.input, minHeight: 90, resize: "vertical" }}
+              value={body}
+              maxLength={300}
+              placeholder="Ты не заходил три дня. Пятнадцать минут разговора — и форма вернётся."
+              onChange={(e) => setBody(e.target.value)}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 220px" }}>
+              <div style={S.label}>Куда ведёт клик</div>
+              <input
+                style={S.input}
+                value={url}
+                placeholder="/"
+                onChange={(e) => setUrl(e.target.value)}
+              />
+            </div>
+            <div style={{ flex: "1 1 220px" }}>
+              <div style={S.label}>Только одному (id, пусто — всем)</div>
+              <input
+                style={S.input}
+                value={userId}
+                inputMode="numeric"
+                placeholder="напр. 123 — для проверки на себе"
+                onChange={(e) => setUserId(e.target.value.replace(/[^0-9]/g, ""))}
+              />
+            </div>
+          </div>
+          <button
+            style={S.btn}
+            disabled={busy || !stats.configured || !title.trim() || !body.trim()}
+            onClick={() => void send()}
+          >
+            {busy ? "Отправляем…" : "Отправить"}
+          </button>
+          {err && <div style={S.error}>{err}</div>}
+          {result && (
+            <div style={S.success}>
+              Отправлено: {result.sent} из {result.total}.{" "}
+              {result.gone > 0 && `Отозвано и удалено: ${result.gone}. `}
+              {result.failed > 0 && `Не доставлено: ${result.failed}.`}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Тест уровня: воронка лендинга и распределение уровней ──────────────────
 // Главная цифра здесь — конверсия лендинга: анонимный тест не создаёт юзера,
 // поэтому «сколько начали» и «сколько бросили на середине» видно только по

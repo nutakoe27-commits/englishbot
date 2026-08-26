@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from "react";
 import WebApp from "@twa-dev/sdk";
+import { enablePush, markPushAsked, pushAsked, pushState } from "./push";
 
 interface RecentContext {
   streak: { current: number; best: number; last_practice_date: string | null };
@@ -75,6 +76,11 @@ function pluralizeDays(n: number): string {
 export function SessionSummary({ apiBase, sessionSeconds, onClose }: Props) {
   const [data, setData] = useState<RecentContext | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Мягкий вопрос про уведомления — только если браузер их умеет, решение
+  // ещё не принято и мы ещё не спрашивали. Один раз на устройство.
+  const [askPush, setAskPush] = useState<boolean>(
+    () => pushState() === "default" && !pushAsked(),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -216,6 +222,38 @@ export function SessionSummary({ apiBase, sessionSeconds, onClose }: Props) {
             {trialLeft === 1
               ? "⏳ Последний день полного доступа. Завтра останется 5 минут разговора в сутки."
               : `✨ Полный доступ ещё ${trialLeft} ${pluralizeDays(trialLeft)} — успей попробовать подкасты и грамматику.`}
+          </div>
+        )}
+
+        {/* Уведомления в браузере. Спрашиваем именно здесь и мягко: человек
+            только что позанимался, повод напоминать очевиден обоим. Системный
+            диалог показывается лишь после согласия — отказ в нём браузер
+            запоминает навсегда, второй попытки не будет. */}
+        {askPush && (
+          <div className="summary-push">
+            <div className="summary-push__text">
+              Напоминать, если пропустишь пару дней? Короткое уведомление в
+              браузере — работает и без Telegram.
+            </div>
+            <div className="summary-push__row">
+              <button
+                type="button"
+                className="summary-action"
+                onClick={() => void (async () => {
+                  setAskPush(false);
+                  await enablePush();
+                })()}
+              >
+                Да, напоминать
+              </button>
+              <button
+                type="button"
+                className="summary-push__no"
+                onClick={() => { markPushAsked(); setAskPush(false); }}
+              >
+                Не надо
+              </button>
+            </div>
           </div>
         )}
 
