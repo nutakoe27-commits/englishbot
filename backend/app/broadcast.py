@@ -91,7 +91,10 @@ async def send_message_to_tg(
             timeout=10.0,
         )
     except Exception as e:
-        log.warning("send_message_to_tg: exception %s", e)
+        # %r, а не %s: у сетевых исключений httpx сообщение часто пустое, и
+        # в логе оставалось «exception » без единой подсказки. Тип
+        # ошибки различает недоступную сеть, таймаут и отказ TLS.
+        log.warning("send_message_to_tg: exception %r", e)
         return False, None, None
 
     if r.status_code == 200:
