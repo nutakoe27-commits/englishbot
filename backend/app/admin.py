@@ -643,9 +643,19 @@ async def send_user_message(user_id: int, req: MessageRequest) -> dict:
             raise HTTPException(
                 409, "Пользователь заблокировал бота (помечен как is_blocked)"
             )
-        detail = f"Telegram API error (status={code})"
+        # status=None означает, что ответа не было вообще: запрос упал на
+        # уровне сети. Прежний текст «Telegram API error (status=None)»
+        # читался как «сломалось у Telegram» и уводил диагностику не туда.
+        if code is None:
+            raise HTTPException(
+                502,
+                "Не удалось связаться с Telegram: запрос не дошёл (сеть, DNS "
+                "или таймаут). Точная ошибка — в логе backend, строка "
+                "send_message_to_tg.",
+            )
+        detail = f"Telegram ответил ошибкой {code}"
         if retry_after:
-            detail += f", retry_after={retry_after}s"
+            detail += f", повтор через {retry_after} с"
         raise HTTPException(502, detail)
 
 

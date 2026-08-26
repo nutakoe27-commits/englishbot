@@ -97,7 +97,7 @@ async def create_payment(
             return None
         return resp.json()
     except Exception as exc:
-        logger.warning("[yookassa] create_payment exception: %s", exc)
+        logger.warning("[yookassa] create_payment exception: %r", exc)
         return None
 
 
@@ -123,5 +123,5 @@ async def fetch_payment(provider_payment_id: str) -> Optional[dict]:
             return None
         return resp.json()
     except Exception as exc:
-        logger.warning("[yookassa] fetch_payment exception: %s", exc)
+        logger.warning("[yookassa] fetch_payment exception: %r", exc)
         return None
