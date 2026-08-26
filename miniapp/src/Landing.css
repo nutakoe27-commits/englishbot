@@ -1172,3 +1172,36 @@ html:has(body.lp-active) {
   .sch-money__controls, .sch-money__result { padding: 18px; }
   .sch-money__cta .lp-btn { width: 100%; }
 }
+
+/* ─── Пара CTA: «попробовать» + «оплатить сразу» ────────────────────────
+ * Часть людей приходит уже решившими. Раньше им приходилось сначала
+ * пройти бесплатный период и потом самим искать, где заплатить, — вторая
+ * кнопка убирает этот крюк.
+ *
+ * inline-flex, а не flex: пара по ширине равна главной кнопке, и вторая
+ * подстраивается под неё, а не растягивается на всю колонку.
+ */
+.lp-cta-pair {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  max-width: 100%;
+}
+/* В карточке тарифа кнопки уже во всю ширину — пара не должна её ломать. */
+.lp-plan .lp-cta-pair {
+  display: flex;
+  margin-top: 4px;
+}
+
+/* Третичная кнопка: выглядит как ссылка, но остаётся кнопкой (нужна для
+   доступности и для того, чтобы не путать её с навигацией). */
+.lp-btn--link {
+  background: transparent;
+  color: var(--lp-text-dim);
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-weight: 500;
+}
+.lp-btn--link:hover { color: var(--accent); }

@@ -33,6 +33,7 @@ import {
   type LevelResult,
 } from "./auth";
 import { LandingNav } from "./LandingNav";
+import { TRIAL_PERIOD } from "./trial";
 import { ymHit, ymReachGoal } from "./metrika";
 import "./Landing.css";
 import "./LevelLanding.css";
@@ -48,8 +49,9 @@ const SAVE_TTL_MS = 60 * 60 * 1000;
  *  с SHORT_GRAMMAR + SHORT_VOCAB в backend/app/level_test.py; во время
  *  прохождения число берётся из ответа сервера (screen.total). */
 const QUESTIONS = 26;
-/** Оценка времени: примерно 13 секунд на задание вместе с разбором. */
-const MINUTES = "шесть";
+/** Оценка времени: примерно 13 секунд на задание вместе с разбором.
+ *  В родительном падеже — везде подставляется после «около». */
+const MINUTES = "шести";
 
 interface Props {
   /** Юзер уже вошёл — разбор открывается без стены. */
@@ -413,8 +415,8 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
                     Открыть разбор
                   </button>
                   <p className="lvl-locked__note">
-                    Вход через Яндекс ID или email — минута. Первые три дня
-                    занятий без ограничений.
+                    Вход через Яндекс ID или email — минута. Первые{" "}
+                    {TRIAL_PERIOD} занятий без ограничений.
                   </p>
                 </div>
               )}
@@ -509,11 +511,9 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
       <section className="lvl-hero">
         <div className="lp-container lvl-hero__inner">
           <span className="lp-eyebrow">Бесплатно, без регистрации</span>
-          <h1 className="lp-h1">Узнай свой настоящий уровень английского</h1>
+          <h1 className="lp-h1">Какой у тебя уровень английского?</h1>
           <p className="lvl-hero__sub">
-            {QUESTIONS} заданий на грамматику и слова, около {MINUTES} минут.
-            Тест адаптивный: ответил верно — следующее сложнее, ошибся —
-            проще. Уровень по шкале CEFR увидишь сразу на этой же странице.
+            Адаптивный тест по шкале CEFR. Результат — сразу на экране.
           </p>
           {error && <p className="lvl-error">{error}</p>}
           <button
@@ -524,13 +524,10 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
           >
             {busy ? "Готовим…" : "Начать тест"}
           </button>
-          <p className="lvl-hero__note">
-            Ничего вводить не нужно — просто выбирай варианты.
-          </p>
           <div className="lvl-hero__facts">
             <span className="lvl-hero__fact">{QUESTIONS} заданий</span>
             <span className="lvl-hero__fact">около {MINUTES} минут</span>
-            <span className="lvl-hero__fact">результат сразу на экране</span>
+            <span className="lvl-hero__fact">ничего вводить не нужно</span>
           </div>
         </div>
       </section>
@@ -543,18 +540,16 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
               <span className="lvl-step__num">1</span>
               <p className="lvl-step__title">Отвечаешь на {QUESTIONS} заданий</p>
               <p className="lvl-step__body">
-                Вопросы подстраиваются под твои ответы, поэтому уровень
-                определяется точнее, чем фиксированным списком. После каждого
-                ответа сразу видно, где ошибся и почему.
+                Ответил верно — следующее сложнее, ошибся — проще. После
+                каждого ответа видно, где ошибся и почему.
               </p>
             </div>
             <div className="lvl-step">
               <span className="lvl-step__num">2</span>
               <p className="lvl-step__title">Сразу видишь уровень</p>
               <p className="lvl-step__body">
-                От A1 до C1 по европейской шкале CEFR — той самой, на которую
-                ссылаются курсы, вузы и работодатели. Ждать генерации не
-                придётся: результат считается мгновенно.
+                От A1 до C1 по шкале CEFR — той самой, на которую ссылаются
+                курсы, вузы и работодатели.
               </p>
             </div>
             <div className="lvl-step">
@@ -562,8 +557,7 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
               <p className="lvl-step__title">Открываешь разбор</p>
               <p className="lvl-step__body">
                 Что провисает по навыкам и что с этим делать — разбор от ИИ.
-                Для него нужен аккаунт: результат сохраняется, а занятия
-                настраиваются под твой уровень.
+                Для него нужен аккаунт.
               </p>
             </div>
           </div>
@@ -573,9 +567,6 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
       <section className="lp-section">
         <div className="lp-container">
           <h2 className="lp-h2 lp-h2--center">Что означают уровни</h2>
-          <p className="lp-section__sub">
-            Шкала CEFR — общий язык для всех курсов и экзаменов.
-          </p>
           <div className="lvl-scale">
             {Object.entries(CEFR_MEANING).map(([code, text]) => (
               <div key={code} className="lvl-scale__row">
@@ -625,7 +616,8 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
               <div className="lp-faq__answer">
                 Уровень увидишь сразу. Дальше можно открыть разбор и заниматься
                 в приложении: разговор с ИИ голосом, подкасты, грамматика и
-                слова — всё под твой уровень. Первые три дня без ограничений.
+                слова — всё под твой уровень. Первые {TRIAL_PERIOD} без
+                ограничений.
               </div>
             </details>
           </div>
@@ -663,12 +655,11 @@ function Accuracy() {
     <div className="lvl-accuracy">
       <h2 className="lp-h2 lp-h2--center">Насколько это точно</h2>
       <p className="lvl-accuracy__text">
-        Двадцать шесть заданий — это измерение, а не викторина. На проверке
-        тест попадает точно в уровень примерно в восьми случаях из десяти, а
-        в свой или соседний — в девятнадцати из двадцати. Столько же заданий
-        в версии внутри приложения, но часть из них там — подкасты: она
-        дополнительно меряет понимание на слух, сохраняет результат в
-        историю и настраивает под него разговор, подкасты и грамматику.
+        Тест попадает точно в уровень примерно в восьми случаях из десяти, а
+        в свой или соседний — в девятнадцати из двадцати. Версия внутри
+        приложения той же длины, но часть заданий там — подкасты: она
+        дополнительно меряет понимание на слух и сохраняет результат, чтобы
+        через месяц было с чем сравнить.
       </p>
     </div>
   );

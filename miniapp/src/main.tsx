@@ -114,6 +114,26 @@ const SCHOOL_CODE_KEY = "et_school_code";
 // и возвращает на корень сайта, поэтому контекст /schools надо пережить.
 const SCHOOLS_INTENT_KEY = "et_schools_intent";
 
+/**
+ * Намерение «я пришёл платить»: кнопка «Оплатить сразу» на лендинге ведёт
+ * на тот же экран входа, но после регистрации человек должен попасть не на
+ * главный экран, а сразу на тарифы. Вход через Яндекс ID перезагружает
+ * страницу и возвращает на корень, поэтому намерение живёт в localStorage,
+ * а не в state.
+ */
+const PAY_INTENT_KEY = "et_pay_intent";
+
+/** Прочитать и погасить намерение — оно одноразовое. */
+function consumePayIntent(): boolean {
+  try {
+    if (localStorage.getItem(PAY_INTENT_KEY) !== "1") return false;
+    localStorage.removeItem(PAY_INTENT_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Путь без хвостовых слэшей — по нему выбираем публичную страницу. */
 function currentPath(): string {
   if (typeof window === "undefined") return "";
@@ -142,6 +162,19 @@ function Root() {
       }
       return v;
     } catch { return ""; }
+  });
+  // Бот шлёт ?subscribe=1 в напоминаниях про оплату — открываем тарифы
+  // сразу, а не главный экран, с которого их ещё надо найти.
+  const [subscribeParam] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("subscribe") !== "1") return false;
+      const url = new URL(window.location.href);
+      url.searchParams.delete("subscribe");
+      window.history.replaceState(null, "", url.pathname + (url.search || "") + url.hash);
+      return true;
+    } catch { return false; }
   });
   // B2B deep-link: ?school=CODE — после входа подключаем юзера к школе.
   // Код дублируем в localStorage: вход через Яндекс OAuth делает полный
@@ -286,6 +319,10 @@ function Root() {
       <LandingScreen
         onStartTrial={() => setShowLogin(true)}
         onLogin={() => setShowLogin(true)}
+        onBuyNow={() => {
+          try { localStorage.setItem(PAY_INTENT_KEY, "1"); } catch { /* private mode */ }
+          setShowLogin(true);
+        }}
       />
     );
   }
@@ -306,6 +343,7 @@ function Root() {
       }
       initialPromo={promoParam}
       initialSchool={schoolParam}
+      initialSubscribe={subscribeParam}
       onLoggedOut={() => { setShowLogin(false); setAuth("login"); }}
     />
   );
@@ -316,12 +354,14 @@ function TabShell({
   initialMode,
   initialPromo,
   initialSchool,
+  initialSubscribe,
   onLoggedOut,
 }: {
   initialTab?: TabKey;
   initialMode?: Mode | null;
   initialPromo?: string;
   initialSchool?: string;
+  initialSubscribe?: boolean;
   onLoggedOut: () => void;
 }) {
   // mode != null → юзер в тренировочном экране (Speaking/Listening/Grammar).
@@ -331,8 +371,14 @@ function TabShell({
   const [mode, setMode] = useState<Mode | null>(initialMode ?? null);
   // Deep-link скидки: если бот открыл мини-апп с ?promo=CODE — сразу
   // показываем экран тарифов с авто-применённой скидкой.
+  // Тарифы открываются сразу в трёх случаях: пришёл промокод из бота,
+  // бот открыл мини-апп с ?subscribe=1, или человек нажал на лендинге
+  // «Оплатить сразу» и только что зарегистрировался. Намерение гасим
+  // здесь же — оно одноразовое.
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(
-    !!(initialPromo && initialPromo.trim()),
+    () => !!(initialPromo && initialPromo.trim())
+      || !!initialSubscribe
+      || consumePayIntent(),
   );
   const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
   // B2B: ?school=CODE — подключаем к школе и показываем результат тостом.

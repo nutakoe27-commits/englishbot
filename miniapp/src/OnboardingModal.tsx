@@ -20,6 +20,7 @@ import { IconButton } from "./ds-react/IconButton";
 import { Icon } from "./ds-react/Icon";
 import { SerifH } from "./ds-react/typography";
 import { useLucide } from "./lucide";
+import { TRIAL_PERIOD } from "./trial";
 
 interface Props {
   open: boolean;
@@ -83,7 +84,8 @@ const STEPS: Step[] = [
     title: "Доступ и тарифы",
     body: (
       <>
-        Первые <b>3 дня</b> после регистрации всё открыто без ограничений.
+        Первые <b>{TRIAL_PERIOD}</b> после регистрации всё открыто без
+        ограничений.
         Дальше на бесплатном тарифе остаётся <b>5 минут разговора в день</b>,
         один подкаст и один урок грамматики.<br />
         Подписка снимает лимиты: пробная неделя — <b>199 ₽</b>, месяц —{" "}
@@ -142,14 +144,14 @@ export function OnboardingModal({ open, markDoneOnFinish, onClose, onStart }: Pr
             <Icon name="mic" size={28} />
           </div>
           <SerifH as="h2" size={24} className="ob-v2__title">
-            3 дня полного доступа уже открыты
+            Полный доступ уже открыт
           </SerifH>
           <div className="ob-v2__body">
             Я — твой AI-репетитор. Говори со мной вслух: пойму, отвечу и
             объясню ошибки <b>по-русски</b>.<br /><br />
-            Ближайшие 3 дня — <b>без ограничений</b>: разговор, подкасты,
-            грамматика, словарь. Настраивать ничего не нужно, просто скажи
-            первую фразу — хоть «hello, how are you».
+            Первые {TRIAL_PERIOD} — <b>без ограничений</b>: разговор,
+            подкасты, грамматика, словарь. Настраивать ничего не нужно,
+            просто скажи первую фразу — хоть «hello, how are you».
           </div>
 
           <div className="ob-v2__nav">

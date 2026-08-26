@@ -1182,7 +1182,24 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-FREE_TRIAL_DAYS = _env_int("FREE_TRIAL_DAYS", 3)
+FREE_TRIAL_DAYS = _env_int("FREE_TRIAL_DAYS", 1)
+
+
+def _plural_days(n: int) -> str:
+    """Русское склонение: 1 день / 2 дня / 5 дней.
+
+    Копия хелпера из main.py — reminders.py намеренно самодостаточен и
+    ничего из бота не импортирует (он крутится отдельной задачей).
+    """
+    n_abs = abs(n) % 100
+    if 11 <= n_abs <= 14:
+        return "дней"
+    last = n_abs % 10
+    if last == 1:
+        return "день"
+    if 2 <= last <= 4:
+        return "дня"
+    return "дней"
 TRIAL7_UPSELL_MIN_ACTIVE_DAYS = _env_int("TRIAL7_UPSELL_MIN_ACTIVE_DAYS", 4)
 TRIAL7_UPSELL_PROMO = os.getenv("TRIAL7_UPSELL_PROMO", "") or "HABIT30"
 STREAK_MILESTONES = (7, 14, 30, 50, 100)
@@ -1298,8 +1315,8 @@ async def _pass_trial_ended(bot: Bot, kb: InlineKeyboardMarkup) -> int:
             continue
         minutes = max(1, int(secs or 0) // 60)
         msg = (
-            f"{_name(first_name)}, твои {FREE_TRIAL_DAYS} дня полного доступа "
-            "закончились. 🕐\n\n"
+            f"{_name(first_name)}, твой полный доступ "
+            f"({FREE_TRIAL_DAYS} {_plural_days(FREE_TRIAL_DAYS)}) закончился. 🕐\n\n"
             f"За это время у тебя вышло <b>{minutes} мин</b> практики. "
             "С сегодняшнего дня снова 5 минут разговора в сутки — этого хватает, "
             "чтобы не забыть язык, но не хватает, чтобы заговорить.\n\n"
