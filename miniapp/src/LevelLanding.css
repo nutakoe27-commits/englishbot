@@ -1,0 +1,413 @@
+/* ─── LevelLanding styles ───────────────────────────────────────────────
+ * Отдельный лендинг теста уровня (/level). Базовые примитивы (.lp-*)
+ * берём из Landing.css, здесь только то, чего там нет: карточка теста,
+ * шкала уровня и закрытый до регистрации разбор.
+ *
+ * Префикс .lvl- — чтобы не столкнуться ни с .lp- (лендинги), ни с .lvt-
+ * (тест внутри приложения, App.css).
+ */
+
+/* ─── Герой ────────────────────────────────────────────────────────── */
+.lvl-hero {
+  padding: 44px 0 32px;
+  text-align: center;
+}
+@media (min-width: 768px) {
+  .lvl-hero { padding: 72px 0 48px; }
+}
+.lvl-hero__inner {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.lvl-hero__sub {
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--lp-text-dim);
+  margin: 0 0 24px;
+}
+.lvl-hero__note {
+  font-size: 13px;
+  color: var(--text-faint);
+  margin: 12px 0 0;
+}
+.lvl-hero__facts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 18px;
+  margin: 22px 0 0;
+  font-size: 14px;
+  color: var(--lp-text-dim);
+}
+.lvl-hero__fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.lvl-hero__fact::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+/* ─── Шаги «как это работает» ──────────────────────────────────────── */
+.lvl-steps {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 768px) {
+  .lvl-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.lvl-step {
+  background: var(--lp-bg-card);
+  border: 1px solid var(--lp-border);
+  border-radius: 16px;
+  padding: 20px;
+}
+.lvl-step__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+.lvl-step__title {
+  font-weight: 650;
+  font-size: 17px;
+  margin: 0 0 6px;
+}
+.lvl-step__body {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--lp-text-dim);
+}
+
+/* ─── Шкала CEFR ───────────────────────────────────────────────────── */
+.lvl-scale {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+}
+.lvl-scale__row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--lp-border);
+  border-radius: 14px;
+  background: var(--lp-bg-soft);
+}
+.lvl-scale__code {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.lvl-scale__text {
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--lp-text-dim);
+  min-width: 0;
+}
+
+/* ─── Карточка теста ───────────────────────────────────────────────── */
+.lvl-test {
+  padding: 28px 0 56px;
+}
+.lvl-card {
+  max-width: 640px;
+  margin: 0 auto;
+  background: var(--lp-bg-card);
+  border: 1px solid var(--lp-border);
+  border-radius: 20px;
+  padding: 22px;
+  box-shadow: var(--shadow-md);
+}
+@media (min-width: 768px) {
+  .lvl-card { padding: 30px; }
+}
+
+.lvl-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.lvl-progress__bar {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-raise, rgba(127, 127, 127, 0.18));
+  overflow: hidden;
+}
+.lvl-progress__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+.lvl-progress__label {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.lvl-hint {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 10px;
+}
+.lvl-prompt {
+  font-size: 20px;
+  line-height: 1.45;
+  margin: 0 0 20px;
+  word-break: break-word;
+}
+.lvl-prompt--word {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 600;
+}
+
+.lvl-choices {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+}
+.lvl-choice {
+  width: 100%;
+  min-height: 52px;
+  padding: 13px 16px;
+  text-align: left;
+  font: inherit;
+  font-size: 16px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 13px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.06s;
+}
+.lvl-choice:hover:not(:disabled) { background: var(--surface-raise); }
+.lvl-choice:active:not(:disabled) { transform: scale(0.99); }
+.lvl-choice:disabled { cursor: default; }
+.lvl-choice[data-state="picked"] { border-color: var(--accent); }
+.lvl-choice[data-state="right"] {
+  border-color: #2e9e6b;
+  background: color-mix(in srgb, #2e9e6b 14%, transparent);
+}
+.lvl-choice[data-state="wrong"] {
+  border-color: #d4574e;
+  background: color-mix(in srgb, #d4574e 14%, transparent);
+}
+
+.lvl-feedback {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 13px;
+  font-size: 15px;
+  line-height: 1.5;
+  border: 1px solid var(--lp-border);
+  background: var(--lp-bg-soft);
+}
+.lvl-feedback__head { font-weight: 650; }
+.lvl-feedback__note { margin-top: 6px; color: var(--lp-text-dim); }
+
+.lvl-next { width: 100%; margin-top: 18px; }
+.lvl-error {
+  margin: 14px 0 0;
+  font-size: 14px;
+  color: #d4574e;
+}
+
+/* ─── Результат ────────────────────────────────────────────────────── */
+.lvl-badge {
+  text-align: center;
+  padding: 6px 0 18px;
+}
+.lvl-badge__label {
+  display: block;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.lvl-badge__cefr {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 72px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--accent);
+  margin: 6px 0 8px;
+}
+.lvl-badge__score {
+  display: block;
+  font-size: 15px;
+  color: var(--lp-text-dim);
+}
+.lvl-meaning {
+  margin: 0 0 20px;
+  font-size: 16px;
+  line-height: 1.55;
+  text-align: center;
+  color: var(--lp-text-dim);
+}
+
+/* Закрытая часть: показываем ЧТО откроется, но не содержимое. */
+.lvl-locked {
+  border: 1px solid var(--lp-border);
+  border-radius: 16px;
+  background: var(--lp-bg-soft);
+  padding: 20px;
+  margin-bottom: 18px;
+}
+.lvl-locked__title {
+  font-weight: 650;
+  font-size: 17px;
+  margin: 0 0 4px;
+}
+.lvl-locked__sub {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--lp-text-dim);
+}
+.lvl-locked__list {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+}
+.lvl-locked__item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  font-size: 15px;
+  line-height: 1.45;
+}
+.lvl-locked__item b { font-weight: 650; }
+.lvl-locked__item span { color: var(--lp-text-dim); }
+.lvl-locked__icon { font-size: 16px; line-height: 1.4; }
+.lvl-locked__cta { width: 100%; }
+.lvl-locked__note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+/* ─── Разбор после регистрации ─────────────────────────────────────── */
+.lvl-skills { margin-bottom: 20px; }
+.lvl-skills__title {
+  font-weight: 650;
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+.lvl-skill {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 9px;
+  font-size: 14px;
+}
+.lvl-skill__name { color: var(--lp-text-dim); }
+.lvl-skill__bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-raise, rgba(127, 127, 127, 0.18));
+  overflow: hidden;
+  min-width: 0;
+}
+.lvl-skill__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.lvl-skill__fill[data-weak="1"] { background: #d4574e; }
+.lvl-skill__num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.lvl-report {
+  border: 1px solid var(--lp-border);
+  border-radius: 16px;
+  background: var(--lp-bg-soft);
+  padding: 18px;
+  margin-bottom: 20px;
+}
+.lvl-report__title { font-weight: 650; margin-bottom: 8px; }
+.lvl-report__text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.lvl-report__text--muted { color: var(--text-faint); }
+
+/* Скелет ожидания — три «строки» с переливом. */
+.lvl-skeleton { display: grid; gap: 9px; }
+.lvl-skeleton span {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--surface-raise, rgba(127, 127, 127, 0.16)) 25%,
+    var(--surface-2, rgba(127, 127, 127, 0.28)) 37%,
+    var(--surface-raise, rgba(127, 127, 127, 0.16)) 63%
+  );
+  background-size: 400% 100%;
+  animation: lvl-shimmer 1.4s ease infinite;
+}
+.lvl-skeleton span:nth-child(2) { width: 88%; }
+.lvl-skeleton span:nth-child(3) { width: 64%; }
+@keyframes lvl-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lvl-skeleton span { animation: none; }
+}
+
+.lvl-actions { display: grid; gap: 10px; }
+.lvl-actions .lp-btn { width: 100%; }
+
+/* ─── «Насколько это точно» ────────────────────────────────────────── */
+.lvl-accuracy {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.lvl-accuracy__text {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--lp-text-dim);
+  text-align: center;
+}
+/* На экране результата блок идёт сразу под карточкой — нужен отступ. */
+.lvl-card + .lvl-accuracy { margin-top: 40px; }
