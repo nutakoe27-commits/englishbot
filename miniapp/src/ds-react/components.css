@@ -2139,3 +2139,58 @@
   cursor: pointer;
 }
 .ob-v2__secondary:hover { color: var(--text); }
+
+/* ─── Мягкий вопрос про уведомления (PushPrompt) ────────────────────────
+ * Живёт здесь, а не в App.css: компонент показывается и на публичных
+ * лендингах, которые App.css не подключают.
+ */
+.dsx-pushask {
+  margin: 16px 0 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  text-align: left;
+}
+.dsx-pushask__text {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+.dsx-pushask__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.dsx-pushask__yes {
+  flex: 1 1 auto;
+  min-height: 44px;
+  padding: 11px 18px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-on-accent);
+  background: var(--accent);
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.06s;
+}
+.dsx-pushask__yes:hover:not(:disabled) { background: var(--accent-hover); }
+.dsx-pushask__yes:active:not(:disabled) { transform: scale(0.99); }
+.dsx-pushask__yes:disabled { opacity: 0.7; cursor: default; }
+.dsx-pushask__no {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-faint);
+  background: none;
+  border: none;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.dsx-pushask__no:hover { color: var(--text-dim); }
