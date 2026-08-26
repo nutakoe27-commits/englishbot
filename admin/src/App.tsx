@@ -23,6 +23,7 @@ import {
   type AdLinkItem,
   type AdLinkHit,
   type UserReferral,
+  type LevelTestsResponse,
 } from "./api";
 import {
   ResponsiveContainer,
@@ -238,6 +239,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     view = <OrgsPage />;
   } else if (route === "/referrals") {
     view = <ReferralsPage />;
+  } else if (route === "/level-tests") {
+    view = <LevelTestsPage />;
   } else if (route === "/broadcast") {
     view = <BroadcastPage />;
   } else if (route === "/settings") {
@@ -301,6 +304,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           {navBtn("/promo", "Промокоды")}
           {navBtn("/orgs", "Школы")}
           {navBtn("/referrals", "Рефералка")}
+          {navBtn("/level-tests", "Тест уровня")}
           {navBtn("/broadcast", "Массовые")}
           {navBtn("/settings", "Настройки")}
         </nav>
@@ -2931,6 +2935,230 @@ function BroadcastCard() {
 }
 
 // ─── Рефералка + ссылки для аналитики (миграция 0032) ────────────────────────
+// ─── Тест уровня: воронка лендинга и распределение уровней ──────────────────
+// Главная цифра здесь — конверсия лендинга: анонимный тест не создаёт юзера,
+// поэтому «сколько начали» и «сколько бросили на середине» видно только по
+// level_test_leads (миграция 0036), а не по истории прохождений.
+
+const CEFR_ORDER = ["A1", "A2", "B1", "B2", "C1"];
+
+function pct(part: number, whole: number): string {
+  if (whole <= 0) return "—";
+  return `${Math.round((part / whole) * 100)}%`;
+}
+
+/** Горизонтальная гистограмма распределения по уровням. */
+function LevelBars({ data }: { data: Record<string, number> }) {
+  const total = Object.values(data).reduce((a, b) => a + b, 0);
+  if (total === 0) {
+    return <div style={{ color: colors.textMuted }}>Пока нет данных.</div>;
+  }
+  const max = Math.max(...Object.values(data));
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {CEFR_ORDER.filter((lv) => data[lv]).map((lv) => (
+        <div
+          key={lv}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "34px minmax(0, 1fr) 74px",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <span style={{ fontWeight: 700 }}>{lv}</span>
+          <span
+            style={{
+              height: 10,
+              borderRadius: 999,
+              background: colors.border,
+              overflow: "hidden",
+            }}
+          >
+            <span
+              style={{
+                display: "block",
+                height: "100%",
+                width: `${Math.round((data[lv] / max) * 100)}%`,
+                background: colors.primary,
+                borderRadius: 999,
+              }}
+            />
+          </span>
+          <span style={{ color: colors.textMuted, textAlign: "right" }}>
+            {data[lv]} · {pct(data[lv], total)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function leadStatus(item: {
+  finished_at: string | null;
+  claimed_at: string | null;
+}): { label: string; color: string } {
+  if (item.claimed_at) return { label: "зарегистрировался", color: colors.success };
+  if (item.finished_at) return { label: "прошёл до конца", color: colors.text };
+  return { label: "бросил", color: colors.textMuted };
+}
+
+function LevelTestsPage() {
+  const isMobile = useIsMobile();
+  const [days, setDays] = useState<number>(30);
+  const [data, setData] = useState<LevelTestsResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setData(null);
+    setErr(null);
+    api.levelTests(days, 50)
+      .then((r) => { if (alive) setData(r); })
+      .catch((e) => {
+        if (alive) setErr(e instanceof Error ? e.message : String(e));
+      });
+    return () => { alive = false; };
+  }, [days]);
+
+  if (err) return <div style={S.error}>{err}</div>;
+  if (!data) return <div style={{ color: colors.textMuted }}>Загрузка…</div>;
+
+  const o = data.overview;
+  const appTests = o.tests_by_source["app"] || 0;
+  const landingTests = o.tests_by_source["landing"] || 0;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <h2 style={S.h2}>🎯 Тест уровня</h2>
+
+      <div style={S.card}>
+        <div style={{ fontSize: 13, color: colors.textMuted, lineHeight: 1.6 }}>
+          Публичный лендинг <b>/level</b> — тест из <b>{data.landing_questions}</b>{" "}
+          заданий ({data.landing_grammar} на грамматику и {data.landing_vocab} на
+          слова), проходится <b>анонимно</b>. Уровень человек видит сразу,
+          а разбор по навыкам и AI-план открываются после регистрации — это и
+          есть конверсия ниже. Тест внутри приложения длиннее по составу:{" "}
+          {data.app_screens} экранов, из них {data.app_questions} заданий с
+          подкастами на понимание на слух.
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        {[7, 30, 90].map((d) => (
+          <button
+            key={d}
+            style={days === d ? S.tabActive : S.tab}
+            onClick={() => setDays(d)}
+          >
+            {d} дн.
+          </button>
+        ))}
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.h3}>🪜 Воронка лендинга за {o.period_days} дн.</h3>
+        <div style={metricsGridStyle(isMobile)}>
+          <div style={S.metricCard}>
+            <div style={S.metricValue}>{o.started}</div>
+            <div style={S.metricLabel}>Начали тест</div>
+          </div>
+          <div style={S.metricCard}>
+            <div style={S.metricValue}>{o.finished}</div>
+            <div style={S.metricLabel}>
+              Дошли до конца · {pct(o.finished, o.started)} от начавших
+            </div>
+          </div>
+          <div style={S.metricCard}>
+            <div style={S.metricValue}>{o.claimed}</div>
+            <div style={S.metricLabel}>
+              Зарегистрировались · {pct(o.claimed, o.finished)} от дошедших
+            </div>
+          </div>
+          <div style={S.metricCard}>
+            <div style={S.metricValue}>{pct(o.claimed, o.started)}</div>
+            <div style={S.metricLabel}>Старт → регистрация</div>
+          </div>
+        </div>
+        <div style={{ marginTop: 12, fontSize: 13, color: colors.textMuted }}>
+          За всё время: начали {o.all_started}, дошли {o.all_finished},
+          зарегистрировались {o.all_claimed}.
+        </div>
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.h3}>📊 Уровни на лендинге за {o.period_days} дн.</h3>
+        <div style={{ fontSize: 13, color: colors.textMuted, marginBottom: 12 }}>
+          По завершённым прохождениям — включая тех, кто так и не
+          зарегистрировался. Это портрет входящего трафика.
+        </div>
+        <LevelBars data={o.landing_levels} />
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.h3}>📚 Прохождения в истории за {o.period_days} дн.</h3>
+        <div style={{ fontSize: 13, color: colors.textMuted, marginBottom: 12 }}>
+          Записанные в <code>level_tests</code>, то есть привязанные к юзеру:
+          из приложения <b>{appTests}</b>, с лендинга <b>{landingTests}</b>.
+        </div>
+        <LevelBars data={o.test_levels} />
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.h3}>🕒 Последние прохождения с лендинга</h3>
+        {data.feed.length === 0 && (
+          <div style={{ color: colors.textMuted }}>
+            Пока никто не открывал тест на лендинге. Если страница уже
+            выложена, проверь, что применена миграция 0036.
+          </div>
+        )}
+        {data.feed.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table style={tableStyle(isMobile)}>
+              <thead>
+                <tr>
+                  <th style={S.th}>Начал</th>
+                  <th style={S.th}>Статус</th>
+                  <th style={S.th}>Уровень</th>
+                  <th style={S.th}>Верных</th>
+                  <th style={S.th}>Пользователь</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.feed.map((f, i) => {
+                  const st = leadStatus(f);
+                  return (
+                    <tr key={`${f.started_at}-${i}`}>
+                      <td style={S.td}>{fmtDate(f.started_at)}</td>
+                      <td style={{ ...S.td, color: st.color }}>{st.label}</td>
+                      <td style={{ ...S.td, fontWeight: 600 }}>{f.cefr || "—"}</td>
+                      <td style={S.td}>
+                        {f.total_cnt ? `${f.correct_cnt ?? 0} / ${f.total_cnt}` : "—"}
+                      </td>
+                      <td style={S.td}>
+                        {f.claimed_user_id ? (
+                          <a
+                            href={`#/user/${f.claimed_user_id}`}
+                            style={{ color: colors.primary, textDecoration: "none" }}
+                          >
+                            #{f.claimed_user_id}
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReferralsPage() {
   const isMobile = useIsMobile();
   const [tab, setTab] = useState<"program" | "links">("program");
