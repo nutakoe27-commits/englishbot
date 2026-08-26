@@ -15,6 +15,14 @@ initTheme();
 // области: низ уходит под обрез, а внутренний скролл не переполняется.
 import { initViewport } from "./viewport";
 initViewport();
+// Service worker: установка на домашний экран, офлайн-заглушка и web push.
+// Регистрируем после первой отрисовки — на старте он ничего не ускоряет, а
+// конкурировать за сеть с бандлом ему незачем.
+import { registerServiceWorker } from "./pwa";
+import { syncPush } from "./push";
+if (typeof window !== "undefined") {
+  window.addEventListener("load", () => { void registerServiceWorker(); });
+}
 import App from "./App";
 import { BattleScreen } from "./BattleScreen";
 import { ModeSelector, type Mode } from "./ModeSelector";
@@ -250,6 +258,15 @@ function Root() {
       localStorage.removeItem(SCHOOLS_INTENT_KEY);
       window.location.replace("/schools?connect=1");
     } catch { /* private mode */ }
+  }, [auth]);
+
+  // Вошёл — привязываем к аккаунту подписку на уведомления, если она уже
+  // была. Подписаться можно и анонимно (например, с лендинга теста), и без
+  // этого шага пуш некому было бы адресовать лично. Разрешений не просим:
+  // syncPush работает только с уже выданными.
+  useEffect(() => {
+    if (auth !== "authed") return;
+    void syncPush();
   }, [auth]);
 
   // То же для теста уровня: вход через Яндекс возвращает на корень сайта, а

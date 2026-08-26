@@ -41,6 +41,14 @@
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="theme-color" content="#5C7050" />
 
+    <!-- Установка на домашний экран. Android читает манифест, iOS — эти
+         мета-теги: без них ярлык открывается в обычной вкладке Safari, со
+         строкой адреса и кнопкой «Поделиться» вместо приложения. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="English Tutor" />
+
     <!-- lucide-icons CDN: рендерит SVG-иконки из <i data-lucide="name"/>.
          После каждого React-commit нужно вызвать window.lucide.createIcons(),
          см. src/lucide.ts useLucide hook. -->

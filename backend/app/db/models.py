@@ -691,6 +691,31 @@ class LevelTest(Base):
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="app")
 
 
+class PushSubscription(Base):
+    """Подписка браузера на web push (миграция 0037).
+
+    endpoint — адрес, куда пушит браузерный сервис; p256dh и auth — ключи,
+    которыми мы шифруем тело уведомления, так что промежуточный сервис его
+    не читает.
+
+    user_id может быть NULL: подписаться можно и до входа — например, с
+    лендинга теста уровня, — а привязать к аккаунту позже.
+    """
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    endpoint: Mapped[str] = mapped_column(String(512), nullable=False)
+    p256dh: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth: Mapped[str] = mapped_column(String(255), nullable=False)
+    user_agent: Mapped[Optional[str]] = mapped_column(String(255))
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="web")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_ok_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class LevelTestLead(Base):
     """Воронка публичного теста на лендинге (миграция 0036).
 

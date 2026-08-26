@@ -1,14 +1,85 @@
 {
-  "name": "English Tutor",
+  "id": "/",
+  "name": "English Tutor — AI-репетитор английского",
   "short_name": "English Tutor",
-  "description": "AI-репетитор английского с голосовой практикой",
-  "icons": [
-    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
-  ],
-  "theme_color": "#7c5cff",
-  "background_color": "#0b0d12",
+  "description": "Голосовая практика с ИИ, подкасты под твой уровень, грамматика A1–C1 и словарь с интервальным повтором.",
+  "lang": "ru",
+  "dir": "ltr",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
-  "start_url": "/",
-  "lang": "ru"
+  "orientation": "portrait",
+  "theme_color": "#5C7050",
+  "background_color": "#FAF5E8",
+  "categories": [
+    "education",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/main.png",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Выбор режима занятий",
+      "sizes": "659x1079"
+    },
+    {
+      "src": "/screenshots/speaking-fix.png",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Разбор ошибки в разговоре",
+      "sizes": "645x1073"
+    },
+    {
+      "src": "/screenshots/listening.png",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Подкасты под твой уровень",
+      "sizes": "642x1067"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Разговор",
+      "short_name": "Разговор",
+      "url": "/?mode=speaking",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Тест уровня",
+      "short_name": "Уровень",
+      "url": "/level",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
 }
