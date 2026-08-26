@@ -58,6 +58,35 @@ export function pushState(): PushState {
   return "default";
 }
 
+/**
+ * Есть ли активная подписка.
+ *
+ * Разрешение браузера и подписка — РАЗНЫЕ вещи, и путать их нельзя.
+ * `unsubscribe()` снимает подписку, но выданное разрешение остаётся
+ * выданным навсегда. Если строить состояние переключателя по
+ * `Notification.permission`, то после отключения он продолжит показывать
+ * «включено», а повторное нажатие будет снова пытаться отписаться — и
+ * человек застрянет без возможности включить обратно. Ровно это и
+ * случилось, отсюда отдельная проверка.
+ *
+ * Таймаут нужен, потому что `navigator.serviceWorker.ready` не резолвится
+ * никогда, если worker не зарегистрирован: без него экран Аккаунта завис
+ * бы на «Секунду…».
+ */
+export async function pushSubscribed(): Promise<boolean> {
+  if (!pushSupported() || Notification.permission !== "granted") return false;
+  try {
+    const reg = await Promise.race([
+      readyServiceWorker(),
+      new Promise<null>((r) => setTimeout(() => r(null), 3000)),
+    ]);
+    if (!reg) return false;
+    return !!(await reg.pushManager.getSubscription());
+  } catch {
+    return false;
+  }
+}
+
 /** Спрашивали ли уже мягким вопросом. */
 export function pushAsked(): boolean {
   try { return localStorage.getItem(PUSH_ASKED_KEY) === "1"; } catch { return false; }
