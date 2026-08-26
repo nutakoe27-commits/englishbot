@@ -766,6 +766,9 @@ export interface LevelResult {
   weak_skills: string[];
   /** null, если оба подкаста не сгенерировались. */
   listening: { correct: number; total: number } | null;
+  /** true — короткий тест с лендинга, пройденный анонимно: сервер отдал
+   *  только уровень, разбор откроется после claimLevelTest(). */
+  locked?: boolean;
 }
 
 export interface LevelStart {
@@ -816,7 +819,15 @@ async function _levelPost<T>(path: string, body: Record<string, unknown>): Promi
   }
 }
 
-export const startLevelTest = () => _levelPost<LevelStart>("start", {});
+/** mode="short" — короткая версия для лендинга /level: 10 заданий из
+ *  банка, без подкастов, можно без авторизации. */
+export const startLevelTest = (mode?: "short") =>
+  _levelPost<LevelStart>("start", mode ? { mode } : {});
+
+/** Забрать анонимно пройденный тест себе после входа — в ответе полный
+ *  результат с разбивкой по навыкам. */
+export const claimLevelTest = (test_id: string) =>
+  _levelPost<{ result: LevelResult }>("claim", { test_id });
 
 export const answerLevelTest = (test_id: string, question_id: string, answer: string) =>
   _levelPost<LevelAnswer>("answer", { test_id, question_id, answer });

@@ -82,6 +82,7 @@ function Header({ onLogin, onCta }: { onLogin: () => void; onCta: () => void }) 
   return (
     <LandingNav
       items={[
+        { label: "Тест уровня", href: "/level" },
         { label: "Для школ", href: "/schools" },
         { label: "Войти", onClick: onLogin },
       ]}
@@ -448,6 +449,7 @@ function Footer() {
           <span>English Tutor</span>
         </div>
         <div className="lp-footer__links">
+          <a href="/level">Тест уровня английского</a>
           <a href="/schools">Для школ английского</a>
           <a href="https://t.me/NuTak0e" target="_blank" rel="noreferrer">
             Нет возможности оплатить?

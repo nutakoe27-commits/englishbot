@@ -34,3 +34,4 @@ Thumbs.db
 
 # Certbot / SSL (не хранить в репо — монтируются на VPS)
 docker/certbot/
+*.tsbuildinfo

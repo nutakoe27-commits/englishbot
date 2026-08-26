@@ -22,6 +22,17 @@
 второй — как только лестница нащупала уровень. Пока они генерируются,
 человек отвечает на обычные вопросы, и к моменту, когда блок выпадает по
 плану, аудио уже готово. Ждать не приходится.
+
+Короткий режим (``mode="short"``) — для публичного лендинга /level.
+Отличий три, и все три вынужденные:
+
+* **подкастов нет** — короткий тест проходят анонимно, а генерация стоит
+  GPU-времени; десять заданий из банка не стоят ничего;
+* **можно без авторизации** — регистрации на входе нет, иначе лендинг
+  теряет смысл;
+* **анониму отдаётся только уровень** — разбивка по навыкам, AI-разбор и
+  запись результата открываются после регистрации (``/claim``). Полный
+  результат при этом не покидает сервер, пока человек не вошёл.
 """
 
 from __future__ import annotations
@@ -36,7 +47,7 @@ import time
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from .config import settings
@@ -62,6 +73,14 @@ LISTEN_WORDS = 150           # ~1 минута речи
 # Второй подкаст запускаем, когда лестница уже нащупала уровень.
 BLOCK2_TRIGGER_ANSWER = 7
 
+# Короткая версия для лендинга: 10 заданий из банка, без подкастов.
+# Грамматики больше, чем слов: она точнее разводит соседние ступени.
+SHORT_GRAMMAR = 6
+SHORT_VOCAB = 4
+# Сколько анонимных тестов пускаем с одного IP в час. Генерации здесь нет,
+# так что защищаемся не от расходов, а от засорения _TESTS.
+ANON_STARTS_PER_HOUR = 12
+
 START_LEVEL_IDX = LEVELS.index("B1")
 # Уровень засчитывается, если по нему было хотя бы столько попыток...
 MIN_ATTEMPTS_PER_LEVEL = 2
@@ -72,7 +91,9 @@ PASS_RATIO = 0.6
 # backend'а ему незачем (тот же приём, что в grammar._SESSION_STORE).
 _TESTS: dict[str, dict] = {}
 _TEST_TTL_SEC = 3600
-_TESTS_MAX = 500
+# Лендинг добавляет анонимный трафик — запас, чтобы он не вытеснял
+# тесты, идущие в приложении.
+_TESTS_MAX = 2000
 
 
 def _gc_tests() -> None:
@@ -112,15 +133,22 @@ def validate_bank() -> list[str]:
     return problems
 
 
-def _build_plan() -> list[str]:
+def _build_plan(
+    *,
+    n_grammar: int = N_GRAMMAR,
+    n_vocab: int = N_VOCAB,
+    n_blocks: int = N_BLOCKS,
+) -> list[str]:
     """План экранов. Токены: grammar | vocab | audio:B | q:B:K.
 
     Грамматика и лексика перемешиваются полностью — тест не должен идти
     блоками «сначала все слова, потом вся грамматика». Блоки аудирования
     вставляются в фиксированные окна: первый не в начале (нужно время на
     фоновую генерацию), второй — во второй половине.
+
+    ``n_blocks=0`` — короткий режим лендинга: остаются только банк-задания.
     """
-    plan = ["grammar"] * N_GRAMMAR + ["vocab"] * N_VOCAB
+    plan = ["grammar"] * n_grammar + ["vocab"] * n_vocab
     random.shuffle(plan)
     quiz_len = len(plan)
     # Окна подобраны так, чтобы блоки не слипались и не попадали в самое
@@ -130,7 +158,7 @@ def _build_plan() -> list[str]:
     for lo, hi in windows:
         lo, hi = max(1, lo), max(2, hi)
         slots.append(random.randint(min(lo, hi), hi))
-    for b in reversed(range(N_BLOCKS)):
+    for b in reversed(range(n_blocks)):
         pos = min(slots[b], len(plan))
         plan[pos:pos] = [f"audio:{b}"] + [f"q:{b}:{k}" for k in range(Q_PER_BLOCK)]
     return plan
@@ -414,6 +442,8 @@ def _grade(answers: list[dict]) -> dict:
 
 class _StartIn(BaseModel):
     init_data: Optional[str] = None
+    # "full" — тест в приложении, "short" — короткая версия для лендинга.
+    mode: str = "full"
 
 
 class _AnswerIn(BaseModel):
@@ -426,6 +456,65 @@ class _AnswerIn(BaseModel):
 class _ReportIn(BaseModel):
     init_data: Optional[str] = None
     test_id: str
+
+
+class _ClaimIn(BaseModel):
+    init_data: Optional[str] = None
+    test_id: str
+
+
+def _has_auth(init_data: Optional[str], authorization: Optional[str]) -> bool:
+    """Есть ли чем авторизоваться. Пустой заголовок за авторизацию не считаем."""
+    if init_data:
+        return True
+    a = (authorization or "").strip()
+    return a.lower().startswith("bearer ") and len(a) > len("bearer ")
+
+
+# IP → отметки времени стартов. Короткий тест ничего не генерирует, так что
+# защищаемся не от расходов на GPU, а от засорения _TESTS ботами.
+_ANON_HITS: dict[str, list[float]] = {}
+_ANON_HITS_MAX = 5000
+
+
+def _client_ip(request: Request) -> str:
+    fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if fwd:
+        return fwd[:64]
+    return (request.client.host if request.client else "?")[:64]
+
+
+def _anon_allowed(ip: str) -> bool:
+    now = time.time()
+    if len(_ANON_HITS) > _ANON_HITS_MAX:
+        _ANON_HITS.clear()
+    hits = [t for t in _ANON_HITS.get(ip, []) if now - t < 3600]
+    if len(hits) >= ANON_STARTS_PER_HOUR:
+        _ANON_HITS[ip] = hits
+        return False
+    hits.append(now)
+    _ANON_HITS[ip] = hits
+    return True
+
+
+def _trim_result(result: dict) -> dict:
+    """Что видит аноним на лендинге: уровень и счёт, без разбора.
+
+    Разбивка по навыкам и слабые места — это уже содержательная часть,
+    ради которой человек регистрируется. Отдавать её в браузер «закрытой
+    замочком» бессмысленно: она была бы в ответе сети. Поэтому полный
+    результат остаётся на сервере до /claim.
+    """
+    return {
+        "cefr": result["cefr"],
+        "correct_cnt": result["correct_cnt"],
+        "total_cnt": result["total_cnt"],
+        "locked": True,
+        "by_level": {},
+        "by_skill": {},
+        "weak_skills": [],
+        "listening": None,
+    }
 
 
 async def _resolve(init_data: Optional[str], authorization: Optional[str]) -> Optional[int]:
@@ -464,27 +553,48 @@ async def _finish(state: dict) -> dict:
         except Exception as exc:
             # До миграции 0035 таблицы нет — результат важнее записи.
             logger.warning("[level-test] не сохранён: %r", exc)
+    if state.get("public") and state.get("user_id") is None:
+        return _trim_result(result)
     return result
 
 
 @router.post("/start")
 async def start_test(
-    body: _StartIn, authorization: Optional[str] = Header(None),
+    request: Request,
+    body: _StartIn,
+    authorization: Optional[str] = Header(None),
 ) -> dict:
     """Начать тест. Первый вопрос отдаётся сразу — LLM не участвует.
 
-    Здесь же запускается фоновая генерация первого блока аудирования: пока
-    человек отвечает на первые вопросы, подкаст успевает сгенерироваться.
+    В полном режиме здесь же запускается фоновая генерация первого блока
+    аудирования: пока человек отвечает на первые вопросы, подкаст успевает
+    сгенерироваться.
+
+    В коротком режиме (лендинг) подкастов нет вообще, и авторизация не
+    обязательна — иначе публичная страница теряет смысл.
     """
-    user_id = await _resolve(body.init_data, authorization)
+    short = (body.mode or "").strip().lower() == "short"
+    authed = _has_auth(body.init_data, authorization)
+    if short and not authed:
+        if not _anon_allowed(_client_ip(request)):
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS, "too_many_tests",
+            )
+        user_id = None
+    else:
+        user_id = await _resolve(body.init_data, authorization)
     _gc_tests()
     test_id = secrets.token_urlsafe(16)
     state = {
         "user_id": user_id,
+        "public": short,
         "level_idx": START_LEVEL_IDX,
         "used": set(),
         "answers": [],
-        "plan": _build_plan(),
+        "plan": (
+            _build_plan(n_grammar=SHORT_GRAMMAR, n_vocab=SHORT_VOCAB, n_blocks=0)
+            if short else _build_plan()
+        ),
         "pos": 0,
         "blocks": {},
         "expires_at": time.time() + _TEST_TTL_SEC,
@@ -492,7 +602,8 @@ async def start_test(
     _TESTS[test_id] = state
 
     # Первый блок — на стартовом уровне: до ответов судить не о чем.
-    _kick_block(test_id, 0, LEVELS[START_LEVEL_IDX])
+    if not short:
+        _kick_block(test_id, 0, LEVELS[START_LEVEL_IDX])
 
     screen = _next_screen(state)
     if screen is None:
@@ -504,6 +615,52 @@ async def start_test(
         async with db_session() as session:
             prev = await Repo(session).last_level_test(user_id)
     return {"test_id": test_id, "question": screen, "previous": prev}
+
+
+@router.post("/claim")
+async def claim_test(
+    body: _ClaimIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Забрать пройденный анонимно тест себе — после регистрации.
+
+    Здесь же открывается полный результат: разбивка по навыкам и слабые
+    места, которые аноним не получал. Записываем прохождение в БД и
+    проставляем уровень юзеру — ровно как в тесте внутри приложения.
+
+    Забрать чужой тест нельзя: test_id — 128-битный секрет, он есть только
+    у того браузера, который тест проходил. Повторный вызов идемпотентен.
+    """
+    state = _TESTS.get(body.test_id)
+    if state is None or not state.get("result"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "result_not_found")
+    user_id = await _resolve(body.init_data, authorization)
+    if user_id is None:
+        # БД не настроена (dev) — отдаём разбор, записывать некуда.
+        return {"result": state["result"]}
+    if state.get("db_id") and state.get("user_id") == user_id:
+        return {"result": state["result"]}
+
+    state["user_id"] = user_id
+    result = state["result"]
+    from .db import Repo
+    try:
+        async with db_session() as session:
+            repo = Repo(session)
+            state["db_id"] = await repo.save_level_test(
+                user_id=user_id, cefr=result["cefr"],
+                correct_cnt=result["correct_cnt"],
+                total_cnt=result["total_cnt"],
+                answers=state["answers"],
+            )
+            if state.get("report"):
+                await repo.attach_level_test_report(
+                    state["db_id"], state["report"],
+                )
+            await session.commit()
+    except Exception as exc:
+        # Результат человеку важнее записи — показываем разбор в любом случае.
+        logger.warning("[level-test] claim не сохранён: %r", exc)
+    return {"result": result}
 
 
 @router.post("/answer")
@@ -573,7 +730,12 @@ async def answer_question(
         }
 
         # Второй блок готовим, когда лестница уже нащупала уровень.
-        if len(state["answers"]) == BLOCK2_TRIGGER_ANSWER and N_BLOCKS > 1:
+        # В коротком режиме блоков нет — и звать LLM не за чем.
+        if (
+            not state.get("public")
+            and len(state["answers"]) == BLOCK2_TRIGGER_ANSWER
+            and N_BLOCKS > 1
+        ):
             _kick_block(body.test_id, 1, LEVELS[state["level_idx"]])
 
     state["pos"] += 1
@@ -631,6 +793,10 @@ async def build_report(
     state = _TESTS.get(body.test_id)
     if state is None or not state.get("result"):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "result_not_found")
+    # Разбор — часть, ради которой с лендинга регистрируются. Анониму его
+    # не отдаём (и заодно не тратим на него GPU).
+    if state.get("public") and state.get("user_id") is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "auth_required")
     if state.get("report"):
         return {"report": state["report"]}
 

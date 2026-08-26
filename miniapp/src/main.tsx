@@ -25,6 +25,7 @@ import { SrsScreen } from "./SrsScreen";
 import { LoginScreen } from "./LoginScreen";
 import { LandingScreen } from "./LandingScreen";
 import { SchoolsLanding } from "./SchoolsLanding";
+import { LevelLanding, LEVEL_INTENT_KEY } from "./LevelLanding";
 import { BottomNav } from "./BottomNav";
 import { AccountSheet } from "./AccountSheet";
 import { LeaderboardScreen } from "./LeaderboardScreen";
@@ -112,6 +113,12 @@ const SCHOOL_CODE_KEY = "et_school_code";
 // Намерение «подключить школу»: вход через Яндекс делает полную перезагрузку
 // и возвращает на корень сайта, поэтому контекст /schools надо пережить.
 const SCHOOLS_INTENT_KEY = "et_schools_intent";
+
+/** Путь без хвостовых слэшей — по нему выбираем публичную страницу. */
+function currentPath(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.pathname.replace(/\/+$/, "");
+}
 
 function Root() {
   // Хуки всегда первыми, до условных return — иначе React 18 в проде может
@@ -206,9 +213,22 @@ function Root() {
     if (auth !== "authed" || typeof window === "undefined") return;
     try {
       if (localStorage.getItem(SCHOOLS_INTENT_KEY) !== "1") return;
-      if (window.location.pathname.replace(/\/+$/, "") === "/schools") return;
+      if (currentPath() === "/schools") return;
       localStorage.removeItem(SCHOOLS_INTENT_KEY);
       window.location.replace("/schools?connect=1");
+    } catch { /* private mode */ }
+  }, [auth]);
+
+  // То же для теста уровня: вход через Яндекс возвращает на корень сайта, а
+  // человек шёл открывать разбор своего результата. Возвращаем на /level —
+  // там test_id лежит в localStorage, и разбор подтянется сам.
+  useEffect(() => {
+    if (auth !== "authed" || typeof window === "undefined") return;
+    try {
+      if (localStorage.getItem(LEVEL_INTENT_KEY) !== "1") return;
+      if (currentPath() === "/level") return;
+      localStorage.removeItem(LEVEL_INTENT_KEY);
+      window.location.replace("/level?claim=1");
     } catch { /* private mode */ }
   }, [auth]);
 
@@ -217,10 +237,24 @@ function Root() {
     return <BattleScreen battleId={battle.id} side={battle.side} />;
   }
 
+  // Лендинг теста уровня /level — публичная страница, тест проходится
+  // анонимно. Залогиненным тоже показываем: они могли прийти по прямой
+  // ссылке или вернуться сюда после входа за разбором.
+  if (currentPath() === "/level" && auth !== "loading") {
+    if (auth === "authed" || !showLogin) {
+      return (
+        <LevelLanding
+          authed={auth === "authed"}
+          onLogin={() => setShowLogin(true)}
+          onOpenApp={() => { window.location.href = "/"; }}
+        />
+      );
+    }
+  }
+
   // B2B-лендинг /schools — публичная страница подключения школы.
   // Показываем и незалогиненным, и залогиненным (там свой флоу оплаты).
-  const isSchoolsPath = typeof window !== "undefined"
-    && window.location.pathname.replace(/\/+$/, "") === "/schools";
+  const isSchoolsPath = currentPath() === "/schools";
   if (isSchoolsPath && auth !== "loading") {
     // Залогиненный видит лендинг школ ВСЕГДА — по прямой ссылке тоже.
     // Экран входа показываем, только если гость сам нажал «Войти».
