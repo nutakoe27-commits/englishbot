@@ -16,6 +16,7 @@
 import { useEffect } from "react";
 import { ymHit, ymReachGoal } from "./metrika";
 import { LandingNav } from "./LandingNav";
+import { TRIAL_PERIOD } from "./trial";
 import "./Landing.css";
 
 interface Props {
@@ -23,9 +24,16 @@ interface Props {
   onStartTrial: () => void;
   /** Возвращающийся юзер «У меня есть аккаунт» — тоже LoginScreen. */
   onLogin: () => void;
+  /**
+   * «Оплатить сразу»: тоже ведёт на вход, но после регистрации человек
+   * попадает не на главный экран, а сразу на тарифы. Часть людей приходит
+   * уже решившими — заставлять их сначала пройти бесплатный период и
+   * потом искать оплату значит терять их на ровном месте.
+   */
+  onBuyNow: () => void;
 }
 
-export function LandingScreen({ onStartTrial, onLogin }: Props) {
+export function LandingScreen({ onStartTrial, onLogin, onBuyNow }: Props) {
   useEffect(() => {
     // Глобально html/body/#root имеют overflow:hidden (для SPA-приложения с
     // фиксированным viewport). На лендинге нужен обычный скролл документа —
@@ -59,18 +67,29 @@ export function LandingScreen({ onStartTrial, onLogin }: Props) {
     onStartTrial();
   };
 
+  const handleBuy = (location: string) => {
+    ymReachGoal("landing_buy_click", { location });
+    onBuyNow();
+  };
+
   return (
     <div className="lp">
       <Header onLogin={onLogin} onCta={() => handleCta("header")} />
-      <Hero onCta={() => handleCta("hero")} />
+      <Hero onCta={() => handleCta("hero")} onBuy={() => handleBuy("hero")} />
       <PainSolution />
       <KillerFeature />
       <Modes />
       <Screenshots />
       <SocialProof />
-      <Pricing onCta={() => handleCta("pricing")} />
+      <Pricing
+        onCta={() => handleCta("pricing")}
+        onBuy={(plan) => handleBuy(`pricing_${plan}`)}
+      />
       <Faq />
-      <FinalCta onCta={() => handleCta("final")} />
+      <FinalCta
+        onCta={() => handleCta("final")}
+        onBuy={() => handleBuy("final")}
+      />
       <Footer />
     </div>
   );
@@ -92,7 +111,7 @@ function Header({ onLogin, onCta }: { onLogin: () => void; onCta: () => void }) 
 }
 
 /* ─── Hero ───────────────────────────────────────────────────────────── */
-function Hero({ onCta }: { onCta: () => void }) {
+function Hero({ onCta, onBuy }: { onCta: () => void; onBuy: () => void }) {
   return (
     <section className="lp-hero">
       <div className="lp-container lp-hero__inner">
@@ -107,11 +126,16 @@ function Hero({ onCta }: { onCta: () => void }) {
             ИИ-собеседником, который объясняет ошибки <b>по-русски</b>, а не
             просто исправляет.
           </p>
-          <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
-            Начать бесплатно — 3 дня полного доступа
-          </button>
+          <div className="lp-cta-pair">
+            <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
+              Начать бесплатно — {TRIAL_PERIOD} полного доступа
+            </button>
+            <button type="button" className="lp-btn lp-btn--ghost lp-btn--md" onClick={onBuy}>
+              Оплатить сразу
+            </button>
+          </div>
           <p className="lp-hero__note">
-            Первые 3 дня всё открыто без ограничений. Карта не нужна —
+            Первые {TRIAL_PERIOD} всё открыто без ограничений. Карта не нужна —
             вход в один тап через Яндекс ID или email.
           </p>
           <div className="lp-hero__proof">
@@ -288,14 +312,16 @@ function Review({ name, level, children }: { name: string; level: string; childr
 }
 
 /* ─── Pricing ────────────────────────────────────────────────────────── */
-function Pricing({ onCta }: { onCta: () => void }) {
+function Pricing({
+  onCta, onBuy,
+}: { onCta: () => void; onBuy: (plan: string) => void }) {
   return (
     <section className="lp-section lp-pricing" id="pricing">
       <div className="lp-container">
         <h2 className="lp-h2 lp-h2--center">Стоимость</h2>
         <p className="lp-section__sub">
-          Сначала 3 дня полного доступа бесплатно — платить, только если
-          зайдёт. Дешевле одного занятия с репетитором (1 000–1 500 ₽).
+          Сначала {TRIAL_PERIOD} полного доступа бесплатно — платить, только
+          если зайдёт. Дешевле одного занятия с репетитором (1 000–1 500 ₽).
           Оплата картой через ЮKassa, разовая, без автосписаний.
         </p>
         <div className="lp-plans">
@@ -305,7 +331,8 @@ function Pricing({ onCta }: { onCta: () => void }) {
             period="7 дней"
             hint="Дешевле чашки кофе. Один раз на аккаунт"
             onCta={onCta}
-            ctaLabel="Начать с 3 бесплатных дней"
+            onBuy={() => onBuy("trial7")}
+            ctaLabel={`Начать бесплатно — ${TRIAL_PERIOD}`}
           />
           <PlanCard
             title="Месячный"
@@ -313,7 +340,8 @@ function Pricing({ onCta }: { onCta: () => void }) {
             period="30 дней"
             hint="Самый частый выбор"
             onCta={onCta}
-            ctaLabel="Начать с 3 бесплатных дней"
+            onBuy={() => onBuy("monthly")}
+            ctaLabel={`Начать бесплатно — ${TRIAL_PERIOD}`}
             highlighted
           />
           <PlanCard
@@ -323,7 +351,8 @@ function Pricing({ onCta }: { onCta: () => void }) {
             period="365 дней"
             hint="Выгода 50% — для тех, кто уже втянулся"
             onCta={onCta}
-            ctaLabel="Начать с 3 бесплатных дней"
+            onBuy={() => onBuy("yearly")}
+            ctaLabel={`Начать бесплатно — ${TRIAL_PERIOD}`}
           />
         </div>
         <p className="lp-offer-link">
@@ -336,10 +365,11 @@ function Pricing({ onCta }: { onCta: () => void }) {
 }
 
 function PlanCard({
-  title, price, oldPrice, period, hint, onCta, ctaLabel, highlighted = false,
+  title, price, oldPrice, period, hint, onCta, onBuy, ctaLabel,
+  highlighted = false,
 }: {
   title: string; price: string; oldPrice?: string; period: string; hint: string;
-  onCta: () => void; ctaLabel: string; highlighted?: boolean;
+  onCta: () => void; onBuy: () => void; ctaLabel: string; highlighted?: boolean;
 }) {
   return (
     <div className={`lp-plan ${highlighted ? "lp-plan--hl" : ""}`}>
@@ -348,13 +378,22 @@ function PlanCard({
       <div className="lp-plan__price">{price}</div>
       <div className="lp-plan__period">{period}</div>
       <div className="lp-plan__hint">{hint}</div>
-      <button
-        type="button"
-        className={`lp-btn ${highlighted ? "lp-btn--primary" : "lp-btn--ghost"} lp-btn--md`}
-        onClick={onCta}
-      >
-        {ctaLabel}
-      </button>
+      <div className="lp-cta-pair">
+        <button
+          type="button"
+          className={`lp-btn ${highlighted ? "lp-btn--primary" : "lp-btn--ghost"} lp-btn--md`}
+          onClick={onCta}
+        >
+          {ctaLabel}
+        </button>
+        <button
+          type="button"
+          className="lp-btn lp-btn--link lp-btn--sm"
+          onClick={onBuy}
+        >
+          Оплатить сразу — {price}
+        </button>
+      </div>
     </div>
   );
 }
@@ -378,10 +417,10 @@ function Faq() {
     },
     {
       q: "Сколько времени занимает в день?",
-      a: <>15 минут в день хватает, чтобы держать привычку. Первые 3 дня
-        после регистрации ограничений нет вообще. Дальше на бесплатном
-        тарифе остаётся 5 минут разговора в день, с подпиской — без
-        лимитов.</>,
+      a: <>15 минут в день хватает, чтобы держать привычку. Первые{" "}
+        {TRIAL_PERIOD} после регистрации ограничений нет вообще. Дальше на
+        бесплатном тарифе остаётся 5 минут разговора в день, с подпиской —
+        без лимитов.</>,
     },
     {
       q: "Как происходит оплата? Это безопасно?",
@@ -398,10 +437,11 @@ function Faq() {
     },
     {
       q: "А если не понравится?",
-      a: <>Первые три дня всё открыто без ограничений — разговор, подкасты,
-        грамматика. Успеешь понять, твоё это или нет, до любой оплаты.
-        Дальше остаются бесплатные 5 минут разговора в день, а подписку
-        берёшь, только если зайдёт. Оплата разовая, автосписаний нет.</>,
+      a: <>Первые {TRIAL_PERIOD} всё открыто без ограничений — разговор,
+        подкасты, грамматика. Успеешь понять, твоё это или нет, до любой
+        оплаты. Дальше остаются бесплатные 5 минут разговора в день, а
+        подписку берёшь, только если зайдёт. Оплата разовая, автосписаний
+        нет.</>,
     },
   ];
   return (
@@ -422,14 +462,19 @@ function Faq() {
 }
 
 /* ─── Final CTA ──────────────────────────────────────────────────────── */
-function FinalCta({ onCta }: { onCta: () => void }) {
+function FinalCta({ onCta, onBuy }: { onCta: () => void; onBuy: () => void }) {
   return (
     <section className="lp-section lp-final">
       <div className="lp-container lp-final__inner">
         <h2 className="lp-h2">Хватит молчать.<br />Скажи первую фразу сегодня.</h2>
-        <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
-          Начать бесплатно — 3 дня полного доступа
-        </button>
+        <div className="lp-cta-pair">
+          <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
+            Начать бесплатно — {TRIAL_PERIOD} полного доступа
+          </button>
+          <button type="button" className="lp-btn lp-btn--ghost lp-btn--md" onClick={onBuy}>
+            Оплатить сразу
+          </button>
+        </div>
         <p className="lp-final__note">
           Без карты и без автосписаний. Дальше — 5 минут разговора в день
           бесплатно или подписка, если зайдёт.

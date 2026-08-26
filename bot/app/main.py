@@ -61,6 +61,10 @@ BACKEND_BOT_SECRET: Optional[str] = os.getenv("BACKEND_BOT_SECRET") or None
 # существующих invoice'ов.
 FREE_PERIOD: bool = os.getenv("FREE_PERIOD", "0") == "1"
 
+# Приветственный полный доступ новичкам (миграция 0033). Значение должно
+# совпадать с backend'ом: права выдаёт он, а тексты пишем мы.
+FREE_TRIAL_DAYS: int = int(os.getenv("FREE_TRIAL_DAYS", "1") or 0)
+
 FREE_PERIOD_TEXT = (
     "🎁 <b>Сейчас всё бесплатно!</b>\n\n"
     "Доступ к голосовому тьютору, грамматике и подкастам — без лимитов и "
@@ -655,7 +659,7 @@ async def _send_welcome(message: Message) -> None:
             f"Привет, {user_name}! 👋\n\n"
             "Я — AI-репетитор английского. Со мной можно <b>говорить вслух</b>: "
             "я пойму, отвечу и объясню ошибки по-русски.\n\n"
-            "✨ Ближайшие <b>3 дня — полный доступ без ограничений</b>: "
+            f"✨ <b>{_trial_phrase()} — полный доступ без ограничений</b>: "
             "разговор, подкасты под твой уровень, грамматика A1–C1 и словарь. "
             "Карта не нужна.\n\n"
             "Настраивать ничего не надо — жми кнопку и скажи первую фразу, "
@@ -830,6 +834,13 @@ def _pluralize_days(n: int) -> str:
     if 2 <= last <= 4:
         return "дня"
     return "дней"
+
+
+def _trial_phrase() -> str:
+    """«Первые сутки» / «Ближайшие 3 дня» — без корявого «Ближайшие 1 день»."""
+    if FREE_TRIAL_DAYS == 1:
+        return "Первые сутки"
+    return f"Ближайшие {FREE_TRIAL_DAYS} {_pluralize_days(FREE_TRIAL_DAYS)}"
 
 
 def _profile_keyboard(has_sub: bool) -> InlineKeyboardMarkup:
