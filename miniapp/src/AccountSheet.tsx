@@ -23,7 +23,9 @@ import {
 } from "./auth";
 import { ThemeToggle } from "./ThemeToggle";
 import { SchoolCabinetScreen } from "./SchoolCabinetScreen";
-import { disablePush, enablePush, pushState, type PushState } from "./push";
+import {
+  disablePush, enablePush, pushState, pushSubscribed, type PushState,
+} from "./push";
 
 interface Props {
   onLoggedOut: () => void;
@@ -54,15 +56,28 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
   const [msg, setMsg] = useState<string>("");
   const [tgPending, setTgPending] = useState<{ token: string; url: string } | null>(null);
   const [tgBusy, setTgBusy] = useState<boolean>(false);
-  // Уведомления в браузере. Состояние читаем при монтировании: разрешение
-  // живёт в браузере, а не у нас, и человек мог поменять его в настройках
-  // сайта мимо приложения.
+  // Уведомления в браузере. Состояний два, и они независимы: разрешение
+  // (его даёт браузер и обратно уже не забирает) и наличие подписки.
+  // Переключатель показывает именно подписку — иначе после отключения он
+  // врал бы, что уведомления всё ещё включены.
   const [push, setPush] = useState<PushState>(() => pushState());
+  const [pushOn, setPushOn] = useState<boolean>(false);
   const [pushBusy, setPushBusy] = useState<boolean>(false);
 
   const inTelegram = (() => {
     try { return !!WebApp.initData; } catch { return false; }
   })();
+
+  // Подписка живёт в браузере, а не у нас: человек мог отключить
+  // уведомления в настройках сайта или почистить данные мимо приложения.
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const on = await pushSubscribed();
+      if (alive) { setPushOn(on); setPush(pushState()); }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -285,9 +300,7 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
               {push !== "unsupported" && (
                 <div className="acc-link-block">
                   <div className="acc-link-title">
-                    {push === "granted"
-                      ? "🔔 Уведомления включены"
-                      : "🔔 Напоминания о занятиях"}
+                    {pushOn ? "🔔 Уведомления включены" : "🔔 Напоминания о занятиях"}
                   </div>
                   {push === "denied" ? (
                     <p className="acc-hint">
@@ -298,37 +311,38 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
                   ) : (
                     <>
                       <p className="acc-hint">
-                        {push === "granted"
+                        {pushOn
                           ? "Будем присылать напоминание, если пропустишь пару дней. Не чаще одного раза в день."
                           : "Короткое напоминание в браузере, если пропустишь пару дней. Работает и без Telegram."}
                       </p>
                       <button
                         type="button"
-                        className={push === "granted" ? "btn btn--ghost acc-link-btn" : "btn btn--primary acc-link-btn"}
+                        className={pushOn ? "btn btn--ghost acc-link-btn" : "btn btn--primary acc-link-btn"}
                         disabled={pushBusy}
                         onClick={() => void (async () => {
                           setPushBusy(true);
-                          if (push === "granted") {
+                          if (pushOn) {
                             await disablePush();
-                            // Разрешение остаётся выданным, но подписки больше
-                            // нет — показываем это состояние честно.
-                            setPush(pushState());
                             setMsg("Уведомления отключены.");
                           } else {
-                            const next = await enablePush();
-                            setPush(next);
-                            setMsg(
-                              next === "granted"
-                                ? "Готово — уведомления включены."
-                                : "Браузер не дал разрешение.",
-                            );
+                            await enablePush();
+                            // Состояние перечитываем, а не берём из ответа:
+                            // разрешение могли дать, а подписка не создаться
+                            // (нет ключей на сервере, нет сети). Показываем
+                            // то, что есть на самом деле.
+                            const ok = await pushSubscribed();
+                            setMsg(ok
+                              ? "Готово — уведомления включены."
+                              : "Не получилось включить. Проверь разрешение для сайта в настройках браузера.");
                           }
+                          setPushOn(await pushSubscribed());
+                          setPush(pushState());
                           setPushBusy(false);
                         })()}
                       >
                         {pushBusy
                           ? "Секунду…"
-                          : push === "granted" ? "Отключить уведомления" : "Включить уведомления"}
+                          : pushOn ? "Отключить уведомления" : "Включить уведомления"}
                       </button>
                     </>
                   )}
