@@ -1,0 +1,35 @@
+# Телеграм-бот на отдельном хосте за пределами России.
+#
+# Зачем. Доступ к api.telegram.org с российского VPS пропадает рывками:
+# провайдер режет трафик нестабильно, и бот вместе с ним то работает, то
+# нет. Всё остальное — сайт, API, оплата, GPU — остаётся на месте, потому
+# что для них российская площадка как раз удобнее.
+#
+# Что меняется у бота при переезде, и это ВСЁ:
+#   • BACKEND_URL — вместо http://backend:8000 публичный HTTPS-адрес API
+#     (запросы и так подписаны общим секретом X-Bot-Secret);
+#   • DATABASE_URL — вместо host.docker.internal адрес MySQL через SSH-
+#     туннель до прод-сервера.
+# Обратных вызовов нет: backend бота никуда не дёргает, его внутренний
+# HTTP-сервер отвечает только на ping.
+#
+# network_mode: host — чтобы контейнер видел туннель на 127.0.0.1 хоста.
+# Публиковать порты не требуется: снаружи к боту никто не обращается.
+#
+# Запуск:  docker compose -f docker-compose.bot.yml up -d --build
+# Логи:    docker compose -f docker-compose.bot.yml logs -f
+# Подробности и порядок переключения — docs/bot-abroad.md
+
+services:
+  bot:
+    build: ./bot
+    image: englishbot-bot
+    container_name: englishbot-bot
+    restart: unless-stopped
+    env_file: .env
+    network_mode: host
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
