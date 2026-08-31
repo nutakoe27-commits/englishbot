@@ -37,7 +37,17 @@ services:
       - englishbot_net
 
   # ── Bot — aiogram 3 (long polling) ───────────────────────────────────────
+  # ВНИМАНИЕ: с переездом бота на зарубежный хост он поднимается ТОЛЬКО с
+  # профилем `bot` — обычный `docker compose up -d` его не трогает. Причина
+  # в том, что два long polling'а на один токен несовместимы: Telegram
+  # отдаёт второму 409 Conflict, и бот молча перестаёт отвечать. Профиль —
+  # это защита от случайного запуска второй копии здесь.
+  #
+  # Поднять бота на этом же хосте (например, откатиться):
+  #   docker compose --profile bot up -d bot
+  # Отдельный хост использует docker-compose.bot.yml, см. docs/bot-abroad.md.
   bot:
+    profiles: ["bot"]
     build: ./bot
     restart: unless-stopped
     env_file: .env
