@@ -67,9 +67,43 @@ sudo mkdir -p /home/tunnel/.ssh && sudo chmod 700 /home/tunnel/.ssh
 command="/bin/false",no-agent-forwarding,no-X11-forwarding,no-pty,permitopen="127.0.0.1:3306" ssh-ed25519 AAAA... bot-tunnel
 ```
 
+**Не копируй эту строку через буфер обмена.** Она длинная и рвётся: у нас
+она дважды приехала битой — сначала потерялся тип ключа `ssh-ed25519`,
+потом обрезался сам блоб, причём во второй раз `awk` насчитал правильные
+четыре поля и подделка выглядела как исправная строка. Заметно это только
+по размеру файла (должно быть около 185 байт) и по отпечатку.
+
+Надёжный способ — передать строку одним куском base64, в котором нет
+пробелов и переносов. На зарубежном хосте:
+
 ```bash
+printf 'command="/bin/false",no-agent-forwarding,no-X11-forwarding,no-pty,permitopen="127.0.0.1:3306" %s\n' \
+  "$(cat /root/.ssh/et_tunnel.pub)" | base64 -w0; echo
+ssh-keygen -lf /root/.ssh/et_tunnel.pub     # запомнить отпечаток
+```
+
+На проде:
+
+```bash
+echo '<base64-строка>' | base64 -d > /home/tunnel/.ssh/authorized_keys
 sudo chown -R tunnel:tunnel /home/tunnel/.ssh
 sudo chmod 600 /home/tunnel/.ssh/authorized_keys
+sudo chown tunnel:tunnel /home/tunnel && sudo chmod 755 /home/tunnel
+ssh-keygen -lf /home/tunnel/.ssh/authorized_keys   # отпечаток должен совпасть
+```
+
+Если base64 обрежется при копировании, `base64 -d` выругается сам — молча
+битого файла уже не получится. Отпечатки на обеих сторонах обязаны
+совпадать.
+
+Ещё одна мина: `useradd` без пароля оставляет учётку в состоянии, которое
+`passwd -S` показывает буквой `L`. Само по себе это авторизацию по ключу не
+ломает (буква `L` одинаково выводится и для `!`, и для `*`), так что
+диагноз по ней ставить нельзя — смотри лог sshd на проде, он называет
+причину прямым текстом:
+
+```bash
+journalctl -u ssh --since '10 min ago' --no-pager | grep -i tunnel | tail -20
 ```
 
 ### Проверить пользователя MySQL
