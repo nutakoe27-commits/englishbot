@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import WebApp from "@twa-dev/sdk";
 // Design System: токены (palette, typography, spacing) + .et-* компоненты.
@@ -20,6 +20,8 @@ initViewport();
 // конкурировать за сеть с бандлом ему незачем.
 import { registerServiceWorker } from "./pwa";
 import { syncPush } from "./push";
+import { isAppMode } from "./appMode";
+import { useBackGuard } from "./backGuard";
 if (typeof window !== "undefined") {
   window.addEventListener("load", () => { void registerServiceWorker(); });
 }
@@ -147,6 +149,27 @@ function currentPath(): string {
   if (typeof window === "undefined") return "";
   return window.location.pathname.replace(/\/+$/, "");
 }
+
+/**
+ * Режим из адреса: ярлыки приложения (manifest.shortcuts) ведут на
+ * `/?mode=speaking` и `/level`, и это должно открывать нужный экран, а не
+ * главную. Внутри приложения `/level` — обычный экран теста, а не лендинг:
+ * человек попал сюда из ярлыка, а не с рекламной страницы.
+ */
+function initialModeFromUrl(): Mode | null {
+  if (typeof window === "undefined") return null;
+  try {
+    if (isAppMode() && window.location.pathname.replace(/\/+$/, "") === "/level") {
+      return "level";
+    }
+    const m = new URLSearchParams(window.location.search).get("mode");
+    if (m === "speaking" || m === "listening" || m === "grammar" || m === "level") {
+      return m;
+    }
+  } catch { /* битый адрес */ }
+  return null;
+}
+
 
 function Root() {
   // Хуки всегда первыми, до условных return — иначе React 18 в проде может
@@ -290,7 +313,11 @@ function Root() {
   // Лендинг теста уровня /level — публичная страница, тест проходится
   // анонимно. Залогиненным тоже показываем: они могли прийти по прямой
   // ссылке или вернуться сюда после входа за разбором.
-  if (currentPath() === "/level" && auth !== "loading") {
+  // В установленном приложении этого лендинга нет: там `/level` открывает
+  // обычный экран теста (см. initialModeFromUrl). Шапка с меню, ценами и
+  // подвалом внутри приложения выглядит как сайт — ровно то, за что нас
+  // завернули на модерации.
+  if (currentPath() === "/level" && !isAppMode() && auth !== "loading") {
     if (auth === "authed" || !showLogin) {
       return (
         <LevelLanding
@@ -327,9 +354,15 @@ function Root() {
     // Особый случай: в URL есть ?payment_id= (возврат с ЮKassa) — это
     // залогиненный юзер, который вернулся после оплаты; не показываем лендинг,
     // сразу логин.
+    //
+    // И главное: в установленном приложении лендинга нет вообще. Человек
+    // уже установил продукт, убеждать его витриной с ценами и FAQ поздно —
+    // он ждёт вход. Показ маркетинговой страницы в приложении и стал
+    // причиной отказа модерации: со стороны это выглядит как обёртка над
+    // сайтом, а не самостоятельный продукт.
     const hasPaymentReturn = typeof window !== "undefined"
       && new URLSearchParams(window.location.search).has("payment_id");
-    if (showLogin || hasPaymentReturn) {
+    if (showLogin || hasPaymentReturn || isAppMode()) {
       return <LoginScreen onAuthed={() => { setShowLogin(false); setAuth("authed"); }} />;
     }
     return (
@@ -356,7 +389,7 @@ function Root() {
       initialMode={
         screen === "speaking" || screen === "listening" || screen === "grammar"
           ? screen
-          : null
+          : initialModeFromUrl()
       }
       initialPromo={promoParam}
       initialSchool={schoolParam}
@@ -437,7 +470,14 @@ function TabShell({
     setMode(null);
     setTab(next);
   };
-  const exitMode = () => setMode(null);
+  const exitMode = useCallback(() => setMode(null), []);
+
+  // Аппаратная «Назад» на Android: возвращает на предыдущий экран внутри
+  // приложения, а не закрывает его. Каждый глубокий экран сторожит себя
+  // сам — так вложенность (тарифы поверх режима) работает естественно.
+  useBackGuard(mode !== null, exitMode);
+  useBackGuard(subscribeOpen, useCallback(() => setSubscribeOpen(false), []));
+  useBackGuard(onboardingManual, useCallback(() => setOnboardingManual(false), []));
 
   let body: React.ReactNode;
   if (mode === "speaking") {
