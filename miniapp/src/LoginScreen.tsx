@@ -21,6 +21,7 @@ import { LogoBox } from "./ds-react/LogoBox";
 import { SerifH } from "./ds-react/typography";
 import { Icon } from "./ds-react/Icon";
 import { useLucide } from "./lucide";
+import { isAppMode } from "./appMode";
 
 interface Props {
   onAuthed: () => void;
@@ -171,14 +172,19 @@ export function LoginScreen({ onAuthed }: Props) {
 
         {error && <p className="login-v2__error">{error}</p>}
 
-        <a
-          className="login-v2__channel"
-          href="https://t.me/kmo_ai"
-          target="_blank"
-          rel="noreferrer"
-        >
-          <Icon name="megaphone" size={14} /> Новости проекта — @kmo_ai
-        </a>
+        {/* Внешняя ссылка на сайте уместна, а в установленном приложении
+            открывает вкладку браузера с адресной строкой — и приложение
+            перестаёт выглядеть законченным. Внутри её не показываем. */}
+        {!isAppMode() && (
+          <a
+            className="login-v2__channel"
+            href="https://t.me/kmo_ai"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <Icon name="megaphone" size={14} /> Новости проекта — @kmo_ai
+          </a>
+        )}
       </div>
     </div>
   );
