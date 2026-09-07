@@ -7,14 +7,30 @@
 |---|---|---|
 | Каталог | `/var/www/englishbot` | `/var/www/englishbot-staging/englishbot` |
 | База | `megotim4y2` | `englishbot_staging` |
-| Mini App / сайт | `englishbot.krichigindocs.ru` → 8081 | `englishbot-test.krichigindocs.ru` → 8091 |
-| Backend API | `api-english.krichigindocs.ru` → 8082 | `api-english-test.krichigindocs.ru` → 8092 |
-| Админка | `admin-english.krichigindocs.ru` → 8083 | `admin-english-test.krichigindocs.ru` → **9083** |
+| Mini App / сайт | `englishbot.krichigindocs.ru` → 8081 | `englishbot-test.krichigindocs.ru` → 9081 |
+| Backend API | `api-english.krichigindocs.ru` → 8082 | `api-english-test.krichigindocs.ru` → 9082 |
+| Админка | `admin-english.krichigindocs.ru` → 8083 | `admin-english-test.krichigindocs.ru` → 9083 |
+| Имя compose-проекта | `englishbot` (по имени каталога) | **`englishbot-staging`** (`COMPOSE_PROJECT_NAME` в `.env`) |
 | Бот | боевой токен | **отдельный тестовый бот** |
 
 Порты контейнеров задаются переменными `MINIAPP_PORT`, `BACKEND_PORT`,
 `ADMIN_PORT` в `.env` соответствующего каталога (в `docker-compose.yml`
 проставлены дефолты прода, поэтому боевой стенд менять не нужно).
+
+**Обязательно** в `.env` теста:
+
+```ini
+COMPOSE_PROJECT_NAME=englishbot-staging
+MINIAPP_PORT=9081
+BACKEND_PORT=9082
+ADMIN_PORT=9083
+```
+
+Без `COMPOSE_PROJECT_NAME` compose берёт имя проекта из имени каталога, а он
+у прода и теста одинаковый (`englishbot`). Тогда `docker compose up` в тестовом
+каталоге пересоздаёт **прод-контейнеры** с тестовыми портами, и прод отдаёт 502.
+Проверка, что стеки не пересекаются: `docker compose ls` — у каждого проекта
+только свои конфиги.
 
 ---
 
