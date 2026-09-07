@@ -18,7 +18,7 @@ html:has(body.lp-active) {
  * игнорируют orbs с background-attachment:fixed). */
 [data-theme="dark"] html:has(body.lp-active),
 [data-theme="dark"] body.lp-active {
-  background-color: #0b0d12 !important;
+  background-color: #171512 !important;
 }
 
 .lp {

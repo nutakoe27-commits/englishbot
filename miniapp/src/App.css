@@ -7,18 +7,13 @@
  * мапятся через коралл/изумруд из DS.
  */
 :root {
-  --bg-0: var(--bg);
-  --bg-1: var(--surface);
-  --bg-2: var(--surface-2);
-  /* --border и --border-strong наследуются из DS как есть. */
-  /* --text и --text-dim — тоже из DS; --text-faint тоже. */
+  /* Цвета здесь НЕ переопределяем. Раньше стояло --bg-0: var(--bg) при
+   * том, что DS задаёт --bg: var(--bg-0), — цикл, и обе переменные
+   * становились невалидными во всём приложении: body без фона, чипы и
+   * карточки на var(--bg-1) прозрачные, --record тоже. Источник цветов —
+   * ds/tokens/colors.css и тёмный блок в ds/styles.css, и только они. */
 
-  --accent-glow: var(--accent-ring);
-  --record: var(--record);
-  --record-glow: var(--accent-ring);
-  --speak-glow: var(--speak-soft);
-
-  /* Радиусы и easing из DS. Старые имена → новые значения. */
+  /* Радиусы: старые имена → новые значения DS. */
   --radius-lg: var(--radius-xl);
   --radius-md: var(--radius-lg);
   --radius-sm: var(--radius-md);
@@ -2002,7 +1997,7 @@ button {
 }
 .daily-bars__fill {
   width: 100%;
-  background: var(--accent, #7c5cff);
+  background: var(--accent);
   border-radius: 2px 2px 0 0;
   min-height: 2px;
 }
@@ -2068,7 +2063,7 @@ button {
 }
 .achievement__bar-fill {
   height: 100%;
-  background: var(--accent, #7c5cff);
+  background: var(--accent);
   border-radius: inherit;
   transition: width 0.2s ease;
 }
@@ -2286,22 +2281,23 @@ button {
   padding: 4px 4px 24px;
 }
 
+/* Обёртка ListeningSettingsPanel: раньше без правила — секции слипались. */
+.lst-config {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
 .lst-section {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 .lst-section__title {
   margin: 0;
-  display: inline-flex;
-  align-self: flex-start;
-  padding: 4px 10px;
-  font-size: 11.5px;
+  padding: 0 2px;
+  font-size: 11px;
   font-weight: 700;
-  color: var(--accent-deep);
-  background: var(--accent-tint-strong);
-  border: 1px solid var(--border-accent);
-  border-radius: 999px;
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.10em;
 }
@@ -2310,6 +2306,23 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+/* Ровная сетка без «сирот» на второй строке: колонок столько, сколько
+ * вариантов (--cols задаёт компонент). На узких экранах — по 3 в ряд. */
+.lst-chips--grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+  gap: 8px;
+}
+.lst-chips--grid .lst-chip {
+  padding-left: 6px;
+  padding-right: 6px;
+  text-align: center;
+  white-space: nowrap;
+  min-width: 0;
+}
+@media (max-width: 360px) {
+  .lst-chips--grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 .lst-chip {
   padding: 11px 18px;
@@ -2337,9 +2350,10 @@ button {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 10px 16px;
-  min-width: 78px;
+  padding: 10px 3px;
+  min-width: 0;
   line-height: 1.15;
+  border-radius: 14px;
 }
 .lst-chip--level .lst-chip__main {
   font-size: 15px;
@@ -2347,9 +2361,13 @@ button {
   letter-spacing: 0.2px;
 }
 .lst-chip--level .lst-chip__sub {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
   color: var(--text-dim);
+  max-width: 100%;
+  white-space: normal;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
 }
 .lst-chip--level[data-active="true"] .lst-chip__sub {
   color: var(--accent);
@@ -2529,6 +2547,12 @@ button {
 .lst-player audio {
   width: 100%;
   height: 38px;
+  /* Нативные контролы подхватывают тему, а не рисуются белой пилюлей в тёмной. */
+  color-scheme: light;
+}
+:root[data-theme="dark"] .lst-player audio,
+:root[data-theme="dark"] .lvt-audio__player {
+  color-scheme: dark;
 }
 .lst-player__actions {
   display: flex;
@@ -2926,14 +2950,14 @@ button {
   border: 1px solid;
 }
 .grm-lesson-badge[data-passed="true"] {
-  border-color: rgba(46, 160, 67, 0.5);
-  background: rgba(46, 160, 67, 0.12);
-  color: #b6f7c9;
+  border-color: var(--border-accent);
+  background: var(--accent-tint-strong);
+  color: var(--accent-deep);
 }
 .grm-lesson-badge[data-passed="false"] {
-  border-color: rgba(217, 119, 6, 0.5);
-  background: rgba(217, 119, 6, 0.12);
-  color: #ffd9a0;
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--text);
 }
 
 /* ─── Grammar: заглушка «нет ошибок» ─────────────────────────────── */
@@ -3055,7 +3079,7 @@ button {
 .srs-screen {
   position: fixed;
   inset: 0;
-  background: var(--bg, #0b0d12);
+  background: var(--bg);
   color: var(--text, #fff);
   padding: 20px 16px 24px;
   display: flex;
@@ -3230,7 +3254,7 @@ button {
 .boot-splash {
   position: fixed;
   inset: 0;
-  background: var(--bg-0, #0b0d12);
+  background: var(--bg-0);
 }
 
 /* ─── LoginScreen (веб-вход вне Telegram) ───────────────────────────── */
@@ -3694,7 +3718,7 @@ button {
   margin-top: 8px;
 }
 .sub-offer a {
-  color: var(--accent-soft, #a18aff);
+  color: var(--accent-soft);
   text-decoration: underline;
 }
 

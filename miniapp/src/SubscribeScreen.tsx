@@ -291,7 +291,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
             <>
               {me?.subscription_until && (
                 <p className="sub-lead">
-                  Подписка активна до <b>{_fmtDate(me.subscription_until)}</b>.
+                  Подписка активна до <b>{_fmtDate(me.subscription_until)}</b>{" "}
                   Можно продлить на любой срок — дни прибавляются.
                 </p>
               )}

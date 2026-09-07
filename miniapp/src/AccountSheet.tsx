@@ -273,13 +273,6 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
             <p className="acc-hint">Загрузка…</p>
           ) : (
             <>
-              <p className="acc-lead">
-                Привяжи второй способ входа (email с паролем или Telegram) —
-                не потеряешь прогресс при блокировке. Если у привязываемого
-                способа уже есть отдельный аккаунт — аккаунты объединятся:
-                данные сохранятся у того, который был создан раньше.
-              </p>
-
               {onOpenSubscribe && (
                 <div className="acc-link-block">
                   <div className="acc-link-title">
@@ -377,6 +370,11 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
                 </div>
               )}
 
+              <div className="acc-link-title">Способы входа</div>
+              <p className="acc-hint">
+                Привяжи второй способ — не потеряешь прогресс, если один из них
+                заблокируют. Если у него уже есть свой аккаунт, они объединятся.
+              </p>
               <div className="acc-list">
                 {(["telegram", "native", "yandex"] as const).map((p) => {
                   const id = me?.identities.find((i) => i.provider === p);

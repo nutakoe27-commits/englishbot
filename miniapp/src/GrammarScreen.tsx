@@ -620,7 +620,7 @@ export function GrammarScreen({ onExit }: Props) {
           <>
             <section className="lst-section">
               <h3 className="lst-section__title">Уровень</h3>
-              <div className="lst-chips">
+              <div className="lst-chips lst-chips--grid" style={{ "--cols": levelTabs.length } as React.CSSProperties}>
                 {levelTabs.map((lv) => (
                   <button
                     key={lv}

@@ -60,68 +60,85 @@
  * Переключатель — ThemeToggle в Профиле. JSX не трогается, только
  * перекраска через переменные. */
 [data-theme="dark"] {
-  /* Surfaces — main palette */
-  --bg-0: #0b0d12;
-  --bg-1: #12151c;
-  --bg-2: #181c25;
-  --bg-3: #20242f;
-  --bg-inset: #0e1118;
+  /* Тёмная тема — тот же «блокнот», только выключили свет. Тёплый
+   * почти-чёрный вместо сине-чёрного, кремовый текст, шалфей светлее,
+   * чем на светлой (на тёмном фоне #5C7050 проваливается). Раньше здесь
+   * был фиолетовый с мятой от старого дизайна: иконка, статус-бар и
+   * светлая тема были уже шалфейными, а тёмная — нет, и приложение в двух
+   * темах выглядело как два разных продукта. */
 
-  /* Text */
-  --text:       #e8eaf0;
-  --text-dim:   #b4b7c2;
-  --text-faint: #7d8190;
-  --text-on-accent: #fff;
+  /* Surfaces — warm charcoal */
+  --bg-0: #171512;
+  --bg-1: #1F1C18;
+  --bg-2: #262219;
+  --bg-3: #2E2A24;
+  --bg-inset: #121110;
 
-  /* Accent — purple из main */
-  --accent:        #7c5cff;
-  --accent-soft:   #a489ff;
-  --accent-deep:   #5a3fff;
-  --accent-glow:   rgba(124, 92, 255, 0.35);
-  --accent-tint:        rgba(124, 92, 255, 0.14);
-  --accent-tint-strong: rgba(124, 92, 255, 0.26);
+  /* Text — cream, never pure white */
+  --text:       #F2EDE3;
+  --text-dim:   #B9B0A2;
+  --text-faint: #857B6C;
+  --text-on-accent: #14120F;
 
-  /* Speak / Record — mint / coral из main */
-  --speak:       #33d9a6;
-  --speak-soft:  #6ee7c1;
-  --speak-tint:  rgba(51, 217, 166, 0.18);
-  --speak-glow:  rgba(51, 217, 166, 0.30);
-  --record:      #ff5470;
-  --record-soft: #ff8094;
-  --record-tint: rgba(255, 84, 112, 0.18);
-  --record-glow: rgba(255, 84, 112, 0.30);
+  /* Accent — sage, lifted for contrast on dark */
+  --accent:        #8DA67C;
+  --accent-soft:   #A9BE99;
+  --accent-deep:   #6F8760;
+  --accent-glow:   rgba(141, 166, 124, 0.30);
+  --accent-tint:        rgba(141, 166, 124, 0.14);
+  --accent-tint-strong: rgba(141, 166, 124, 0.24);
 
-  /* Warn — приглушённый butter, читается на dark */
-  --warn:      #d9b84a;
-  --warn-tint: rgba(217, 184, 74, 0.20);
+  /* Speak / Record — тот же шалфей и пыльная роза, светлее */
+  --speak:       #8FB07E;
+  --speak-soft:  #B3CBA3;
+  --speak-tint:  rgba(143, 176, 126, 0.16);
+  --speak-glow:  rgba(143, 176, 126, 0.30);
+  --record:      #D48787;
+  --record-soft: #E0A3A3;
+  --record-tint: rgba(212, 135, 135, 0.16);
+  --record-glow: rgba(212, 135, 135, 0.30);
 
-  /* Borders */
-  --border:        rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --border-accent: rgba(124, 92, 255, 0.40);
+  /* Warn — butter, читается на тёмном */
+  --warn:      #E2C465;
+  --warn-soft: #ECD68F;
+  --warn-tint: rgba(226, 196, 101, 0.18);
 
-  /* Pastels (для NoteCard sage/cream/warn tone'ов) → purple-tint */
-  --pastel-sage:  rgba(124, 92, 255, 0.18);
-  --pastel-rose:  rgba(255, 84, 112, 0.18);
-  --pastel-cream: rgba(255, 255, 255, 0.04);
+  /* Error */
+  --error: #D66A6A;
+  --error-tint: rgba(214, 106, 106, 0.14);
+
+  /* Borders — кремовые волоски */
+  --border:        rgba(242, 237, 227, 0.08);
+  --border-strong: rgba(242, 237, 227, 0.16);
+  --border-accent: rgba(141, 166, 124, 0.40);
+
+  /* Pastels → тонированные под тёмный фон */
+  --pastel-sage:  rgba(141, 166, 124, 0.20);
+  --pastel-rose:  rgba(212, 135, 135, 0.18);
+  --pastel-sky:   rgba(160, 180, 200, 0.16);
+  --pastel-cream: rgba(242, 237, 227, 0.06);
+
+  /* Highlighter marker */
+  --marker: rgba(226, 196, 101, 0.55);
+  --marker-soft: rgba(226, 196, 101, 0.32);
 
   /* Cards / gradients */
-  --grad-card:         #181c25;
-  --grad-primary:      linear-gradient(180deg, #7c5cff, #5a3fff);
-  --grad-primary-deep: linear-gradient(180deg, #5a3fff, #4a30dc);
+  --grad-card:         #1F1C18;
+  --grad-primary:      linear-gradient(180deg, #8DA67C, #6F8760);
+  --grad-primary-deep: linear-gradient(180deg, #6F8760, #5C7050);
 
-  /* На dark клетку убираем (юзер: «вернуть градиент только на тёмной»). */
-  --grid-line: transparent;
+  /* Клетка блокнота остаётся и на тёмной — едва заметная */
+  --grid-line: rgba(242, 237, 227, 0.045);
 
   /* Card shadow — глубже */
-  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.25),
-                 0 14px 28px -14px rgba(0, 0, 0, 0.45);
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.35),
+                 0 14px 28px -14px rgba(0, 0, 0, 0.55);
 
   /* Popover-surface на dark — slightly raised */
-  --surface-popup: #1f2330;
+  --surface-popup: #2A2620;
 
   /* BottomNav frosted bg на dark */
-  --nav-bg: rgba(20, 23, 32, 0.85);
+  --nav-bg: rgba(31, 28, 24, 0.88);
 }
 
 /* ─── Compat: старые имена → новые v2-токены ──────────────────────── */
@@ -203,8 +220,8 @@ body,
 [data-theme="dark"] body,
 [data-theme="dark"] .app-shell {
   background-image:
-    radial-gradient(circle at 15% 15%, rgba(124, 92, 255, 0.22), transparent 45%),
-    radial-gradient(circle at 85% 85%, rgba(51, 217, 166, 0.14), transparent 50%);
+    radial-gradient(circle at 15% 15%, rgba(141, 166, 124, 0.16), transparent 45%),
+    radial-gradient(circle at 85% 85%, rgba(226, 196, 101, 0.08), transparent 50%);
   background-size: auto, auto;
   background-attachment: fixed;
 }
@@ -235,8 +252,8 @@ body,
 [data-theme="dark"] .lp {
   background-color: var(--bg);
   background-image:
-    radial-gradient(circle at 15% 8%, rgba(124, 92, 255, 0.20), transparent 40%),
-    radial-gradient(circle at 85% 30%, rgba(51, 217, 166, 0.12), transparent 45%);
+    radial-gradient(circle at 15% 8%, rgba(141, 166, 124, 0.14), transparent 40%),
+    radial-gradient(circle at 85% 30%, rgba(226, 196, 101, 0.07), transparent 45%);
   background-repeat: no-repeat;
   background-attachment: scroll;
 }

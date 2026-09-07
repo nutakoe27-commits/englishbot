@@ -540,17 +540,17 @@ export default function App({ onExit }: AppProps = {}) {
       if (settingsRef.current.mode === "chat") {
         // Чистый чат — микрофон не нужен. Сразу idle и открываем WS.
         setAppState("idle");
-        setStatusText("Ready to chat");
+        setStatusText("Можно писать");
       } else {
         const ok = await initMicrophone();
         if (cancelled) return;
         if (!ok) {
           setAppState("mic-denied");
-          setStatusText("Microphone is needed");
+          setStatusText("Нужен микрофон");
           return;
         }
         setAppState("idle");
-        setStatusText("Ready to talk");
+        setStatusText("Можно говорить");
       }
       try {
         await openConnection();
@@ -614,7 +614,7 @@ export default function App({ onExit }: AppProps = {}) {
       wsRef.current = null;
 
       setAppState("connecting");
-      setStatusText("Connecting…");
+      setStatusText("Подключаемся…");
       setErrorMsg("");
       wsClosingRef.current = false;
 
@@ -654,7 +654,7 @@ export default function App({ onExit }: AppProps = {}) {
       ws.onopen = () => {
         if (wsRef.current !== ws) return;
         setAppState("connected");
-        setStatusText("Ready to talk");
+        setStatusText("Можно говорить");
         // Сбрасываем буфер TTS-чанков — старые куски не должны приклеиться
         // к первой реплике новой сессии.
         pendingTutorChunksRef.current = [];
@@ -672,7 +672,7 @@ export default function App({ onExit }: AppProps = {}) {
           if (!audioGateOpenRef.current) return;
           // Бинарные данные → PCM 24 kHz аудио
           setAppState("speaking");
-          setStatusText("Speaking…");
+          setStatusText("Говорит…");
           // Копируем буфер для replay: enqueueAudio передаст оригинал в
           // AudioBuffer.copyToChannel, ArrayBuffer останется живым, но
           // явный slice страхует от detach в некоторых браузерах.
@@ -693,7 +693,7 @@ export default function App({ onExit }: AppProps = {}) {
               speakingEndTimerRef.current = null;
               setAppState((prev) => (prev === "speaking" ? "connected" : prev));
               setStatusText((prev) =>
-                prev === "Speaking…" ? "Your turn" : prev,
+                prev === "Говорит…" ? "Твоя очередь" : prev,
               );
             }, remaining * 1000 + 200);
           }
@@ -782,8 +782,8 @@ export default function App({ onExit }: AppProps = {}) {
         if (wsRef.current !== ws) return;
         if (!wsClosingRef.current) {
           setAppState("error");
-          setErrorMsg("Connection error. Please try again.");
-          setStatusText("Error");
+          setErrorMsg("Ошибка соединения. Попробуй ещё раз.");
+          setStatusText("Ошибка");
         }
       };
 
@@ -807,7 +807,7 @@ export default function App({ onExit }: AppProps = {}) {
           wsRef.current = null;
           if (!wsClosingRef.current) {
             setAppState("idle");
-            setStatusText("Ready to talk");
+            setStatusText("Можно говорить");
           }
         }
       };
@@ -831,14 +831,14 @@ export default function App({ onExit }: AppProps = {}) {
     }
     if (!mediaStreamRef.current) {
       setAppState("mic-denied");
-      setStatusText("Microphone is needed");
+      setStatusText("Нужен микрофон");
       return false;
     }
 
     isRecordingRef.current = true;
     recordingStartedAtRef.current = Date.now();
     setAppState("recording");
-    setStatusText("Listening…");
+    setStatusText("Слушаю…");
 
     mediaStreamRef.current
       .getAudioTracks()
@@ -867,10 +867,10 @@ export default function App({ onExit }: AppProps = {}) {
         console.warn("Failed to send eou marker:", err);
       }
       setAppState("connected");
-      setStatusText("Thinking…");
+      setStatusText("Думает…");
     } else {
       setAppState("connected");
-      setStatusText("Hold to talk");
+      setStatusText("Зажми и говори");
     }
   }, []);
 
@@ -918,6 +918,10 @@ export default function App({ onExit }: AppProps = {}) {
   }, []);
 
   // ── Разрыв соединения ─────────────────────────────────────────────────────
+  // «Назад» при живом диалоге: после подтверждения нужно не только закрыть
+  // сокет, но и выйти из экрана (если summary не показывается).
+  const exitAfterEndRef = useRef(false);
+
   const closeConnection = useCallback(() => {
     stopRecording();
     wsClosingRef.current = true;
@@ -929,7 +933,7 @@ export default function App({ onExit }: AppProps = {}) {
     // до того как сбросить лог. После него юзер жмёт «Готово» и UI чистится.
     const triggered = maybeTriggerSummary();
     setAppState("idle");
-    setStatusText("Ready to talk");
+    setStatusText("Можно говорить");
     if (triggered) {
       // Лог и лимиты оставляем — почистим в dismissSummary, чтобы юзер
       // мог увидеть свои реплики во время просмотра summary.
@@ -939,7 +943,12 @@ export default function App({ onExit }: AppProps = {}) {
     setLimits(null);
     setLockState(null);
     setLockMessage("");
-  }, [stopRecording, maybeTriggerSummary]);
+    // Завершили через «Назад» (без summary) — сразу уходим в меню режимов.
+    if (exitAfterEndRef.current) {
+      exitAfterEndRef.current = false;
+      onExit?.();
+    }
+  }, [stopRecording, maybeTriggerSummary, onExit]);
 
   // Закрыть SessionSummary и почистить UI; после summary возвращаемся
   // в ModeSelector, если родитель его поднял.
@@ -999,14 +1008,14 @@ export default function App({ onExit }: AppProps = {}) {
           const ok = await initMicrophone();
           if (!ok) {
             setAppState("mic-denied");
-            setStatusText("Microphone is needed");
+            setStatusText("Нужен микрофон");
             return;
           }
         }
         if (next.mode === "voice") {
-          setStatusText("Ready to talk");
+          setStatusText("Можно говорить");
         } else {
-          setStatusText("Ready to chat");
+          setStatusText("Можно писать");
         }
         // openConnection сам корректно дождётся закрытия старого WS и
         // откроет новый с обновлёнными query-параметрами.
@@ -1137,15 +1146,15 @@ export default function App({ onExit }: AppProps = {}) {
 
   const handleRetryMicrophone = useCallback(async () => {
     setAppState("initializing");
-    setStatusText("Getting ready…");
+    setStatusText("Готовимся…");
     const ok = await initMicrophone();
     if (!ok) {
       setAppState("mic-denied");
-      setStatusText("Microphone is needed");
+      setStatusText("Нужен микрофон");
       return;
     }
     setAppState("idle");
-    setStatusText("Ready to talk");
+    setStatusText("Можно говорить");
     try {
       await openConnection();
     } catch (err) {
@@ -1180,13 +1189,13 @@ export default function App({ onExit }: AppProps = {}) {
     : "idle";
 
   const buttonLabel = (() => {
-    if (isRecording) return "Release to send";
-    if (isSpeaking) return "Speaking";
-    if (isConnecting) return "Connecting";
-    if (isInitializing) return "Getting ready";
-    if (isMicDenied) return "Microphone off";
-    if (isError) return "Error";
-    return "Hold to talk";
+    if (isRecording) return "Отпусти, чтобы отправить";
+    if (isSpeaking) return "Говорю";
+    if (isConnecting) return "Подключаюсь";
+    if (isInitializing) return "Готовимся";
+    if (isMicDenied) return "Микрофон выключен";
+    if (isError) return "Ошибка";
+    return "Зажми и говори";
   })();
 
   // Показываем End Session всегда — но делаем невидимым, когда не нужен,
@@ -1224,7 +1233,18 @@ export default function App({ onExit }: AppProps = {}) {
       {/* Шапка v2 */}
       <header className="mode-v2-top">
         {onExit && (
-          <button type="button" className="mode-v2-back" onClick={onExit} aria-label="Назад">
+          <button
+            type="button"
+            className="mode-v2-back"
+            onClick={() => {
+              // Живой диалог не теряем по случайному тапу — спрашиваем, как и «Завершить».
+              if (endSessionVisible && dialogLog.length > 0) {
+                exitAfterEndRef.current = true;
+                setEndConfirmOpen(true);
+              } else onExit();
+            }}
+            aria-label="Назад"
+          >
             <DSIcon name="arrow-left" size={16} />
             <span>Назад</span>
           </button>
@@ -1238,7 +1258,7 @@ export default function App({ onExit }: AppProps = {}) {
         <div className="mode-v2-actions">
           <DSIconButton icon="chart-no-axes-column" size="sm" label="Мой прогресс" onClick={() => setProgressOpen(true)} />
           <DSIconButton icon="book-marked" size="sm" label="Мои слова" onClick={() => setWordsOpen(true)} />
-          <DSIconButton icon="settings" size="sm" label="Settings" onClick={() => setSettingsOpen(true)} />
+          <DSIconButton icon="settings" size="sm" label="Настройки" onClick={() => setSettingsOpen(true)} />
         </div>
       </header>
 
@@ -1249,11 +1269,11 @@ export default function App({ onExit }: AppProps = {}) {
             <div className="tutor-log__empty-icon" aria-hidden>
               💬
             </div>
-            <p className="tutor-log__empty-title">Let's chat in English</p>
+            <p className="tutor-log__empty-title">Поболтаем по-английски?</p>
             <p className="tutor-log__empty-hint">
               {isChatMode
-                ? "Type a message below and press Send."
-                : "Hold the button below, speak a sentence, then release to hear me reply."}
+                ? "Напиши сообщение внизу и нажми «Отправить»."
+                : "Зажми кнопку внизу, скажи фразу и отпусти — я отвечу."}
             </p>
           </div>
         ) : (
@@ -1263,7 +1283,7 @@ export default function App({ onExit }: AppProps = {}) {
               className={`msg msg--${entry.role}`}
             >
               <span className="msg__role">
-                {entry.role === "user" ? "You" : "Tutor"}
+                {entry.role === "user" ? "Ты" : "Собеседник"}
                 {entry.role === "tutor" && entry.audioChunks && entry.audioChunks.length > 0 && (
                   <button
                     type="button"
@@ -1280,7 +1300,7 @@ export default function App({ onExit }: AppProps = {}) {
                 const ops = original ? wordDiff(original, entry.correction) : null;
                 const useDiff = !!ops && diffLooksMeaningful(ops);
                 return (
-                  <span className="msg__correction" aria-label="correction">
+                  <span className="msg__correction" aria-label="исправление">
                     <span className="msg__correction-icon" aria-hidden>
                       ✏️
                     </span>
@@ -1352,16 +1372,16 @@ export default function App({ onExit }: AppProps = {}) {
                   void sendChatMessage();
                 }
               }}
-              placeholder="Type a message…"
+              placeholder="Напиши сообщение…"
               rows={1}
-              aria-label="Message"
+              aria-label="Сообщение"
               disabled={isError}
             />
             <button
               type="submit"
               className="chat-composer__send"
               disabled={!chatDraft.trim() || chatThinking || isError}
-              aria-label="Send"
+              aria-label="Отправить"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
                 <path
@@ -1383,7 +1403,7 @@ export default function App({ onExit }: AppProps = {}) {
                 onClick={() => {
                   setAppState("idle");
                   setErrorMsg("");
-                  setStatusText("Ready to chat");
+                  setStatusText("Можно писать");
                 }}
               >
                 {errorMsg || "Error"} — try again
@@ -1393,7 +1413,7 @@ export default function App({ onExit }: AppProps = {}) {
                 className="link-button"
                 onClick={() => setEndConfirmOpen(true)}
               >
-                End session
+                Завершить
               </button>
             ) : (
               <span className="link-button" aria-hidden style={{ visibility: "hidden" }}>
@@ -1463,7 +1483,7 @@ export default function App({ onExit }: AppProps = {}) {
                 onClick={() => {
                   setAppState("idle");
                   setErrorMsg("");
-                  setStatusText("Ready to talk");
+                  setStatusText("Можно говорить");
                 }}
               >
                 {errorMsg || "Error"} — try again
@@ -1473,7 +1493,7 @@ export default function App({ onExit }: AppProps = {}) {
                 className="link-button"
                 onClick={() => setEndConfirmOpen(true)}
               >
-                End session
+                Завершить
               </button>
             ) : (
               <span className="link-button" aria-hidden style={{ visibility: "hidden" }}>
@@ -1569,7 +1589,7 @@ export default function App({ onExit }: AppProps = {}) {
       {endConfirmOpen && (
         <div
           className="confirm-overlay"
-          onClick={() => setEndConfirmOpen(false)}
+          onClick={() => { exitAfterEndRef.current = false; setEndConfirmOpen(false); }}
           role="dialog"
           aria-modal="true"
           aria-label="Завершить сессию?"
@@ -1582,7 +1602,7 @@ export default function App({ onExit }: AppProps = {}) {
             <div className="confirm-actions">
               <button
                 className="confirm-btn confirm-btn--secondary"
-                onClick={() => setEndConfirmOpen(false)}
+                onClick={() => { exitAfterEndRef.current = false; setEndConfirmOpen(false); }}
               >
                 Продолжить
               </button>

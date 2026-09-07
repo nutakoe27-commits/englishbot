@@ -482,7 +482,8 @@
   box-shadow: none;
   margin: 0;
   align-self: stretch;
-  padding: 16px 18px 24px;
+  /* Под «чёлку»/status-bar в PWA/TWA: контент не залезает под системную панель. */
+  padding: max(16px, env(safe-area-inset-top, 0px)) 18px calc(24px + env(safe-area-inset-bottom, 0px));
 }
 
 /* На desktop fullscreen-popover тоже card-обёртка (как regular popover):
@@ -779,7 +780,7 @@
 /* Тёмная тема: жёсткий чёрный фон страницы авторизации (на мобиле
  * градиентная сетка прозрачна, без явного цвета фон «пропадал»). */
 [data-theme="dark"] .login-v2 {
-  background-color: #0b0d12 !important;
+  background-color: #171512 !important;
   background-image: none;
 }
 .login-v2__card {
@@ -1322,6 +1323,53 @@
   font-size: 14px;
   color: var(--text-dim);
   margin-top: 10px;
+}
+.srs-v2__stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.srs-v2__stats .srs-v2__big { font-size: 38px; }
+.srs-v2__stats .srs-v2__big-faint { font-size: 20px; }
+.srs-v2__section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.srs-v2__preview {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.srs-v2__preview-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+}
+.srs-v2__preview-row:first-child { border-top: 0; padding-top: 2px; }
+.srs-v2__preview-word { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srs-v2__preview-tr { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srs-v2__preview-more { padding: 8px 0 0; font-size: 12.5px; color: var(--text-faint); border-top: 1px solid var(--border); }
+.srs-v2__boxes { display: inline-flex; gap: 3px; }
+.srs-v2__boxes i {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--border-strong);
+}
+.srs-v2__boxes i[data-on="true"] { background: var(--accent); }
+.srs-v2__how {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
 }
 .srs-v2__empty {
   margin: 0;
