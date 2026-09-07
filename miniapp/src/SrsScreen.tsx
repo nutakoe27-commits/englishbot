@@ -85,6 +85,7 @@ export function SrsScreen({ onExit: _onExit }: Props) {
 
   const [phase, setPhase] = useState<Phase>("home");
   const [stats, setStats] = useState<Stats | null>(null);
+  const [preview, setPreview] = useState<Card[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [idx, setIdx] = useState<number>(0);
   const [revealed, setRevealed] = useState<boolean>(false);
@@ -108,6 +109,20 @@ export function SrsScreen({ onExit: _onExit }: Props) {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = (await r.json()) as Stats;
       setStats(d);
+      // Превью ближайших карточек для главного экрана (read-only, сессию не открывает).
+      if (d.due_count > 0) {
+        try {
+          const pr = await fetch(
+            `${API_BASE}/api/srs/session?limit=5&init_data=${encodeURIComponent(initData)}`,
+          );
+          if (pr.ok) {
+            const pd = (await pr.json()) as { cards: Card[] };
+            setPreview(pd.cards ?? []);
+          }
+        } catch { /* превью не критично */ }
+      } else {
+        setPreview([]);
+      }
     } catch {
       setErrorText("Не удалось загрузить статистику. Попробуй позже.");
       setPhase("error");
@@ -402,17 +417,19 @@ export function SrsScreen({ onExit: _onExit }: Props) {
         </span>
       </header>
 
-      <NoteCard padding="22px 22px">
-        <div className="srs-v2__big">{dueCount}</div>
-        <div className="srs-v2__sub">готово к повтору</div>
-      </NoteCard>
+      <div className="srs-v2__stats">
+        <NoteCard padding="18px 18px">
+          <div className="srs-v2__big">{dueCount}</div>
+          <div className="srs-v2__sub">готово к повтору</div>
+        </NoteCard>
 
-      <NoteCard padding="22px 22px">
-        <div className="srs-v2__big">
-          {totalCount} <span className="srs-v2__big-faint">/ {limitCount}</span>
-        </div>
-        <div className="srs-v2__sub">в словаре</div>
-      </NoteCard>
+        <NoteCard padding="18px 18px">
+          <div className="srs-v2__big">
+            {totalCount} <span className="srs-v2__big-faint">/ {limitCount}</span>
+          </div>
+          <div className="srs-v2__sub">в словаре</div>
+        </NoteCard>
+      </div>
 
       {dueCount > 0 ? (
         <Button variant="primary" size="lg" fullWidth icon="play" onClick={() => void startReview()} disabled={busy}>
@@ -428,6 +445,38 @@ export function SrsScreen({ onExit: _onExit }: Props) {
       <Button variant="ghost" size="lg" fullWidth icon="book-marked" onClick={() => setPhase("words")}>
         Мои слова
       </Button>
+
+      {preview.length > 0 && (
+        <NoteCard padding="16px 18px">
+          <div className="srs-v2__section-title">Сегодня на повтор</div>
+          <ul className="srs-v2__preview">
+            {preview.map((c) => (
+              <li key={c.word} className="srs-v2__preview-row">
+                <span className="srs-v2__preview-word">{c.word}</span>
+                <span className="srs-v2__preview-tr">{c.translation || "—"}</span>
+                <span className="srs-v2__boxes" aria-label={`ступень ${c.box} из 5`}>
+                  {[1, 2, 3, 4, 5].map((b) => (
+                    <i key={b} data-on={b <= c.box ? "true" : "false"} />
+                  ))}
+                </span>
+              </li>
+            ))}
+            {dueCount > preview.length && (
+              <li className="srs-v2__preview-more">и ещё {dueCount - preview.length}</li>
+            )}
+          </ul>
+        </NoteCard>
+      )}
+
+      <NoteCard padding="16px 18px">
+        <div className="srs-v2__section-title">Как это работает</div>
+        <p className="srs-v2__how">
+          Каждое слово проходит пять ступеней. Вспомнил — слово поднимается
+          выше и приходит реже: через 1, 3, 7, 14 и 30 дней. Забыл — начинает
+          путь заново. Слова попадают сюда из разговора, подкастов и списка
+          «Мои слова».
+        </p>
+      </NoteCard>
     </div>
   );
 }

@@ -20,7 +20,7 @@ export function ListeningSettingsPanel({ value, onChange }: Props) {
       {/* Длительность */}
       <section className="lst-section">
         <h3 className="lst-section__title">Длительность</h3>
-        <div className="lst-chips">
+        <div className="lst-chips lst-chips--grid" style={{ "--cols": DURATION_PRESETS.length } as React.CSSProperties}>
           {DURATION_PRESETS.map((n) => (
             <button
               key={n}
@@ -40,7 +40,7 @@ export function ListeningSettingsPanel({ value, onChange }: Props) {
       {/* Уровень */}
       <section className="lst-section">
         <h3 className="lst-section__title">Уровень</h3>
-        <div className="lst-chips">
+        <div className="lst-chips lst-chips--grid" style={{ "--cols": LEVEL_OPTIONS.length } as React.CSSProperties}>
           {LEVEL_OPTIONS.map((opt) => (
             <button
               key={opt.value}
@@ -98,7 +98,7 @@ export function ListeningSettingsPanel({ value, onChange }: Props) {
       {/* Скорость речи */}
       <section className="lst-section">
         <h3 className="lst-section__title">Скорость речи</h3>
-        <div className="lst-chips">
+        <div className="lst-chips lst-chips--grid" style={{ "--cols": SPEED_OPTIONS.length } as React.CSSProperties}>
           {SPEED_OPTIONS.map((opt) => (
             <button
               key={opt.value}

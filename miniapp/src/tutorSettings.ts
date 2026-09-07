@@ -35,31 +35,31 @@ export const DEFAULT_SETTINGS: TutorSettings = {
 };
 
 export const LEVEL_OPTIONS: { value: Level; label: string; hint: string }[] = [
-  { value: "A2", label: "A2", hint: "Elementary" },
-  { value: "B1", label: "B1", hint: "Intermediate" },
-  { value: "B2", label: "B2", hint: "Upper-Int." },
-  { value: "C1", label: "C1", hint: "Advanced" },
+  { value: "A2", label: "A2", hint: "Элементарный" },
+  { value: "B1", label: "B1", hint: "Средний" },
+  { value: "B2", label: "B2", hint: "Выше среднего" },
+  { value: "C1", label: "C1", hint: "Продвинутый" },
 ];
 
 export const LENGTH_OPTIONS: { value: Length; label: string; hint: string }[] = [
-  { value: "short", label: "Short", hint: "1-2 sentences" },
-  { value: "long", label: "Detailed", hint: "3-5 sentences" },
+  { value: "short", label: "Коротко", hint: "1–2 предложения" },
+  { value: "long", label: "Подробно", hint: "3–5 предложений" },
 ];
 
 export const MODE_OPTIONS: { value: Mode; label: string; hint: string }[] = [
-  { value: "voice", label: "Voice", hint: "speak & listen" },
-  { value: "chat", label: "Chat", hint: "text only" },
+  { value: "voice", label: "Голос", hint: "говорить и слушать" },
+  { value: "chat", label: "Чат", hint: "только текст" },
 ];
 
 export const ROLE_PRESETS: { value: RoleKey; label: string; emoji: string }[] = [
-  { value: "language_partner", label: "Language partner", emoji: "🗣️" },
-  { value: "friend", label: "Friend", emoji: "🤝" },
-  { value: "barista", label: "Barista", emoji: "☕" },
-  { value: "interviewer", label: "Job interviewer", emoji: "💼" },
-  { value: "travel_agent", label: "Travel agent", emoji: "✈️" },
-  { value: "doctor", label: "Doctor", emoji: "🩺" },
-  { value: "shopkeeper", label: "Shop assistant", emoji: "🛍️" },
-  { value: "custom", label: "Custom…", emoji: "✏️" },
+  { value: "language_partner", label: "Собеседник", emoji: "🗣️" },
+  { value: "friend", label: "Друг", emoji: "🤝" },
+  { value: "barista", label: "Бариста", emoji: "☕" },
+  { value: "interviewer", label: "Интервьюер", emoji: "💼" },
+  { value: "travel_agent", label: "Турагент", emoji: "✈️" },
+  { value: "doctor", label: "Врач", emoji: "🩺" },
+  { value: "shopkeeper", label: "Продавец", emoji: "🛍️" },
+  { value: "custom", label: "Своя роль…", emoji: "✏️" },
 ];
 
 const STORAGE_KEY = "englishbot.tutorSettings.v1";

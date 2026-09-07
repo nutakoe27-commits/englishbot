@@ -44,16 +44,16 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
 
   return (
     <ModalScreen fullscreen>
-      <div className="settings-popover" role="dialog" aria-modal="true" aria-label="Tutor settings">
+      <div className="settings-popover" role="dialog" aria-modal="true" aria-label="Настройки разговора">
         <header className="settings-popover__header">
-          <SerifH as="h2" size={24}>Settings</SerifH>
-          <IconButton icon="x" size="md" label="Close" onClick={onCancel} />
+          <SerifH as="h2" size={24}>Настройки</SerifH>
+          <IconButton icon="x" size="md" label="Закрыть" onClick={onCancel} />
         </header>
 
         <div className="settings-popover__content">
           {/* 1. Уровень */}
           <section className="sheet-group">
-            <h3 className="sheet-group__title">Your English level</h3>
+            <h3 className="sheet-group__title">Твой уровень</h3>
             <div className="segmented">
               {LEVEL_OPTIONS.map((opt) => (
                 <button
@@ -73,7 +73,7 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
 
           {/* 2. Роль собеседника */}
           <section className="sheet-group">
-            <h3 className="sheet-group__title">Conversation partner</h3>
+            <h3 className="sheet-group__title">Собеседник</h3>
             <div className="role-grid">
               {ROLE_PRESETS.map((role) => (
                 <button
@@ -95,7 +95,7 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
               <input
                 type="text"
                 className="sheet-input"
-                placeholder="e.g. a pirate captain, a chess coach, a tech support agent…"
+                placeholder="например: капитан пиратов, шахматный тренер, техподдержка…"
                 maxLength={200}
                 value={draft.roleCustom}
                 onChange={(e) =>
@@ -108,7 +108,7 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
 
           {/* 3. Длина ответов */}
           <section className="sheet-group">
-            <h3 className="sheet-group__title">Response length</h3>
+            <h3 className="sheet-group__title">Длина ответов</h3>
             <div className="segmented">
               {LENGTH_OPTIONS.map((opt) => (
                 <button
@@ -130,9 +130,9 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
           <section className="sheet-group">
             <label className="switch-row">
               <div className="switch-row__text">
-                <span className="switch-row__title">Correct my mistakes</span>
+                <span className="switch-row__title">Исправлять мои ошибки</span>
                 <span className="switch-row__hint">
-                  Partner shows the corrected phrase before replying
+                  Собеседник покажет исправленную фразу перед ответом
                 </span>
               </div>
               <input
@@ -149,7 +149,7 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
 
           {/* 5. Режим общения */}
           <section className="sheet-group">
-            <h3 className="sheet-group__title">Mode</h3>
+            <h3 className="sheet-group__title">Режим</h3>
             <div className="segmented">
               {MODE_OPTIONS.map((opt) => (
                 <button
@@ -168,8 +168,8 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
               ))}
             </div>
             <p className="sheet-note">
-              Voice — hold the mic to talk and hear the reply. Chat —
-              type and read, no audio at all.
+              Голос — зажми микрофон, скажи фразу и услышь ответ. Чат —
+              пиши и читай, без звука.
             </p>
           </section>
         </div>
@@ -180,7 +180,7 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
             className="btn btn--ghost"
             onClick={onCancel}
           >
-            Cancel
+            Отмена
           </button>
           <button
             type="button"
@@ -188,7 +188,7 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
             disabled={unchanged || !canSave}
             onClick={() => onSave(draft)}
           >
-            {unchanged ? "Saved" : "Apply"}
+            {unchanged ? "Сохранено" : "Применить"}
           </button>
         </footer>
       </div>

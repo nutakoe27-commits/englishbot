@@ -24,7 +24,7 @@ export function ModalScreen({
 
   return createPortal(
     <div className={`sub-screen ${fullscreen ? "sub-screen--fullscreen" : ""}`}>
-      <div className="sub-screen__inner" style={{ padding: 0 }}>{children}</div>
+      <div className="sub-screen__inner" style={fullscreen ? undefined : { padding: 0 }}>{children}</div>
     </div>,
     document.body,
   );

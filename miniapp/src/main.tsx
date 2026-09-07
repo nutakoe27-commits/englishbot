@@ -75,7 +75,7 @@ class ErrorBoundary extends React.Component<BoundaryProps, BoundaryState> {
     if (this.state.error) {
       return (
         <div style={{
-          padding: 20, color: "#fff", background: "#0b0d12",
+          padding: 20, color: "#fff", background: "#171512",
           minHeight: "100vh", fontFamily: "monospace", fontSize: 13,
           whiteSpace: "pre-wrap", wordBreak: "break-word",
         }}>

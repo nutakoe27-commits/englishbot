@@ -36,9 +36,28 @@ export function setStoredTheme(theme: Theme): void {
   applyTheme(theme);
 }
 
+/**
+ * Цвет системной строки состояния. iOS в режиме приложения и Android в TWA
+ * красят её по <meta name="theme-color">, и цвет обязан совпадать с фоном
+ * экрана: шалфейная полоса над тёмным приложением (как было) выглядела
+ * чужой. Значения — --bg-0 из палитры DS для каждой темы.
+ */
+const THEME_COLOR: Record<"light" | "dark", string> = {
+  light: "#EFE7D6",
+  dark: "#171512",
+};
+
 export function applyTheme(theme: Theme): void {
   if (typeof document === "undefined") return;
-  document.documentElement.setAttribute("data-theme", resolved(theme));
+  const mode = resolved(theme);
+  document.documentElement.setAttribute("data-theme", mode);
+  let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.name = "theme-color";
+    document.head.appendChild(meta);
+  }
+  meta.content = THEME_COLOR[mode];
 }
 
 /** Инициализация при загрузке: ставим тему из localStorage / системы / dark. */
