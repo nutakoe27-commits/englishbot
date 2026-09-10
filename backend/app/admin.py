@@ -1303,3 +1303,166 @@ async def admin_adlink_hits(
     async with db_session() as s:
         items = await Repo(s).ad_link_hits(link_id, limit)
     return {"items": items, "total": len(items)}
+
+
+# ─── Подготовка к ЕГЭ: банк заданий и модерация (миграция 0038) ──────────────
+#
+#   GET   /api/admin/exam/stats?exam=ege        — спецификация + счётчики банка
+#   GET   /api/admin/exam/tasks?exam=&status=&task_no=&limit=&offset=
+#   GET   /api/admin/exam/tasks/{id}            — задание целиком (с ключом)
+#   PATCH /api/admin/exam/tasks/{id}            — правка content/answer_key/explanation/status
+#   POST  /api/admin/exam/generate              — запустить генерацию {exam, task_no, count, topic?}
+#   GET   /api/admin/exam/jobs                  — последние job'ы
+#   GET   /api/admin/exam/jobs/{job_id}         — статус job'а
+
+
+class _ExamTaskPatch(BaseModel):
+    content: Optional[dict] = None
+    answer_key: Optional[dict] = None
+    explanation: Optional[dict] = None
+    status: Optional[str] = Field(None, pattern="^(draft|review|published|retired)$")
+    topic: Optional[str] = Field(None, max_length=120)
+
+
+class _ExamGenerateIn(BaseModel):
+    exam: str = Field("ege", pattern="^(ege|oge)$")
+    task_no: str = Field(..., max_length=8)
+    count: int = Field(3, ge=1, le=20)
+    topic: Optional[str] = Field(None, max_length=120)
+
+
+def _exam_task_dict(t, *, full: bool) -> dict:
+    d = {
+        "id": int(t.id), "exam": t.exam, "task_no": t.task_no, "task_type": t.task_type,
+        "level_hint": t.level_hint, "topic": t.topic, "status": t.status, "source": t.source,
+        "quality": t.quality, "times_used": int(t.times_used or 0),
+        "avg_score": float(t.avg_score) if t.avg_score is not None else None,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "reviewed_at": t.reviewed_at.isoformat() if t.reviewed_at else None,
+        "reviewed_by": t.reviewed_by,
+        "title": ((t.content or {}).get("texts") or [{}])[0].get("title") if isinstance(t.content, dict) else None,
+        "notes": ((t.gen_meta or {}).get("notes") or []) if isinstance(t.gen_meta, dict) else [],
+    }
+    if full:
+        d.update({
+            "content": t.content, "answer_key": t.answer_key,
+            "explanation": t.explanation, "gen_meta": t.gen_meta,
+        })
+    return d
+
+
+@router.get("/exam/stats", dependencies=[Depends(require_admin_token)])
+async def admin_exam_stats(exam: str = Query("ege", pattern="^(ege|oge)$")) -> dict:
+    from .exam_gen import TASK_GROUPS, jobs_recent
+    async with db_session() as s:
+        repo = Repo(s)
+        spec = await repo.exam_spec(exam)
+        rows = await repo.exam_bank_stats(exam)
+    by_group: dict[str, dict] = {}
+    for r in rows:
+        g = by_group.setdefault(r["task_no"], {"task_no": r["task_no"], "task_type": r["task_type"],
+                                                "draft": 0, "review": 0, "published": 0, "retired": 0,
+                                                "avg_quality": None})
+        g[r["status"]] = r["count"]
+        if r["status"] in ("review", "published") and r["avg_quality"] is not None:
+            g["avg_quality"] = r["avg_quality"]
+    for no, grp in TASK_GROUPS.items():
+        by_group.setdefault(no, {"task_no": no, "task_type": grp["type"], "draft": 0, "review": 0,
+                                 "published": 0, "retired": 0, "avg_quality": None})
+    return {
+        "exam": exam,
+        "spec_loaded": spec is not None,
+        "spec_year": spec["year"] if spec else None,
+        "max_primary": (spec or {}).get("spec", {}).get("max_primary") if spec else None,
+        "generatable": list(TASK_GROUPS.keys()),
+        "llm_configured": bool(settings.VLLM_BASE_URL),
+        "groups": sorted(by_group.values(), key=lambda g: int(str(g["task_no"]).split("-")[0])),
+        "jobs": jobs_recent(5),
+    }
+
+
+@router.get("/exam/tasks", dependencies=[Depends(require_admin_token)])
+async def admin_exam_tasks(
+    exam: str = Query("ege", pattern="^(ege|oge)$"),
+    status_: Optional[str] = Query(None, alias="status", pattern="^(draft|review|published|retired)$"),
+    task_no: Optional[str] = Query(None, max_length=8),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    async with db_session() as s:
+        repo = Repo(s)
+        rows, total = await repo.exam_tasks_list(
+            exam=exam, status=status_, task_no=task_no, limit=limit, offset=offset,
+        )
+    return {"items": [_exam_task_dict(t, full=False) for t in rows], "total": total}
+
+
+@router.get("/exam/tasks/{task_id}", dependencies=[Depends(require_admin_token)])
+async def admin_exam_task(task_id: int) -> dict:
+    async with db_session() as s:
+        t = await Repo(s).exam_task_get(task_id)
+        if t is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
+        return _exam_task_dict(t, full=True)
+
+
+@router.patch("/exam/tasks/{task_id}", dependencies=[Depends(require_admin_token)])
+async def admin_exam_task_patch(task_id: int, body: _ExamTaskPatch) -> dict:
+    from .exam_gen import _GAP_RE
+    # Минимальная согласованность content ↔ answer_key, чтобы правка в JSON
+    # не сломала задание для ученика.
+    if body.content is not None:
+        texts = body.content.get("texts") if isinstance(body.content, dict) else None
+        items = body.content.get("items") if isinstance(body.content, dict) else None
+        if not isinstance(texts, list) or not isinstance(items, list):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "content: нужны texts[] и items[]")
+        gaps = sorted(int(n) for t in texts for n in _GAP_RE.findall(str(t.get("text") or "")))
+        nos = sorted(int(it.get("n")) for it in items if isinstance(it, dict) and str(it.get("n", "")).isdigit())
+        if gaps != nos:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                f"пропуски в тексте {gaps} не совпадают с items {nos}")
+    async with db_session() as s:
+        repo = Repo(s)
+        t = await repo.exam_task_get(task_id)
+        if t is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
+        key = body.answer_key if body.answer_key is not None else t.answer_key
+        content = body.content if body.content is not None else t.content
+        nos = [str(it.get("n")) for it in (content or {}).get("items", []) if isinstance(it, dict)]
+        if sorted(nos) != sorted(str(k) for k in (key or {}).keys()):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "answer_key должен содержать ключ для каждого пропуска и ничего лишнего")
+        await repo.exam_task_update(
+            task_id, content=body.content, answer_key=body.answer_key,
+            explanation=body.explanation, status=body.status, topic=body.topic,
+            reviewed_by="admin",
+        )
+        t = await repo.exam_task_get(task_id)
+        return _exam_task_dict(t, full=True)
+
+
+@router.post("/exam/generate", dependencies=[Depends(require_admin_token)])
+async def admin_exam_generate(body: _ExamGenerateIn) -> dict:
+    from .exam_gen import job_status, start_job
+    if not settings.VLLM_BASE_URL:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "LLM не настроен (VLLM_BASE_URL)")
+    try:
+        job_id = start_job(exam=body.exam, task_no=body.task_no, count=body.count, topic=body.topic)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+    return job_status(job_id) or {"id": job_id}
+
+
+@router.get("/exam/jobs", dependencies=[Depends(require_admin_token)])
+async def admin_exam_jobs() -> dict:
+    from .exam_gen import jobs_recent
+    return {"items": jobs_recent(10)}
+
+
+@router.get("/exam/jobs/{job_id}", dependencies=[Depends(require_admin_token)])
+async def admin_exam_job(job_id: str) -> dict:
+    from .exam_gen import job_status
+    st = job_status(job_id)
+    if st is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Job не найден (перезапуск backend очищает список)")
+    return st

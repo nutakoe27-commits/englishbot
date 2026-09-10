@@ -372,6 +372,24 @@ export const api = {
       `/api/admin/level-tests?days=${days}&limit=${limit}`,
     ),
 
+  // ─── ЕГЭ: банк заданий ────────────────────────────────
+  examStats: (exam = "ege") => request<ExamStats>(`/api/admin/exam/stats?exam=${exam}`),
+  examTasks: (p: { exam?: string; status?: string; task_no?: string; limit?: number; offset?: number }) => {
+    const q = new URLSearchParams();
+    q.set("exam", p.exam || "ege");
+    if (p.status) q.set("status", p.status);
+    if (p.task_no) q.set("task_no", p.task_no);
+    q.set("limit", String(p.limit ?? 50));
+    q.set("offset", String(p.offset ?? 0));
+    return request<{ items: ExamTaskBrief[]; total: number }>(`/api/admin/exam/tasks?${q.toString()}`);
+  },
+  examTask: (id: number) => request<ExamTaskFull>(`/api/admin/exam/tasks/${id}`),
+  examTaskPatch: (id: number, body: ExamTaskPatch) =>
+    request<ExamTaskFull>(`/api/admin/exam/tasks/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  examGenerate: (body: { exam?: string; task_no: string; count: number; topic?: string }) =>
+    request<ExamJob>("/api/admin/exam/generate", { method: "POST", body: JSON.stringify(body) }),
+  examJob: (id: string) => request<ExamJob>(`/api/admin/exam/jobs/${id}`),
+
   // ─── Веб-пуши ─────────────────────────────────────────
   pushStats: () => request<PushStats>("/api/admin/push/stats"),
   pushSend: (body: {
@@ -585,4 +603,100 @@ export interface PaymentsMonthChart {
   today_day: number;
   total_rub: number;
   series: PaymentsMonthChartPoint[];
+}
+
+// ─── ЕГЭ: банк заданий (миграция 0038) ───────────────────────────────────────
+
+export interface ExamGroupStat {
+  task_no: string;
+  task_type: string;
+  draft: number;
+  review: number;
+  published: number;
+  retired: number;
+  avg_quality: number | null;
+}
+
+export interface ExamJob {
+  id: string;
+  exam: string;
+  task_no: string;
+  requested: number;
+  done: number;
+  failed: number;
+  status: "running" | "done";
+  errors: string[];
+  task_ids: number[];
+  qualities: (number | null)[];
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface ExamStats {
+  exam: string;
+  spec_loaded: boolean;
+  spec_year: number | null;
+  max_primary: number | null;
+  generatable: string[];
+  llm_configured: boolean;
+  groups: ExamGroupStat[];
+  jobs: ExamJob[];
+}
+
+export interface ExamTaskBrief {
+  id: number;
+  exam: string;
+  task_no: string;
+  task_type: string;
+  level_hint: string | null;
+  topic: string | null;
+  status: "draft" | "review" | "published" | "retired";
+  source: string;
+  quality: number | null;
+  times_used: number;
+  avg_score: number | null;
+  created_at: string | null;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  title: string | null;
+  notes: string[];
+}
+
+export interface ExamTaskItem {
+  n: number;
+  base?: string;
+  options?: string[];
+}
+
+export interface ExamTaskContent {
+  texts: { title?: string; text: string }[];
+  items: ExamTaskItem[];
+}
+
+export interface ExamCheckItem {
+  key: string[] | string;
+  model: string;
+  ok: boolean;
+}
+
+export interface ExamTaskFull extends ExamTaskBrief {
+  content: ExamTaskContent;
+  answer_key: Record<string, string[] | string>;
+  explanation: Record<string, string> | null;
+  gen_meta: {
+    model?: string;
+    prompt_version?: string;
+    topic?: string;
+    notes?: string[];
+    check?: { quality: number | null; items: Record<string, ExamCheckItem>; error: string | null };
+    generated_at?: string;
+  } | null;
+}
+
+export interface ExamTaskPatch {
+  content?: ExamTaskContent;
+  answer_key?: Record<string, string[] | string>;
+  explanation?: Record<string, string>;
+  status?: "draft" | "review" | "published" | "retired";
+  topic?: string;
 }

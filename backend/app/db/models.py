@@ -739,3 +739,110 @@ class LevelTestLead(Base):
     total_cnt: Mapped[Optional[int]] = mapped_column(Integer)
     claimed_user_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+# ─── Подготовка к ЕГЭ/ОГЭ (миграция 0038) ────────────────────────────────────
+
+# BigInteger-автоинкремент не работает в SQLite (локальные тесты и стенд):
+# там автоинкремент только у INTEGER PRIMARY KEY.
+_BigPK = BigInteger().with_variant(Integer, "sqlite")
+
+
+
+class ExamSpec(Base):
+    """Структура экзамена как данные: номера заданий, типы, баллы, правила
+    скоринга, таймеры, лимиты слов. Источник правды —
+    docs/exam/<exam>_<year>.spec.json, миграция кладёт копию сюда, чтобы
+    менять шкалы и таймеры без релиза приложения."""
+
+    __tablename__ = "exam_specs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    exam: Mapped[str] = mapped_column(String(8), nullable=False)
+    year: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    spec: Mapped[dict] = mapped_column(JSON, nullable=False)
+    scale: Mapped[Optional[dict]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class ExamTask(Base):
+    """Банк заданий. Одна строка = одна группа КИМ (например, 19–24 целиком).
+
+    content — задание без ответов (уходит клиенту), answer_key — ключ,
+    explanation — разбор по элементам. status: draft → review → published →
+    retired. quality — авто-оценка 0–100 по «слепому» решению второй моделью,
+    gen_meta — модель, версия промпта и замечания автопроверки.
+    """
+
+    __tablename__ = "exam_tasks"
+
+    id: Mapped[int] = mapped_column(_BigPK, primary_key=True, autoincrement=True)
+    exam: Mapped[str] = mapped_column(String(8), nullable=False)
+    task_no: Mapped[str] = mapped_column(String(8), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    level_hint: Mapped[Optional[str]] = mapped_column(String(4))
+    topic: Mapped[Optional[str]] = mapped_column(String(120))
+    content: Mapped[dict] = mapped_column(JSON, nullable=False)
+    answer_key: Mapped[dict] = mapped_column(JSON, nullable=False)
+    explanation: Mapped[Optional[dict]] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="draft")
+    source: Mapped[str] = mapped_column(String(12), nullable=False, default="llm")
+    quality: Mapped[Optional[int]] = mapped_column(SmallInteger)
+    gen_meta: Mapped[Optional[dict]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(64))
+    times_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    avg_score: Mapped[Optional[float]] = mapped_column(Numeric(6, 2))
+
+
+class ExamAttempt(Base):
+    """Попытка ученика: по номерам (drill), раздел (section), вариант (variant)."""
+
+    __tablename__ = "exam_attempts"
+
+    id: Mapped[int] = mapped_column(_BigPK, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    exam: Mapped[str] = mapped_column(String(8), nullable=False)
+    mode: Mapped[str] = mapped_column(String(12), nullable=False)
+    task_no: Mapped[Optional[str]] = mapped_column(String(8))
+    task_ids: Mapped[list] = mapped_column(JSON, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    duration_sec: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    primary_score: Mapped[Optional[int]] = mapped_column(Integer)
+    max_score: Mapped[Optional[int]] = mapped_column(Integer)
+    breakdown: Mapped[Optional[dict]] = mapped_column(JSON)
+
+
+class ExamAnswer(Base):
+    """Ответ на элемент задания с баллом и разбором."""
+
+    __tablename__ = "exam_answers"
+
+    id: Mapped[int] = mapped_column(_BigPK, primary_key=True, autoincrement=True)
+    attempt_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    task_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    item_key: Mapped[str] = mapped_column(String(8), nullable=False)
+    user_answer: Mapped[Optional[dict]] = mapped_column(JSON)
+    score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_score: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    feedback: Mapped[Optional[dict]] = mapped_column(JSON)
+    checked_by: Mapped[str] = mapped_column(String(8), nullable=False, default="auto")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class ExamProgress(Base):
+    """Агрегат по пользователю и номеру задания для карты «слабые места»."""
+
+    __tablename__ = "exam_progress"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    exam: Mapped[str] = mapped_column(String(8), primary_key=True)
+    task_no: Mapped[str] = mapped_column(String(8), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    items: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    correct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_at: Mapped[Optional[datetime]] = mapped_column(DateTime)

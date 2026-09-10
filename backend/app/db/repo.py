@@ -3593,3 +3593,124 @@ class Repo:
             "created_at": created.isoformat() if created else None,
             "correct_cnt": int(ok or 0), "total_cnt": int(total or 0),
         }
+
+    # ─── Подготовка к ЕГЭ/ОГЭ (миграция 0038) ───────────────────────────────
+
+    async def exam_spec(self, exam: str) -> Optional[dict]:
+        """Активная спецификация экзамена: {exam, year, spec, scale}."""
+        from .models import ExamSpec
+        res = await self.s.execute(
+            select(ExamSpec)
+            .where(ExamSpec.exam == exam, ExamSpec.is_active.is_(True))
+            .order_by(ExamSpec.year.desc())
+            .limit(1)
+        )
+        row = res.scalar_one_or_none()
+        if row is None:
+            return None
+        return {"exam": row.exam, "year": row.year, "spec": row.spec, "scale": row.scale}
+
+    async def exam_task_create(
+        self, *, exam: str, task_no: str, task_type: str, content: dict,
+        answer_key: dict, explanation: Optional[dict], status: str = "review",
+        source: str = "llm", quality: Optional[int] = None,
+        gen_meta: Optional[dict] = None, topic: Optional[str] = None,
+        level_hint: Optional[str] = None,
+    ) -> int:
+        from .models import ExamTask
+        row = ExamTask(
+            exam=exam, task_no=task_no, task_type=task_type, content=content,
+            answer_key=answer_key, explanation=explanation, status=status,
+            source=source, quality=quality, gen_meta=gen_meta, topic=topic,
+            level_hint=level_hint, created_at=utcnow(), times_used=0,
+        )
+        self.s.add(row)
+        await self.s.flush()
+        return int(row.id)
+
+    async def exam_task_get(self, task_id: int):
+        from .models import ExamTask
+        return await self.s.get(ExamTask, task_id)
+
+    async def exam_task_update(
+        self, task_id: int, *, content: Optional[dict] = None,
+        answer_key: Optional[dict] = None, explanation: Optional[dict] = None,
+        status: Optional[str] = None, topic: Optional[str] = None,
+        reviewed_by: Optional[str] = None,
+    ) -> bool:
+        from .models import ExamTask
+        row = await self.s.get(ExamTask, task_id)
+        if row is None:
+            return False
+        if content is not None:
+            row.content = content
+        if answer_key is not None:
+            row.answer_key = answer_key
+        if explanation is not None:
+            row.explanation = explanation
+        if topic is not None:
+            row.topic = topic[:120]
+        if status is not None and status != row.status:
+            row.status = status
+            row.reviewed_at = utcnow()
+            row.reviewed_by = (reviewed_by or "admin")[:64]
+        await self.s.flush()
+        return True
+
+    async def exam_tasks_list(
+        self, *, exam: str, status: Optional[str] = None,
+        task_no: Optional[str] = None, limit: int = 50, offset: int = 0,
+    ) -> tuple[list, int]:
+        """Список для админки: (rows, total). Без content — он тяжёлый."""
+        from .models import ExamTask
+        conds = [ExamTask.exam == exam]
+        if status:
+            conds.append(ExamTask.status == status)
+        if task_no:
+            conds.append(ExamTask.task_no == task_no)
+        total = (await self.s.execute(
+            select(func.count(ExamTask.id)).where(*conds)
+        )).scalar_one()
+        res = await self.s.execute(
+            select(ExamTask).where(*conds)
+            .order_by(ExamTask.created_at.desc(), ExamTask.id.desc())
+            .limit(limit).offset(offset)
+        )
+        return list(res.scalars().all()), int(total or 0)
+
+    async def exam_bank_stats(self, exam: str) -> list[dict]:
+        """Сколько заданий каждой группы в каждом статусе."""
+        from .models import ExamTask
+        res = await self.s.execute(
+            select(ExamTask.task_no, ExamTask.task_type, ExamTask.status,
+                   func.count(ExamTask.id), func.avg(ExamTask.quality))
+            .where(ExamTask.exam == exam)
+            .group_by(ExamTask.task_no, ExamTask.task_type, ExamTask.status)
+        )
+        out = []
+        for task_no, task_type, st, cnt, q in res.all():
+            out.append({
+                "task_no": task_no, "task_type": task_type, "status": st,
+                "count": int(cnt or 0),
+                "avg_quality": round(float(q), 1) if q is not None else None,
+            })
+        return out
+
+    async def exam_tasks_pick(
+        self, *, exam: str, task_no: str, limit: int = 5,
+        exclude_ids: Sequence[int] = (),
+    ) -> list:
+        """Опубликованные задания группы, реже использованные — первыми."""
+        from .models import ExamTask
+        conds = [ExamTask.exam == exam, ExamTask.task_no == task_no,
+                 ExamTask.status == "published"]
+        if exclude_ids:
+            conds.append(ExamTask.id.notin_(list(exclude_ids)))
+        bind = self.s.get_bind()
+        rnd = func.random() if bind is not None and bind.dialect.name == "sqlite" else func.rand()
+        res = await self.s.execute(
+            select(ExamTask).where(*conds)
+            .order_by(ExamTask.times_used.asc(), rnd)
+            .limit(limit)
+        )
+        return list(res.scalars().all())

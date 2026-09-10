@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ExamPage } from "./ExamPage";
 import {
   api,
   ApiError,
@@ -243,6 +244,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     view = <ReferralsPage />;
   } else if (route === "/level-tests") {
     view = <LevelTestsPage />;
+  } else if (route === "/exam") {
+    view = <ExamPage />;
   } else if (route === "/push") {
     view = <PushPage />;
   } else if (route === "/broadcast") {
@@ -309,6 +312,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           {navBtn("/orgs", "Школы")}
           {navBtn("/referrals", "Рефералка")}
           {navBtn("/level-tests", "Тест уровня")}
+          {navBtn("/exam", "ЕГЭ")}
           {navBtn("/push", "Уведомления")}
           {navBtn("/broadcast", "Массовые")}
           {navBtn("/settings", "Настройки")}
