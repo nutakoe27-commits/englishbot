@@ -1,0 +1,451 @@
+{
+  "exam": "ege",
+  "year": 2027,
+  "subject": "english",
+  "source": "ФИПИ, проект от 18.08.2026; изменений относительно 2026 нет",
+  "written": {
+    "minutes": 190,
+    "max": 62,
+    "sections": {
+      "listening": {
+        "max": 12,
+        "minutes": 30
+      },
+      "reading": {
+        "max": 12,
+        "minutes": 30
+      },
+      "grammar_vocabulary": {
+        "max": 18,
+        "minutes": 40
+      },
+      "writing": {
+        "max": 20,
+        "minutes": 90
+      }
+    },
+    "tasks": [
+      {
+        "no": 1,
+        "section": "listening",
+        "type": "matching",
+        "level": "B",
+        "max": 2,
+        "elements": 6,
+        "scoring": "max_minus_wrong",
+        "minutes": 8,
+        "codes": [
+          "1.2.1"
+        ],
+        "shape": {
+          "speakers": 6,
+          "statements": 7,
+          "extra": 1,
+          "plays": 2
+        }
+      },
+      {
+        "no": 2,
+        "section": "listening",
+        "type": "tfn",
+        "level": "B",
+        "max": 3,
+        "elements": 7,
+        "scoring": "max_minus_wrong",
+        "minutes": 8,
+        "codes": [
+          "1.2.2"
+        ],
+        "shape": {
+          "statements": 7,
+          "labels": {
+            "1": "True",
+            "2": "False",
+            "3": "Not stated"
+          },
+          "plays": 2
+        }
+      },
+      {
+        "no": "3-9",
+        "nos": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "section": "listening",
+        "type": "mcq3",
+        "level": "В",
+        "max": 1,
+        "per_item": true,
+        "minutes": 2,
+        "codes": [
+          "1.2.3"
+        ],
+        "shape": {
+          "questions": 7,
+          "options": 3,
+          "plays": 2,
+          "genre": "interview"
+        }
+      },
+      {
+        "no": 10,
+        "section": "reading",
+        "type": "headings",
+        "level": "B",
+        "max": 3,
+        "elements": 7,
+        "scoring": "max_minus_wrong",
+        "minutes": 8,
+        "codes": [
+          "1.3.1"
+        ],
+        "shape": {
+          "texts": 7,
+          "headings": 8,
+          "extra": 1
+        }
+      },
+      {
+        "no": 11,
+        "section": "reading",
+        "type": "gapped",
+        "level": "B",
+        "max": 2,
+        "elements": 6,
+        "scoring": "max_minus_wrong",
+        "minutes": 8,
+        "codes": [
+          "1.3.2"
+        ],
+        "shape": {
+          "gaps": 6,
+          "fragments": 7,
+          "extra": 1
+        }
+      },
+      {
+        "no": "12-18",
+        "nos": [
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18
+        ],
+        "section": "reading",
+        "type": "mcq4",
+        "level": "В",
+        "max": 1,
+        "per_item": true,
+        "minutes": 2,
+        "codes": [
+          "1.3.3"
+        ],
+        "shape": {
+          "questions": 7,
+          "options": 4
+        }
+      },
+      {
+        "no": "19-24",
+        "nos": [
+          19,
+          20,
+          21,
+          22,
+          23,
+          24
+        ],
+        "section": "grammar",
+        "type": "gram_form",
+        "level": "B",
+        "max": 1,
+        "per_item": true,
+        "minutes": 2,
+        "codes": [
+          "2.4.12",
+          "2.4.14",
+          "2.4.15",
+          "2.4.17",
+          "2.4.18",
+          "2.4.19",
+          "2.4.20",
+          "2.4.21",
+          "2.4.22",
+          "2.4.24",
+          "2.4.25",
+          "2.4.26",
+          "2.4.27",
+          "2.4.29",
+          "2.4.30",
+          "2.4.31",
+          "2.4.33",
+          "2.4.35",
+          "2.4.36",
+          "2.4.37"
+        ],
+        "shape": {
+          "gaps": 6,
+          "texts": "1-2"
+        },
+        "answer_format": "word_nospace"
+      },
+      {
+        "no": "25-29",
+        "nos": [
+          25,
+          26,
+          27,
+          28,
+          29
+        ],
+        "section": "vocabulary",
+        "type": "word_form",
+        "level": "B",
+        "max": 1,
+        "per_item": true,
+        "minutes": 2,
+        "codes": [
+          "2.3.11"
+        ],
+        "shape": {
+          "gaps": 5,
+          "texts": 1
+        },
+        "answer_format": "word_nospace"
+      },
+      {
+        "no": "30-36",
+        "nos": [
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36
+        ],
+        "section": "vocabulary",
+        "type": "lex_mcq",
+        "level": "В",
+        "max": 1,
+        "per_item": true,
+        "minutes": 2,
+        "codes": [
+          "2.3.1",
+          "2.3.2",
+          "2.3.3",
+          "2.3.4",
+          "2.3.5"
+        ],
+        "shape": {
+          "gaps": 7,
+          "options": 4,
+          "texts": 1
+        }
+      },
+      {
+        "no": 37,
+        "section": "writing",
+        "type": "email",
+        "level": "B",
+        "max": 6,
+        "minutes": 30,
+        "codes": [
+          "1.4.3"
+        ],
+        "words": {
+          "min": 100,
+          "max": 140,
+          "count_first": 140,
+          "zero_below": 90
+        },
+        "criteria": [
+          {
+            "key": "K1",
+            "name": "Решение коммуникативной задачи",
+            "max": 2,
+            "zero_kills": true
+          },
+          {
+            "key": "K2",
+            "name": "Организация текста",
+            "max": 2
+          },
+          {
+            "key": "K3",
+            "name": "Языковое оформление текста",
+            "max": 2
+          }
+        ],
+        "aspects": [
+          "ответ на вопрос 1",
+          "ответ на вопрос 2",
+          "ответ на вопрос 3",
+          "3 вопроса по указанной теме",
+          "нормы вежливости (благодарность / надежда на контакт)",
+          "стилевое оформление: обращение, завершающая фраза, подпись"
+        ]
+      },
+      {
+        "no": 38,
+        "section": "writing",
+        "type": "project",
+        "level": "В",
+        "max": 14,
+        "minutes": 60,
+        "codes": [
+          "1.4.9"
+        ],
+        "variants": [
+          "38.1 table",
+          "38.2 pie_chart"
+        ],
+        "words": {
+          "min": 200,
+          "max": 250,
+          "count_first": 250,
+          "zero_below": 180
+        },
+        "criteria": [
+          {
+            "key": "K1",
+            "name": "Решение коммуникативной задачи",
+            "max": 3,
+            "zero_kills": true
+          },
+          {
+            "key": "K2",
+            "name": "Организация текста",
+            "max": 3
+          },
+          {
+            "key": "K3",
+            "name": "Лексика",
+            "max": 3
+          },
+          {
+            "key": "K4",
+            "name": "Грамматика",
+            "max": 3
+          },
+          {
+            "key": "K5",
+            "name": "Орфография и пунктуация",
+            "max": 2
+          }
+        ],
+        "plan": [
+          "вступление по теме проекта",
+          "2–3 факта из данных",
+          "1–2 сравнения с комментарием",
+          "возможная проблема и способ решения",
+          "вывод с собственным мнением"
+        ],
+        "nonproductive_limit_pct": 30
+      }
+    ]
+  },
+  "oral": {
+    "minutes": 17,
+    "max": 20,
+    "tasks": [
+      {
+        "no": 1,
+        "type": "read_aloud",
+        "level": "B",
+        "max": 1,
+        "prep_sec": 90,
+        "answer_sec": 90,
+        "codes": [
+          "2.1.2"
+        ],
+        "rule": "≤5 фонетических ошибок, из них ≤2 искажающих смысл"
+      },
+      {
+        "no": 2,
+        "type": "ask_questions",
+        "level": "B",
+        "max": 4,
+        "prep_sec": 90,
+        "answer_sec_each": 20,
+        "items": 4,
+        "codes": [
+          "1.1.1.3"
+        ],
+        "rule": "по 1 баллу: вопрос по содержанию и в правильной форме прямого вопроса"
+      },
+      {
+        "no": 3,
+        "type": "interview",
+        "level": "В",
+        "max": 5,
+        "prep_sec": 0,
+        "answer_sec_each": 40,
+        "items": 5,
+        "codes": [
+          "1.1.1.5"
+        ],
+        "rule": "по 1 баллу: полный точный ответ из 2–3 фраз без элементарных ошибок; 1 фраза = 0"
+      },
+      {
+        "no": 4,
+        "type": "monologue_photos",
+        "level": "В",
+        "max": 10,
+        "prep_sec": 150,
+        "answer_sec": 180,
+        "phrases": {
+          "min": 12,
+          "max": 15,
+          "zero_at_or_below": 7
+        },
+        "codes": [
+          "1.1.2.3"
+        ],
+        "criteria": [
+          {
+            "key": "K1",
+            "name": "Решение коммуникативной задачи",
+            "max": 4,
+            "zero_kills": true
+          },
+          {
+            "key": "K2",
+            "name": "Организация высказывания",
+            "max": 3
+          },
+          {
+            "key": "K3",
+            "name": "Языковое оформление высказывания",
+            "max": 3
+          }
+        ],
+        "aspects": [
+          "выбор иллюстраций: краткое описание фото и различия, связь с темой",
+          "достоинства (1–2) двух вариантов",
+          "недостатки (1–2) двух вариантов",
+          "мнение автора и обоснование"
+        ]
+      }
+    ]
+  },
+  "max_primary": 82,
+  "word_count_rules": [
+    "считаются все слова с первого по последнее, включая обращение и подпись",
+    "стяжённые формы (can't, I'm) — одно слово",
+    "числительные цифрами, в т.ч. с % — одно слово",
+    "числительные словами — по словам",
+    "сложные слова через дефис — одно слово",
+    "сокращения (USA, e-mail, TV) — одно слово"
+  ],
+  "scale_primary_to_test": null
+}
