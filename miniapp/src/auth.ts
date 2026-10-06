@@ -299,8 +299,17 @@ export interface Plan {
   badge?: string | null;
   /** Мелкая строка под ценой — условия тарифа. */
   note?: string | null;
-  /** Тариф продлевается автоматически (месяц). Решает backend. */
+  /** Тариф продлевается автоматически. Решает backend. */
   recurring?: boolean;
+  /** Чем продлевается: для пробной недели — месяц, для остальных — тот же тариф. */
+  renew_plan?: string;
+  renew_amount_rub?: number;
+  renew_days?: number;
+  /** Выгода длинных тарифов против помесячной оплаты. */
+  per_month_rub?: number;
+  saving_rub?: number;
+  saving_pct?: number;
+  months?: number;
 }
 
 export async function listPlans(): Promise<Plan[]> {

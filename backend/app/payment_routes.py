@@ -107,16 +107,32 @@ async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
             used_one_time = set()
     from . import recurring
     rec_on = recurring.enabled() or recurring.is_preview_user(viewer_id)
-    return {"plans": [
-        {
+    catalog = _plan_catalog()
+    monthly = int(catalog["monthly"]["amount_rub"])
+    out = []
+    for k, v in catalog.items():
+        if k in used_one_time:
+            continue
+        item = {
             "key": k, "days": v["days"], "amount_rub": v["amount_rub"],
             "title": v["title"], "badge": v.get("badge"), "note": v.get("note"),
             # Тариф продлевается автоматически (условия показываем на карточке).
-            "recurring": bool(rec_on and k == recurring.RECURRING_PLAN),
+            "recurring": bool(rec_on and k in recurring.RECURRING_PLANS),
         }
-        for k, v in _plan_catalog().items()
-        if k not in used_one_time
-    ]}
+        if item["recurring"]:
+            terms = recurring.renewal_terms(k)
+            if terms:
+                item["renew_plan"], item["renew_amount_rub"], item["renew_days"] = terms
+        # Выгода длинных тарифов относительно помесячной оплаты.
+        months = round(int(v["days"]) / 30.4)
+        if months >= 12 and monthly > 0:
+            full = monthly * months
+            item["per_month_rub"] = round(int(v["amount_rub"]) / months)
+            item["saving_rub"] = full - int(v["amount_rub"])
+            item["saving_pct"] = round(100 * (full - int(v["amount_rub"])) / full)
+            item["months"] = months
+        out.append(item)
+    return {"plans": out}
 
 
 @router.get("/promo/check")
@@ -222,9 +238,10 @@ async def create_payment(
 
     # 2) Зовём ЮKassa. user.id и плата — в metadata, обратный adres — return_url.
     from . import recurring
-    # Месячная подписка всегда с автопродлением (условия — на карточке тарифа
-    # и в оферте). Отключается только отменой подписки в профиле.
-    want_recurring = bool(plan == recurring.RECURRING_PLAN and recurring.enabled())
+    # Все тарифы с автопродлением: месяц, год и 2 года — на свой срок, пробная
+    # неделя — переходит в месяц. Условия — на карточке тарифа и в оферте.
+    # Отключается только отменой подписки в профиле.
+    want_recurring = bool(plan in recurring.RECURRING_PLANS and recurring.enabled())
     yk_resp = await yk.create_payment(
         amount_rub=final_amount,
         description=f"English Tutor: {info['title']}",

@@ -339,6 +339,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
 
               <div className="sub-plans-v2">
                 {plans.map((p) => {
+                  const monthlyPrice = plans.find((x) => x.key === "monthly")?.amount_rub ?? 999;
                   const isRecommended = p.badge === "Рекомендуем";
                   const finalPrice = _discounted(p.amount_rub);
                   const hasDiscount = !!promoApplied && finalPrice !== p.amount_rub;
@@ -357,14 +358,22 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
                       <div className="sub-plan-v2__price">
                         {hasDiscount && <s className="sub-plan-v2__old">{p.amount_rub} ₽</s>}
                         {finalPrice} ₽
+                        {!!p.saving_pct && <span className="sub-plan-v2__save">−{p.saving_pct}%</span>}
                       </div>
                       <div className="sub-plan-v2__days">{p.days} {_daysWord(p.days)}</div>
+                      {!!p.saving_rub && !!p.per_month_rub && (
+                        <div className="sub-plan-v2__benefit">
+                          {_rub(p.per_month_rub)} в месяц вместо {_rub(monthlyPrice)} ·
+                          экономия <b>{_rub(p.saving_rub)}</b> за {p.months === 24 ? "2 года" : "год"}
+                        </div>
+                      )}
                       {p.note && <div className="sub-plan-v2__note">{p.note}</div>}
                       {p.recurring && (
                         <div className="sub-plan-v2__note sub-plan-v2__renew">
-                          🔁 Продлевается автоматически: {p.amount_rub} ₽ каждые {p.days} {_daysWord(p.days)}
-                          {hasDiscount ? " (скидка — только на первый месяц)" : ""}.
-                          Отменить можно в профиле в любой момент.
+                          {p.key === "trial7"
+                            ? `Через ${p.days} ${_daysWord(p.days)} — подписка на месяц: ${p.renew_amount_rub ?? monthlyPrice} ₽ каждые ${p.renew_days ?? 30} дней, продлевается автоматически.`
+                            : `Продлевается автоматически: ${p.amount_rub} ₽ каждые ${p.days} ${_daysWord(p.days)}${hasDiscount ? ", скидка — на первую оплату" : ""}.`}
+                          {" "}Отменить можно в профиле.
                         </div>
                       )}
                     </button>
@@ -390,8 +399,8 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
                 Нажимая «Оплатить», вы принимаете условия{" "}
                 <a href={OFFER_URL} target="_blank" rel="noreferrer">публичной оферты</a>
                 {plans.some((p) => p.recurring)
-                  ? ". Месячная подписка продлевается автоматически с карты, которой ты платишь; " +
-                    "напомним за день до списания, отменить можно в профиле"
+                  ? ". Подписка продлевается автоматически с карты, которой ты платишь, пробная неделя " +
+                    "переходит в месячную; напомним до списания, отменить можно в профиле"
                   : ""}.
               </p>
             </>
@@ -402,6 +411,10 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
       </div>
     </div>
   );
+}
+
+function _rub(n: number): string {
+  return `${Math.round(n).toLocaleString("ru-RU")}\u00A0₽`;
 }
 
 function _fmtDate(iso: string): string {

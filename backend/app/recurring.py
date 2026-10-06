@@ -3,10 +3,11 @@ recurring.py — автопродление месячной подписки ч
 
 Поток (подробно в docs/recurring.md):
 
-  1. Экран тарифов: месячная подписка всегда с автопродлением, условия
-     (сумма, период, как отменить) написаны на карточке тарифа и в оферте.
-     POST /api/payments/create {plan: monthly} → платёж с
-     save_payment_method=true и metadata.recurring_setup="1".
+  1. Экран тарифов: все тарифы с автопродлением — месяц, год и 2 года на
+     свой срок, пробная неделя после 7 дней переходит в месяц (RENEWAL).
+     Условия (сумма, период, как отменить) — на карточке тарифа и в оферте.
+     POST /api/payments/create {plan} → платёж с save_payment_method=true и
+     metadata.recurring_setup="1".
      Отключить автопродление можно только отменой подписки в профиле.
   2. Вебхук ЮKassa: платёж succeeded и способ оплаты сохранён
      (payment_method.saved) → after_credit() заводит recurring_subscriptions
@@ -54,6 +55,45 @@ router = APIRouter(prefix="/api/payments/recurring", tags=["Payments"])
 
 RECURRING_PLAN = "monthly"
 
+# Тариф покупки → тариф, по которому идут продления. Пробная неделя после
+# 7 дней переходит в месячную подписку; остальные продлеваются на свой срок.
+RENEWAL = {
+    "trial7": "monthly",
+    "monthly": "monthly",
+    "yearly": "yearly",
+    "twoyear": "twoyear",
+}
+RECURRING_PLANS = frozenset(RENEWAL)
+
+# Как называть период в текстах уведомлений.
+PERIOD_WORD = {"monthly": "месяц", "yearly": "год", "twoyear": "2 года"}
+
+# Пробная неделя: переход в месяц списываем в последний час пробного
+# периода, а не за сутки — неделя должна быть полной.
+TRIAL_CHARGE_BEFORE_HOURS = 1
+
+# Крупные суммы (год и больше) — напоминаем за неделю, а не за сутки.
+LONG_PERIOD_DAYS = 365
+LONG_REMIND_BEFORE_HOURS = 7 * 24
+
+
+def renewal_terms(purchase_plan: str) -> Optional[tuple[str, int, int]]:
+    """(тариф продления, сумма ₽, дней) для купленного тарифа или None."""
+    target = RENEWAL.get(purchase_plan)
+    if not target:
+        return None
+    from .payment_routes import _plan_catalog
+    info = _plan_catalog().get(target)
+    if not info:
+        return None
+    return target, int(info["amount_rub"]), int(info["days"])
+
+
+def _remind_hours(period_days: int) -> int:
+    if int(period_days or 0) >= LONG_PERIOD_DAYS:
+        return LONG_REMIND_BEFORE_HOURS
+    return int(settings.RECURRING_REMIND_BEFORE_HOURS)
+
 # Причины отказа ЮKassa, после которых повторять бессмысленно: способ
 # оплаты больше не годится. Остальные (недостаточно средств, сбой банка) —
 # повторяем через RECURRING_RETRY_HOURS.
@@ -88,14 +128,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _charge_at(until: Optional[datetime]) -> datetime:
+def _charge_at(until: Optional[datetime], before_hours: Optional[int] = None) -> datetime:
     """Когда списывать: за RECURRING_CHARGE_BEFORE_HOURS до конца периода,
     но не в прошлом (иначе только что оформленная подписка списалась бы
     сразу второй раз)."""
     now = utcnow()
     if until is None:
         return now + timedelta(days=30)
-    at = until - timedelta(hours=int(settings.RECURRING_CHARGE_BEFORE_HOURS))
+    hours = int(settings.RECURRING_CHARGE_BEFORE_HOURS if before_hours is None else before_hours)
+    at = until - timedelta(hours=hours)
     return max(at, now + timedelta(hours=1))
 
 
@@ -104,10 +145,6 @@ def _fmt_date(dt: Optional[datetime]) -> str:
         return ""
     msk = dt.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=3)))
     return msk.strftime("%d.%m.%Y")
-
-
-def _monthly_price() -> int:
-    return int(settings.SUBSCRIPTION_PRICE_MONTHLY_RUB)
 
 
 # ─── Уведомления ─────────────────────────────────────────────────────────────
@@ -207,22 +244,26 @@ async def after_credit(repo, payment, confirmed: Optional[dict]) -> list[dict]:
         return notes
 
     saved = yk.saved_method(confirmed or {})
-    if meta.get("recurring_setup") == "1" and payment.plan == RECURRING_PLAN and saved:
+    terms = renewal_terms(str(payment.plan))
+    if meta.get("recurring_setup") == "1" and terms and saved:
         method_id, title = saved
+        renew_plan, renew_amount, renew_days = terms
         from .db.models import User
         email = (await repo.s.execute(select(User.email).where(User.id == user_id))).scalar_one_or_none()
         if sub is None:
-            sub = RS(user_id=user_id, plan=RECURRING_PLAN, created_at=now)
+            sub = RS(user_id=user_id, plan=renew_plan, created_at=now)
             repo.s.add(sub)
+        sub.plan = renew_plan
         sub.status = "active"
         sub.payment_method_id = method_id
         sub.method_title = title
-        # Продлеваем по полной цене месяца: скидка промокода действует только
-        # на первую оплату (так и написано у галочки).
-        sub.amount_rub = _monthly_price()
-        sub.period_days = 30
+        # Продлеваем по полной цене тарифа: скидка промокода действует только
+        # на первую оплату (так и написано на карточке).
+        sub.amount_rub = renew_amount
+        sub.period_days = renew_days
         sub.email = email
-        sub.next_charge_at = _charge_at(until)
+        is_trial = payment.plan == "trial7"
+        sub.next_charge_at = _charge_at(until, TRIAL_CHARGE_BEFORE_HOURS if is_trial else None)
         sub.attempts = 0
         sub.last_error = None
         sub.locked_until = None
@@ -231,13 +272,21 @@ async def after_credit(repo, payment, confirmed: Optional[dict]) -> list[dict]:
         sub.updated_at = now
         await repo.s.flush()
         if await repo.nudge_once(user_id=user_id, kind="recurring_on", dedup_key=str(payment.id)):
+            word = PERIOD_WORD.get(renew_plan, "период")
+            remind = "за неделю" if renew_days >= LONG_PERIOD_DAYS else "за день"
+            if is_trial:
+                tg = (f"🔁 Пробная неделя до {_fmt_date(until)}. Потом подписка продолжится "
+                      f"на месяц: {sub.amount_rub} ₽, списание {_fmt_date(sub.next_charge_at)}. "
+                      "Напомним за день. Отменить можно в профиле приложения.")
+            else:
+                tg = (f"🔁 Подписка продлевается автоматически: {sub.amount_rub} ₽ за {word}, "
+                      f"следующее списание {_fmt_date(sub.next_charge_at)}. "
+                      f"Напомним {remind}. Отменить можно в профиле приложения.")
             notes.append(dict(
                 user_id=user_id, tag="recurring",
-                title="Автопродление включено",
+                title="Подписка продлевается автоматически",
                 body=f"Следующее списание {sub.amount_rub} ₽ — {_fmt_date(sub.next_charge_at)}.",
-                tg_text=(f"🔁 Автопродление включено: {sub.amount_rub} ₽ каждые 30 дней, "
-                         f"следующее списание {_fmt_date(sub.next_charge_at)}. "
-                         "Напомним за день. Отключить — в профиле приложения."),
+                tg_text=tg,
             ))
         return notes
 
@@ -267,7 +316,7 @@ async def _fail(repo, sub, *, reason: str, payment_id: Optional[int]) -> list[di
                 user_id=sub.user_id, tag="recurring",
                 title="Не удалось продлить подписку",
                 body="Автопродление отключено. Оплатить можно в профиле.",
-                tg_text=("⚠️ Не получилось списать оплату за следующий месяц, "
+                tg_text=("⚠️ Не получилось списать оплату за следующий период, "
                          "автопродление отключено. Доступ сохранится до конца "
                          "оплаченного периода; продлить можно в профиле приложения."),
             ))
@@ -278,7 +327,7 @@ async def _fail(repo, sub, *, reason: str, payment_id: Optional[int]) -> list[di
                 user_id=sub.user_id, tag="recurring",
                 title="Не прошла оплата подписки",
                 body="Попробуем ещё раз через сутки. Проверь карту.",
-                tg_text=("⚠️ Не получилось списать оплату за следующий месяц "
+                tg_text=("⚠️ Не получилось списать оплату за следующий период "
                          f"(попытка {sub.attempts} из {settings.RECURRING_MAX_ATTEMPTS}). "
                          "Попробуем снова через сутки — проверь, что на карте есть деньги."),
             ))
@@ -354,17 +403,18 @@ async def charge_one(sub_id: int) -> str:
         amount = int(sub.amount_rub)
         email = sub.email or user.email
         local = await repo.create_pending_payment(
-            user_id=int(sub.user_id), plan=RECURRING_PLAN, amount_rub=amount,
+            user_id=int(sub.user_id), plan=str(sub.plan or RECURRING_PLAN), amount_rub=amount,
             days_granted=int(sub.period_days), provider_payment_id="tmp_" + secrets.token_urlsafe(16),
             notes=f"recurring sub={sub.id} key={idem}",
         )
         local.recurring_subscription_id = int(sub.id)
         local_id, method_id, user_id = int(local.id), sub.payment_method_id, int(sub.user_id)
+        sub_plan = str(sub.plan or RECURRING_PLAN)
 
     resp, http = await yk.create_recurring_payment(
         payment_method_id=method_id, amount_rub=amount,
-        description="English Tutor: продление подписки на месяц",
-        metadata={"user_id": str(user_id), "plan": RECURRING_PLAN,
+        description=f"English Tutor: продление подписки на {PERIOD_WORD.get(sub_plan, 'месяц')}",
+        metadata={"user_id": str(user_id), "plan": sub_plan,
                   "payment_id": str(local_id), "recurring_subscription_id": str(sub_id)},
         customer_email=email, idempotence_key=idem,
     )
@@ -411,7 +461,7 @@ async def charge_one(sub_id: int) -> str:
                 if await repo.nudge_once(user_id=user_id, kind="recurring_mt", dedup_key=str(local.id)):
                     notes.append({"_mytracker": dict(
                         user_id=user_id, payment_id=int(local.id), amount_rub=float(amount),
-                        plan=RECURRING_PLAN, days=int(sub.period_days),
+                        plan=sub_plan, days=int(sub.period_days),
                     )})
             elif st == "canceled":
                 if local.status != "succeeded":
@@ -458,10 +508,11 @@ async def charge_due(limit: int = 50) -> dict:
 
 
 async def remind_due() -> int:
-    """Напоминание за RECURRING_REMIND_BEFORE_HOURS до списания, один раз."""
+    """Напоминание до списания, один раз: за RECURRING_REMIND_BEFORE_HOURS,
+    а для года и больше — за неделю."""
     from .db.models import RecurringSubscription as RS
     now = utcnow()
-    horizon = now + timedelta(hours=int(settings.RECURRING_REMIND_BEFORE_HOURS))
+    horizon = now + timedelta(hours=max(LONG_REMIND_BEFORE_HOURS, int(settings.RECURRING_REMIND_BEFORE_HOURS)))
     sent = 0
     async with db_session() as s:
         rows = (await s.execute(
@@ -473,15 +524,19 @@ async def remind_due() -> int:
         )).scalars().all()
         todo = []
         for sub in rows:
+            if sub.next_charge_at > now + timedelta(hours=_remind_hours(int(sub.period_days))):
+                continue   # для этого тарифа ещё рано
             sub.reminded_for = sub.next_charge_at
-            todo.append((int(sub.user_id), int(sub.amount_rub), sub.next_charge_at))
-    for user_id, amount, at in todo:
+            todo.append((int(sub.user_id), int(sub.amount_rub), sub.next_charge_at,
+                         PERIOD_WORD.get(str(sub.plan), "следующий период"), int(sub.period_days)))
+    for user_id, amount, at, word, days in todo:
+        when = "Через неделю" if days >= LONG_PERIOD_DAYS else "Завтра"
         dispatch([dict(
             user_id=user_id, tag="recurring",
-            title="Завтра продлим подписку",
-            body=f"Спишем {amount} ₽ за следующий месяц. Отключить — в профиле.",
-            tg_text=(f"🔔 Завтра ({_fmt_date(at)}) продлим подписку: спишем {amount} ₽ "
-                     "за следующий месяц. Если не нужно — отключи автопродление в профиле приложения."),
+            title=f"{when} продлим подписку",
+            body=f"Спишем {amount} ₽ за {word}. Отменить — в профиле.",
+            tg_text=(f"🔔 {when} ({_fmt_date(at)}) продлим подписку: спишем {amount} ₽ "
+                     f"за {word}. Если не нужно — отмени подписку в профиле приложения."),
         )])
         sent += 1
     return sent
@@ -511,6 +566,7 @@ def _state(sub) -> dict:
     return {
         "available": enabled(),
         "status": sub.status,
+        "plan": sub.plan,
         "amount_rub": int(sub.amount_rub),
         "period_days": int(sub.period_days),
         # «Z» — время в UTC, иначе браузер прочтёт его как местное.
