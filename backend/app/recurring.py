@@ -74,6 +74,16 @@ def enabled() -> bool:
     )
 
 
+def is_preview_user(user_id: Optional[int]) -> bool:
+    """Аккаунт из RECURRING_PREVIEW_USER_IDS: видит интерфейс автопродления
+    при выключенном рубильнике (скриншоты для ЮKassa). Списаний не даёт."""
+    if not user_id:
+        return False
+    raw = str(settings.RECURRING_PREVIEW_USER_IDS or "")
+    ids = {p.strip() for p in raw.replace(";", ",").split(",") if p.strip()}
+    return str(int(user_id)) in ids
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -320,7 +330,7 @@ async def charge_one(sub_id: int) -> str:
     async with db_session() as s:
         repo = Repo(s)
         sub = await _get_sub(repo, sub_id=sub_id)
-        if sub is None or sub.status != "active":
+        if sub is None or sub.status != "active" or not sub.payment_method_id:
             return "skipped"
         user = await repo.get_user_by_id(int(sub.user_id))
         if user is None:
@@ -508,6 +518,7 @@ def _state(sub) -> dict:
         "method_title": sub.method_title,
         "canceled_at": sub.canceled_at.isoformat() + "Z" if sub.canceled_at else None,
         "last_error": sub.last_error if sub.status == "failed" else None,
+        "card_linked": bool(sub.payment_method_id),
     }
 
 
@@ -524,7 +535,11 @@ async def get_recurring(authorization: Optional[str] = Header(None)) -> dict:
 
 @router.post("/cancel")
 async def cancel_recurring(authorization: Optional[str] = Header(None)) -> dict:
-    """Отключить автопродление. Оплаченный период сохраняется."""
+    """Отменить подписку: остановить автопродление и отвязать карту.
+
+    Сохранённый способ оплаты стираем у себя — по нему больше ничего не
+    списать; чтобы снова продлевать автоматически, нужна новая оплата месяца.
+    Оплаченный период сохраняется."""
     from .db.repo import Repo
     if not settings.DATABASE_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db_not_configured")
@@ -534,13 +549,15 @@ async def cancel_recurring(authorization: Optional[str] = Header(None)) -> dict:
         sub = await _get_sub(repo, user_id=int(user.id))
         if sub is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "no_recurring")
-        if sub.status == "active":
+        if sub.status in ("active", "canceled") and (sub.status == "active" or sub.payment_method_id):
             now = utcnow()
             sub.status = "canceled"
-            sub.canceled_at = now
+            sub.canceled_at = sub.canceled_at or now
             sub.locked_until = None
+            sub.payment_method_id = ""      # карта отвязана
+            sub.method_title = None
             sub.updated_at = now
-            logger.info("[recurring] user_id=%s canceled autorenew", user.id)
+            logger.info("[recurring] user_id=%s canceled subscription, card unlinked", user.id)
         return _state(sub)
 
 
@@ -559,6 +576,9 @@ async def resume_recurring(authorization: Optional[str] = Header(None)) -> dict:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "no_recurring")
         if sub.status == "failed":
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "method_failed")
+        if not sub.payment_method_id:
+            # Карта отвязана при отмене — продлевать нечем, нужна новая оплата.
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "no_method")
         until = await _user_until(repo, int(user.id))
         if until is None or until <= utcnow():
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "subscription_expired")

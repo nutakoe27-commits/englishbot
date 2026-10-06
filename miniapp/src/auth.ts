@@ -344,6 +344,8 @@ export interface RecurringState {
   method_title?: string | null;
   canceled_at?: string | null;
   last_error?: string | null;
+  /** Сохранённая карта ещё привязана (после отмены — false). */
+  card_linked?: boolean;
 }
 
 export async function fetchRecurring(): Promise<RecurringState | null> {

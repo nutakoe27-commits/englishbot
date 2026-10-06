@@ -91,12 +91,14 @@ async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
     уже покупал, — чтобы не показывать кнопку, которая всё равно откажет.
     """
     used_one_time: set[str] = set()
+    viewer_id: Optional[int] = None
     if authorization and settings.DATABASE_URL:
         from .db import Repo
         try:
             async with db_session() as session:
                 repo = Repo(session)
                 user = await auth_lib.resolve_user(repo, authorization=authorization)
+                viewer_id = int(user.id)
                 for plan_key in ONE_TIME_PLANS:
                     if await repo.has_used_plan(user.id, plan_key):
                         used_one_time.add(plan_key)
@@ -104,7 +106,7 @@ async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
             # Неавторизованный/битый токен — просто показываем полный список.
             used_one_time = set()
     from . import recurring
-    rec_on = recurring.enabled()
+    rec_on = recurring.enabled() or recurring.is_preview_user(viewer_id)
     return {"plans": [
         {
             "key": k, "days": v["days"], "amount_rub": v["amount_rub"],

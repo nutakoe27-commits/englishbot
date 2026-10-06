@@ -610,7 +610,8 @@ function RecurringBlock({ subscriptionUntil }: { subscriptionUntil: string | nul
             <div className="acc-renew__warn">
               <b>Отменить подписку?</b>
               <span>
-                Следующего списания не будет. Полный доступ сохранится
+                Автопродление остановится, а сохранённая карта будет отвязана —
+                списаний больше не будет. Полный доступ сохранится
                 {subscriptionUntil ? ` до ${_fmtSubUntil(subscriptionUntil)}` : " до конца оплаченного периода"},
                 потом — бесплатный тариф: 5 минут разговора в день, один подкаст
                 и один урок грамматики.
@@ -629,16 +630,14 @@ function RecurringBlock({ subscriptionUntil }: { subscriptionUntil: string | nul
       )}
       {st.status === "canceled" && (
         <>
-          <div className="acc-renew__row">Подписка отменена</div>
+          <div className="acc-renew__row">✓ Подписка отменена, карта отвязана</div>
           <div className="acc-renew__muted">
-            Списаний больше не будет. Полный доступ
-            {subscriptionUntil ? ` до ${_fmtSubUntil(subscriptionUntil)}` : " до конца оплаченного периода"}.
+            Автоматических списаний больше не будет. Полный доступ
+            {subscriptionUntil
+              ? ` до ${_fmtSubUntil(subscriptionUntil).replace(/\.$/, "")}.`
+              : " до конца оплаченного периода."}
+            {" "}Оформить подписку снова можно в любой момент кнопкой «Продлить подписку».
           </div>
-          {st.available && (
-            <button type="button" className="acc-renew__btn" disabled={busy} onClick={() => void act("resume")}>
-              Возобновить подписку · {amount} ₽ в месяц
-            </button>
-          )}
         </>
       )}
       {st.status === "failed" && (
