@@ -25,6 +25,10 @@ import { useBackGuard } from "./backGuard";
 // VK MyTracker: включается, только если сборка получила VITE_MYTRACKER_ID.
 import { initMyTracker } from "./metrika";
 initMyTracker();
+// Идентификатор установки Android-приложения из стартового адреса (?mt_iid=).
+// Забираем до роутинга, чтобы параметр не мешал разбору URL ниже.
+import { captureInstallId } from "./mtInstall";
+captureInstallId();
 if (typeof window !== "undefined") {
   window.addEventListener("load", () => { void registerServiceWorker(); });
 }

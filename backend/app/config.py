@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     # Способ связаться с отправителем — требование спецификации.
     VAPID_SUBJECT: Optional[str] = None
 
+    # ─── VK MyTracker: серверные события Android-приложения (docs/mytracker.md)
+    # ID приложения (Android) в MyTracker и S2S API-ключ аккаунта. Бэкенд
+    # шлёт регистрацию, вход и оплату, привязывая их к установке из рекламы.
+    # Пусто = выключено.
+    MYTRACKER_APP_ID: Optional[int] = None
+    MYTRACKER_S2S_TOKEN: Optional[str] = None
+
     # ─── Веб-авторизация (миграция 0020 + 0021) ──────────────────────────
     # Секрет для подписи JWT сессий. Генерируй: openssl rand -hex 32
     # Если не задан — выдача/проверка JWT отключена (работает только Mini App).

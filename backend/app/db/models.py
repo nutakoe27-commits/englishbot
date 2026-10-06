@@ -739,3 +739,20 @@ class LevelTestLead(Base):
     total_cnt: Mapped[Optional[int]] = mapped_column(Integer)
     claimed_user_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class MytrackerInstall(Base):
+    """Связка аккаунта с установкой Android-приложения (миграция 0038).
+
+    instance_id — идентификатор установки из SDK MyTracker. Нативная обёртка
+    передаёт его в стартовый адрес, сайт отдаёт его бэкенду после входа.
+    По нему серверные события (регистрация, оплата) привязываются к рекламе,
+    с которой пришла установка.
+    """
+
+    __tablename__ = "mytracker_installs"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    instance_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
