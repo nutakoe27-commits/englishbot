@@ -558,6 +558,9 @@ function RecurringBlock({ subscriptionUntil }: { subscriptionUntil: string | nul
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [confirmOff, setConfirmOff] = useState(false);
+  // Управление (карта, отмена) свёрнуто: в профиле видна только строка о
+  // продлении, детали — по нажатию «Управление подпиской».
+  const [manageOpen, setManageOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -588,14 +591,21 @@ function RecurringBlock({ subscriptionUntil }: { subscriptionUntil: string | nul
       {st.status === "active" && (
         <>
           <div className="acc-renew__row">🔁 Подписка продлевается автоматически</div>
-          <div className="acc-renew__muted">
-            Следующее списание — {next}, {amount} ₽
-            {st.method_title ? ` · ${st.method_title}` : ""}
-          </div>
-          {!confirmOff ? (
-            <button type="button" className="acc-renew__btn acc-renew__btn--danger" disabled={busy} onClick={() => setConfirmOff(true)}>
-              Отменить подписку
+          <div className="acc-renew__muted">Следующее списание — {next}</div>
+          {!manageOpen ? (
+            <button type="button" className="acc-renew__btn acc-renew__btn--quiet" onClick={() => setManageOpen(true)}>
+              Управление подпиской
             </button>
+          ) : !confirmOff ? (
+            <>
+              <div className="acc-renew__muted">
+                {amount} ₽ каждые {st.period_days ?? 30} дней
+                {st.method_title ? ` · ${st.method_title}` : ""}
+              </div>
+              <button type="button" className="acc-renew__btn acc-renew__btn--quiet" disabled={busy} onClick={() => setConfirmOff(true)}>
+                Отменить подписку
+              </button>
+            </>
           ) : (
             <div className="acc-renew__warn">
               <b>Отменить подписку?</b>
@@ -609,7 +619,7 @@ function RecurringBlock({ subscriptionUntil }: { subscriptionUntil: string | nul
                 <button type="button" className="acc-renew__btn acc-renew__btn--danger" disabled={busy} onClick={() => void act("cancel")}>
                   Да, отменить
                 </button>
-                <button type="button" className="acc-renew__btn" disabled={busy} onClick={() => setConfirmOff(false)}>
+                <button type="button" className="acc-renew__btn" disabled={busy} onClick={() => { setConfirmOff(false); setManageOpen(false); }}>
                   Оставить подписку
                 </button>
               </div>
