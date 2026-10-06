@@ -11,6 +11,8 @@
  * Нативная регистрация email+password — PR-2 серии 0021.
  */
 
+import { mtSetUser } from "./metrika";
+
 export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
   "https://api-english.krichigindocs.ru";
@@ -671,7 +673,9 @@ export async function fetchMe(): Promise<MeInfo | null> {
   try {
     const res = await fetch(`${API_BASE}/api/auth/me`);
     if (!res.ok) return null;
-    return (await res.json()) as MeInfo;
+    const me = (await res.json()) as MeInfo;
+    mtSetUser(me?.id);
+    return me;
   } catch {
     return null;
   }
@@ -714,7 +718,11 @@ export async function verifySession(): Promise<boolean> {
   if (!getToken()) return false;
   try {
     const res = await fetch(`${API_BASE}/api/auth/me`);
-    if (res.ok) return true;
+    if (res.ok) {
+      // Сразу привязываем аналитику к аккаунту — до первой цели.
+      try { mtSetUser(((await res.json()) as MeInfo)?.id); } catch { /* тело не JSON */ }
+      return true;
+    }
     if (res.status === 401) clearToken();
     return false;
   } catch {

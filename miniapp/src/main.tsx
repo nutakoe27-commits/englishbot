@@ -22,6 +22,9 @@ import { registerServiceWorker } from "./pwa";
 import { syncPush } from "./push";
 import { isAppMode } from "./appMode";
 import { useBackGuard } from "./backGuard";
+// VK MyTracker: включается, только если сборка получила VITE_MYTRACKER_ID.
+import { initMyTracker } from "./metrika";
+initMyTracker();
 if (typeof window !== "undefined") {
   window.addEventListener("load", () => { void registerServiceWorker(); });
 }

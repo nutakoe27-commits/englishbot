@@ -14,6 +14,10 @@ ENV VITE_BOT_USERNAME=$VITE_BOT_USERNAME
 ARG VITE_API_BASE=https://api-english.krichigindocs.ru
 ENV VITE_API_BASE=$VITE_API_BASE
 
+# ID счётчика VK MyTracker (web). Пусто — MyTracker в бандл не подключается.
+ARG VITE_MYTRACKER_ID=
+ENV VITE_MYTRACKER_ID=$VITE_MYTRACKER_ID
+
 # Устанавливаем зависимости
 COPY package.json ./
 RUN npm install --no-audit --no-fund
