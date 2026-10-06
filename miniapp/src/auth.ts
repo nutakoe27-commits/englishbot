@@ -12,6 +12,7 @@
  */
 
 import { mtSetUser } from "./metrika";
+import { linkInstall } from "./mtInstall";
 
 export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
@@ -675,6 +676,7 @@ export async function fetchMe(): Promise<MeInfo | null> {
     if (!res.ok) return null;
     const me = (await res.json()) as MeInfo;
     mtSetUser(me?.id);
+    void linkInstall(me?.id, API_BASE);
     return me;
   } catch {
     return null;
@@ -720,7 +722,11 @@ export async function verifySession(): Promise<boolean> {
     const res = await fetch(`${API_BASE}/api/auth/me`);
     if (res.ok) {
       // Сразу привязываем аналитику к аккаунту — до первой цели.
-      try { mtSetUser(((await res.json()) as MeInfo)?.id); } catch { /* тело не JSON */ }
+      try {
+        const uid = ((await res.json()) as MeInfo)?.id;
+        mtSetUser(uid);
+        void linkInstall(uid, API_BASE);
+      } catch { /* тело не JSON */ }
       return true;
     }
     if (res.status === 401) clearToken();

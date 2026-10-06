@@ -412,6 +412,16 @@ async def yookassa_webhook(request: Request) -> dict:
                     "[yookassa/webhook] credited user_id=%s plan=%s days=%s amount=%s",
                     payment.user_id, payment.plan, payment.days_granted, payment.amount_rub,
                 )
+                # MyTracker: оплата для кампаний на установку Android-приложения.
+                # Только при первом зачислении (тот же dedup, что у welcome),
+                # иначе ретрай вебхука задвоил бы выручку.
+                if should_welcome:
+                    from . import mytracker
+                    mytracker.track_payment_async(
+                        user_id=int(payment.user_id), payment_id=int(payment.id),
+                        amount_rub=float(payment.amount_rub or 0), plan=str(payment.plan),
+                        days=int(payment.days_granted or 0),
+                    )
                 if should_welcome and buyer_tg_id:
                     _notify_payment_success(
                         tg_id=int(buyer_tg_id),

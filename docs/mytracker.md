@@ -81,3 +81,51 @@ VK Ads), в настройках проекта MyTracker заводится ц�
 названием**, что в таблице. Минимальный набор для рекламы:
 `landing_cta_click`, `level_landing_claimed`, `session_started`,
 `subscribe_plan_clicked`, `subscription_paid`.
+
+## Android-приложение (кампании VK на установку)
+
+Веб-счётчик не видит установку APK, поэтому для кампаний «Мобильное
+приложение» в обёртку TWA встроен SDK MyTracker, а регистрация и оплата
+приходят в MyTracker с сервера.
+
+```
+SDK в APK ──instanceId──▶ стартовый адрес ?mt_iid=…
+                              │
+                 сайт (mtInstall.ts) запоминает, после входа
+                              ▼
+          POST /api/analytics/mt-install ──▶ mytracker_installs
+                              │
+   бэкенд (mytracker.py) ──S2S──▶ registration / login / customRevenue
+                                   + customEvent subscription_paid
+```
+
+- **Установки и запуски** считает SDK сам после `MyTracker.initTracker`.
+- **registration** — аккаунт создан не раньше чем за 2 часа до первого
+  входа с этой установки; иначе **login**. Каждая пара «аккаунт +
+  установка» отправляется один раз.
+- **Оплата** — `customRevenue` (рубли, id транзакции `yk-<id платежа>`) и
+  событие `subscription_paid` с параметром `platform=app`. Только если
+  аккаунт хоть раз заходил из приложения; ретрай вебхука не задваивает.
+- Серверные события попадают в отчёты MyTracker с задержкой до 4 часов.
+
+### Настройка
+
+1. В проекте MyTracker добавить Android-приложение с пакетом
+   `ru.krichigindocs.englishbot.twa` (ссылка на страницу в RuStore).
+   Взять **SDK-ключ** приложения и **ID приложения** (числовой).
+2. В настройках аккаунта MyTracker создать **S2S API-ключ**.
+3. На проде в `.env`:
+   ```ini
+   MYTRACKER_APP_ID=123456
+   MYTRACKER_S2S_TOKEN=...
+   ```
+   миграция `db/migrations/0038_mytracker_installs.sql`, пересборка backend
+   и miniapp.
+4. На Mac, в папке проекта Bubblewrap (где `twa-manifest.json`):
+   ```bash
+   python3 /path/to/englishbot/scripts/twa_mytracker_patch.py . <SDK_KEY>
+   bubblewrap build
+   ```
+   При каждой новой версии: поднять `appVersionCode` → `bubblewrap update`
+   → скрипт → `bubblewrap build`. `update` перегенерирует проект и стирает
+   правки, поэтому скрипт запускается после него.

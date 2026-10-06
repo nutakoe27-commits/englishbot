@@ -29,6 +29,7 @@ from .internal_routes import router as internal_router
 from .level_test import router as level_test_router
 from .payment_routes import router as payment_router
 from .push_routes import router as push_router
+from .mytracker import router as mytracker_router
 from .grammar import router as grammar_router
 from .listening import router as listening_router
 from .srs import router as srs_router
@@ -135,6 +136,7 @@ app.include_router(auth_router)
 app.include_router(internal_router)
 app.include_router(payment_router)
 app.include_router(push_router)
+app.include_router(mytracker_router)
 app.include_router(level_test_router)
 app.include_router(listening_router)
 app.include_router(grammar_router)
