@@ -103,10 +103,14 @@ async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
         except Exception:
             # Неавторизованный/битый токен — просто показываем полный список.
             used_one_time = set()
+    from . import recurring
+    rec_on = recurring.enabled()
     return {"plans": [
         {
             "key": k, "days": v["days"], "amount_rub": v["amount_rub"],
             "title": v["title"], "badge": v.get("badge"), "note": v.get("note"),
+            # Тариф продлевается автоматически (условия показываем на карточке).
+            "recurring": bool(rec_on and k == recurring.RECURRING_PLAN),
         }
         for k, v in _plan_catalog().items()
         if k not in used_one_time
@@ -215,6 +219,10 @@ async def create_payment(
         local_payment_id = int(payment.id)
 
     # 2) Зовём ЮKassa. user.id и плата — в metadata, обратный adres — return_url.
+    from . import recurring
+    # Месячная подписка всегда с автопродлением (условия — на карточке тарифа
+    # и в оферте). Отключается только отменой подписки в профиле.
+    want_recurring = bool(plan == recurring.RECURRING_PLAN and recurring.enabled())
     yk_resp = await yk.create_payment(
         amount_rub=final_amount,
         description=f"English Tutor: {info['title']}",
@@ -223,8 +231,10 @@ async def create_payment(
             "user_id": str(user.id),
             "plan": plan,
             "payment_id": str(local_payment_id),
+            "recurring_setup": "1" if want_recurring else "0",
         },
         customer_email=email,
+        save_payment_method=want_recurring,
     )
     if not yk_resp or "id" not in yk_resp:
         async with db_session() as session:
@@ -259,6 +269,9 @@ async def create_payment(
         "days": info["days"],
         "promo_code": promo_code_norm,
         "discount_percent": promo_pct,
+        # Удалось ли запросить сохранение карты (False — магазину автоплатежи
+        # не подключены, оплата прошла как обычная).
+        "recurring": bool(want_recurring and not yk_resp.get("_recurring_unavailable")),
     }
 
 
@@ -372,6 +385,17 @@ async def yookassa_webhook(request: Request) -> dict:
         repo = Repo(session)
         payment = await repo.find_payment_by_provider_id(provider_pid)
         if payment is None:
+            # Вебхук мог обогнать запись provider_payment_id (у автосписаний
+            # ответ ЮKassa и нотификация приходят почти одновременно) —
+            # находим платёж по нашему id из metadata и дописываем связь.
+            meta_pid = str((confirmed.get("metadata") or {}).get("payment_id") or "")
+            if meta_pid.isdigit():
+                cand = await repo.find_payment_by_id(int(meta_pid))
+                if cand is not None and str(cand.provider_payment_id or "").startswith("tmp_"):
+                    cand.provider_payment_id = provider_pid
+                    await session.flush()
+                    payment = cand
+        if payment is None:
             logger.warning(
                 "[yookassa/webhook] no local payment for provider_id=%s (event=%s)",
                 provider_pid, event,
@@ -390,10 +414,15 @@ async def yookassa_webhook(request: Request) -> dict:
                 )
             else:
                 await repo.credit_subscription_for_payment(int(payment.id))
+                # Автопродление: завести после первой оплаты с согласием,
+                # сдвинуть дату следующего списания (docs/recurring.md).
+                from . import recurring
+                rec_notes = await recurring.after_credit(repo, payment, confirmed)
                 # Онбординг после оплаты: без него человек остаётся один на
                 # один с «лимиты сняты» и отваливается на первой неделе.
                 # nudge_once — чтобы ретрай вебхука не прислал второе.
-                should_welcome = await repo.nudge_once(
+                # Автосписания онбординг не получают: у них своё уведомление.
+                should_welcome = (not payment.recurring_subscription_id) and await repo.nudge_once(
                     user_id=int(payment.user_id), kind="paid_welcome",
                     dedup_key=str(payment.id),
                 )
@@ -422,6 +451,7 @@ async def yookassa_webhook(request: Request) -> dict:
                         amount_rub=float(payment.amount_rub or 0), plan=str(payment.plan),
                         days=int(payment.days_granted or 0),
                     )
+                recurring.dispatch(rec_notes)
                 if should_welcome and buyer_tg_id:
                     _notify_payment_success(
                         tg_id=int(buyer_tg_id),
@@ -431,8 +461,12 @@ async def yookassa_webhook(request: Request) -> dict:
                     )
         elif real_status == "canceled":
             if payment.status != "succeeded":  # не отменяем то, что уже зачтено
+                was_pending = payment.status == "pending"
                 await repo.mark_payment_status(int(payment.id), "canceled")
+                from . import recurring
+                rec_notes = await recurring.after_cancel(repo, payment, confirmed) if was_pending else []
                 await session.commit()
+                recurring.dispatch(rec_notes)
         else:
             # pending / waiting_for_capture — ничего не меняем.
             logger.info(

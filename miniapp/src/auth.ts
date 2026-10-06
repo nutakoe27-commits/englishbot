@@ -299,6 +299,8 @@ export interface Plan {
   badge?: string | null;
   /** Мелкая строка под ценой — условия тарифа. */
   note?: string | null;
+  /** Тариф продлевается автоматически (месяц). Решает backend. */
+  recurring?: boolean;
 }
 
 export async function listPlans(): Promise<Plan[]> {
@@ -326,6 +328,39 @@ export async function createPayment(
       const data = await res.json() as { confirmation_url: string; payment_id: number };
       return { ok: true, ...data };
     }
+    return { ok: false, error: await _readError(res) };
+  } catch { return { ok: false, error: "network" }; }
+}
+
+// ─── Автопродление месячной подписки (docs/recurring.md) ─────────────
+
+export interface RecurringState {
+  /** Автопродление вообще доступно (включено на сервере). */
+  available: boolean;
+  status: "none" | "active" | "canceled" | "failed";
+  amount_rub?: number;
+  period_days?: number;
+  next_charge_at?: string | null;
+  method_title?: string | null;
+  canceled_at?: string | null;
+  last_error?: string | null;
+}
+
+export async function fetchRecurring(): Promise<RecurringState | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/payments/recurring`);
+    if (!res.ok) return null;
+    return (await res.json()) as RecurringState;
+  } catch { return null; }
+}
+
+/** Отключить (cancel) или снова включить (resume) автопродление. */
+export async function setRecurring(
+  action: "cancel" | "resume",
+): Promise<{ ok: true; state: RecurringState } | { ok: false; error: string }> {
+  try {
+    const res = await _postJson(`/api/payments/recurring/${action}`, {});
+    if (res.ok) return { ok: true, state: (await res.json()) as RecurringState };
     return { ok: false, error: await _readError(res) };
   } catch { return { ok: false, error: "network" }; }
 }

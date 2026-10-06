@@ -20,6 +20,9 @@ import {
   startTelegramFlow,
   startYandexFlow,
   type MeInfo,
+  fetchRecurring,
+  setRecurring,
+  type RecurringState,
 } from "./auth";
 import { ThemeToggle } from "./ThemeToggle";
 import { SchoolCabinetScreen } from "./SchoolCabinetScreen";
@@ -287,6 +290,7 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
                   >
                     {me?.subscription_until ? "Продлить подписку" : "Оформить подписку"}
                   </button>
+                  <RecurringBlock subscriptionUntil={me?.subscription_until ?? null} />
                 </div>
               )}
 
@@ -543,6 +547,100 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
       {cabinetOpen && (
         <SchoolCabinetScreen onClose={() => setCabinetOpen(false)} />
       )}
+    </div>
+  );
+}
+
+/** Автопродление месячной подписки: статус, следующее списание, отключение.
+ *  Показывается, только если у человека есть (или была) автоподписка. */
+function RecurringBlock({ subscriptionUntil }: { subscriptionUntil: string | null }) {
+  const [st, setSt] = useState<RecurringState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [confirmOff, setConfirmOff] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchRecurring().then((r) => { if (alive) setSt(r); });
+    return () => { alive = false; };
+  }, []);
+
+  if (!st || st.status === "none") return null;
+
+  const act = async (action: "cancel" | "resume") => {
+    setBusy(true); setErr("");
+    const r = await setRecurring(action);
+    setBusy(false); setConfirmOff(false);
+    if (r.ok) { setSt(r.state); return; }
+    setErr(
+      r.error === "subscription_expired"
+        ? "Подписка уже закончилась — оформи её заново."
+        : r.error === "method_failed"
+          ? "Карта больше не принимает автосписания — оформи подписку заново."
+          : "Не получилось. Попробуй ещё раз.",
+    );
+  };
+
+  const amount = st.amount_rub ?? 0;
+  const next = st.next_charge_at ? _fmtSubUntil(st.next_charge_at) : "";
+  return (
+    <div className="acc-renew">
+      {st.status === "active" && (
+        <>
+          <div className="acc-renew__row">🔁 Подписка продлевается автоматически</div>
+          <div className="acc-renew__muted">
+            Следующее списание — {next}, {amount} ₽
+            {st.method_title ? ` · ${st.method_title}` : ""}
+          </div>
+          {!confirmOff ? (
+            <button type="button" className="acc-renew__btn acc-renew__btn--danger" disabled={busy} onClick={() => setConfirmOff(true)}>
+              Отменить подписку
+            </button>
+          ) : (
+            <div className="acc-renew__warn">
+              <b>Отменить подписку?</b>
+              <span>
+                Следующего списания не будет. Полный доступ сохранится
+                {subscriptionUntil ? ` до ${_fmtSubUntil(subscriptionUntil)}` : " до конца оплаченного периода"},
+                потом — бесплатный тариф: 5 минут разговора в день, один подкаст
+                и один урок грамматики.
+              </span>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <button type="button" className="acc-renew__btn acc-renew__btn--danger" disabled={busy} onClick={() => void act("cancel")}>
+                  Да, отменить
+                </button>
+                <button type="button" className="acc-renew__btn" disabled={busy} onClick={() => setConfirmOff(false)}>
+                  Оставить подписку
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {st.status === "canceled" && (
+        <>
+          <div className="acc-renew__row">Подписка отменена</div>
+          <div className="acc-renew__muted">
+            Списаний больше не будет. Полный доступ
+            {subscriptionUntil ? ` до ${_fmtSubUntil(subscriptionUntil)}` : " до конца оплаченного периода"}.
+          </div>
+          {st.available && (
+            <button type="button" className="acc-renew__btn" disabled={busy} onClick={() => void act("resume")}>
+              Возобновить подписку · {amount} ₽ в месяц
+            </button>
+          )}
+        </>
+      )}
+      {st.status === "failed" && (
+        <>
+          <div className="acc-renew__row">⚠️ Подписка не продлилась</div>
+          <div className="acc-renew__muted">
+            Не получилось списать оплату с сохранённой карты. Оформи месяц заново —
+            новая карта сохранится, и продление снова пойдёт автоматически.
+          </div>
+        </>
+      )}
+      {err && <div className="acc-renew__muted" style={{ color: "var(--error)" }}>{err}</div>}
     </div>
   );
 }

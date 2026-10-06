@@ -30,6 +30,7 @@ from .level_test import router as level_test_router
 from .payment_routes import router as payment_router
 from .push_routes import router as push_router
 from .mytracker import router as mytracker_router
+from .recurring import router as recurring_router
 from .grammar import router as grammar_router
 from .listening import router as listening_router
 from .srs import router as srs_router
@@ -60,7 +61,16 @@ async def lifespan(_: FastAPI):
     # (legacy-режим). Интеграция с voice-сессиями и лимитами — в PR C.
     db_ok = init_db()
     logger.info("DB ready=%s", db_ok)
+    # Автопродление подписки: планировщик списаний (docs/recurring.md).
+    # Сам цикл проверяет рубильник YOOKASSA_RECURRING_ENABLED на каждом
+    # проходе, поэтому включение/выключение не требует перезапуска логики.
+    rec_task = None
+    if db_ok:
+        from .recurring import recurring_loop
+        rec_task = asyncio.create_task(recurring_loop())
     yield
+    if rec_task is not None:
+        rec_task.cancel()
 
 
 app = FastAPI(
@@ -137,6 +147,7 @@ app.include_router(internal_router)
 app.include_router(payment_router)
 app.include_router(push_router)
 app.include_router(mytracker_router)
+app.include_router(recurring_router)
 app.include_router(level_test_router)
 app.include_router(listening_router)
 app.include_router(grammar_router)

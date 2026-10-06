@@ -336,6 +336,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
                 </p>
               )}
 
+
               <div className="sub-plans-v2">
                 {plans.map((p) => {
                   const isRecommended = p.badge === "Рекомендуем";
@@ -359,6 +360,13 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
                       </div>
                       <div className="sub-plan-v2__days">{p.days} {_daysWord(p.days)}</div>
                       {p.note && <div className="sub-plan-v2__note">{p.note}</div>}
+                      {p.recurring && (
+                        <div className="sub-plan-v2__note sub-plan-v2__renew">
+                          🔁 Продлевается автоматически: {p.amount_rub} ₽ каждые {p.days} {_daysWord(p.days)}
+                          {hasDiscount ? " (скидка — только на первый месяц)" : ""}.
+                          Отменить можно в профиле в любой момент.
+                        </div>
+                      )}
                     </button>
                   );
                 })}
@@ -380,7 +388,11 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
               </p>
               <p className="sub-offer">
                 Нажимая «Оплатить», вы принимаете условия{" "}
-                <a href={OFFER_URL} target="_blank" rel="noreferrer">публичной оферты</a>.
+                <a href={OFFER_URL} target="_blank" rel="noreferrer">публичной оферты</a>
+                {plans.some((p) => p.recurring)
+                  ? ". Месячная подписка продлевается автоматически с карты, которой ты платишь; " +
+                    "напомним за день до списания, отменить можно в профиле"
+                  : ""}.
               </p>
             </>
           )}
