@@ -55,8 +55,29 @@ REGISTRATION_WINDOW = timedelta(hours=2)
 _IID_RE = re.compile(r"^[A-Za-z0-9\-_.]{8,64}$")
 
 
+_warned = False
+
+
+def _app_id() -> Optional[int]:
+    """MYTRACKER_APP_ID → int. Кривое значение — None и одно предупреждение."""
+    global _warned
+    raw = str(settings.MYTRACKER_APP_ID or "").strip().strip('"').strip("'")
+    if not raw:
+        return None
+    if raw.isdigit():
+        return int(raw)
+    if not _warned:
+        _warned = True
+        logger.warning("[mytracker] MYTRACKER_APP_ID=%r не число — MyTracker выключен", raw[:40])
+    return None
+
+
+def _token() -> str:
+    return str(settings.MYTRACKER_S2S_TOKEN or "").strip().strip('"').strip("'")
+
+
 def enabled() -> bool:
-    return bool(settings.MYTRACKER_APP_ID and settings.MYTRACKER_S2S_TOKEN)
+    return bool(_app_id() and _token())
 
 
 def valid_instance_id(value: str) -> bool:
@@ -85,8 +106,8 @@ async def _post(method: str, body: dict) -> bool:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=5.0)) as client:
             r = await client.post(
                 url,
-                params={"idApp": int(settings.MYTRACKER_APP_ID or 0)},
-                headers={"Authorization": str(settings.MYTRACKER_S2S_TOKEN)},
+                params={"idApp": _app_id()},
+                headers={"Authorization": _token()},
                 json=body,
             )
         if 200 <= r.status_code < 300:
@@ -225,4 +246,6 @@ async def mt_install(body: _InstallIn, authorization: Optional[str] = Header(Non
         kind = "registration" if fresh else "login"
         _fire(send_user_event(kind, user_id=user_id, instance_id=iid, at=created_at if fresh else None))
         logger.info("[mytracker] linked user_id=%s iid=%s… event=%s", user_id, iid[:8], kind)
+    elif is_new:
+        logger.info("[mytracker] linked user_id=%s iid=%s… (S2S выключен — событие не отправлено)", user_id, iid[:8])
     return {"ok": True, "linked": is_new}

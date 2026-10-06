@@ -65,8 +65,10 @@ class Settings(BaseSettings):
     # ─── VK MyTracker: серверные события Android-приложения (docs/mytracker.md)
     # ID приложения (Android) в MyTracker и S2S API-ключ аккаунта. Бэкенд
     # шлёт регистрацию, вход и оплату, привязывая их к установке из рекламы.
-    # Пусто = выключено.
-    MYTRACKER_APP_ID: Optional[int] = None
+    # Пусто = выключено. Строкой, а не int: пустое или кривое значение в .env
+    # не должно ронять бэкенд при старте — mytracker.py разберёт его сам и
+    # при ошибке просто выключится с предупреждением в логе.
+    MYTRACKER_APP_ID: Optional[str] = None
     MYTRACKER_S2S_TOKEN: Optional[str] = None
 
     # ─── Веб-авторизация (миграция 0020 + 0021) ──────────────────────────
