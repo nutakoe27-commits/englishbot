@@ -101,6 +101,21 @@ class Settings(BaseSettings):
     # Ставка НДС: 1=без НДС, 2=0%, 3=10%, 4=20% и т.д.
     YOOKASSA_VAT_CODE: int = 1
 
+    # ─── Автопродление месячной подписки (миграция 0039, docs/recurring.md)
+    # Включать ТОЛЬКО после того, как ЮKassa подключит магазину автоплатежи:
+    # без этого платёж с save_payment_method отклоняется (на этот случай есть
+    # фолбэк на обычную оплату, но галочку лучше не показывать вовсе).
+    YOOKASSA_RECURRING_ENABLED: bool = False
+    # За сколько часов до конца подписки списывать следующий период.
+    RECURRING_CHARGE_BEFORE_HOURS: int = 24
+    # Через сколько часов повторять неудачное списание и сколько раз.
+    RECURRING_RETRY_HOURS: int = 24
+    RECURRING_MAX_ATTEMPTS: int = 3
+    # Напоминание о предстоящем списании — за столько часов до него.
+    RECURRING_REMIND_BEFORE_HOURS: int = 24
+    # Как часто планировщик проверяет, кого пора списывать (секунды).
+    RECURRING_LOOP_SECONDS: int = 300
+
     # Цены подписки в рублях (синхронизированы с bot/app/main.py).
     # TRIAL3 больше не предлагается, но константа оставлена для back-compat.
     SUBSCRIPTION_PRICE_TRIAL3_RUB: int = 99

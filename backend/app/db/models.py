@@ -179,7 +179,11 @@ class DailyUsage(Base):
 class Payment(Base):
     __tablename__ = "payments"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # with_variant: в SQLite (локальные тесты) автоинкремент есть только у
+    # INTEGER PRIMARY KEY; в MySQL тип прежний — BIGINT.
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True,
+    )
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
@@ -205,6 +209,8 @@ class Payment(Base):
     # Промокод, применённый к платежу (аудит скидки).
     promo_code: Mapped[Optional[str]] = mapped_column(String(32))
     discount_percent: Mapped[Optional[int]] = mapped_column(Integer)
+    # Автосписание по сохранённому способу оплаты (миграция 0039).
+    recurring_subscription_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
@@ -756,3 +762,29 @@ class MytrackerInstall(Base):
     instance_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class RecurringSubscription(Base):
+    """Автопродление месячной подписки (миграция 0039, docs/recurring.md)."""
+
+    __tablename__ = "recurring_subscriptions"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True,
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
+    plan: Mapped[str] = mapped_column(String(16), nullable=False, default="monthly")
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="active")
+    payment_method_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    method_title: Mapped[Optional[str]] = mapped_column(String(64))
+    amount_rub: Mapped[int] = mapped_column(Integer, nullable=False)
+    period_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    email: Mapped[Optional[str]] = mapped_column(String(255))
+    next_charge_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[Optional[str]] = mapped_column(String(255))
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    reminded_for: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    canceled_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

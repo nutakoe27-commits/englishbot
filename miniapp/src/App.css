@@ -4510,3 +4510,44 @@ html:has(.app-shell) body::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
+
+/* ─── Автопродление в профиле ─── */
+.acc-renew {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-1);
+}
+.acc-renew__row { font-size: 13.5px; color: var(--text); }
+.acc-renew__muted { font-size: 12.5px; color: var(--text-dim); }
+.acc-renew__btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--accent-deep, var(--accent));
+  text-decoration: underline;
+  cursor: pointer;
+}
+.acc-renew__btn:disabled { opacity: .5; cursor: default; }
+.sub-plan-v2__renew { margin-top: 6px; }
+.acc-renew__btn--danger { color: var(--error); }
+.acc-renew__warn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
