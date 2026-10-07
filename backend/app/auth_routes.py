@@ -67,6 +67,11 @@ class _YandexStartIn(BaseModel):
     mode: str                       # 'login' | 'link'
 
 
+class _VkStartIn(BaseModel):
+    mode: str                       # 'login' | 'link'
+    via: str = "vk"                 # 'vk' | 'ok' | 'mail' — какой сервис VK ID
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _user_summary(user, identities: list[dict]) -> dict:
@@ -77,7 +82,8 @@ def _user_summary(user, identities: list[dict]) -> dict:
         "username": user.username,
         "email": user.email,
         "identities": [
-            {"provider": i["provider"], "email": i.get("email")} for i in identities
+            {"provider": i["provider"], "email": i.get("email"), "via": i.get("via")}
+            for i in identities
         ],
     }
 
@@ -345,6 +351,123 @@ async def auth_yandex_callback(
     return _yandex_redirect_to_frontend(**params)
 
 
+# ─── VK ID: ВКонтакте, Одноклассники, Mail.ru (миграция 0040) ────────────
+
+_VK_VIAS = ("vk", "ok", "mail")
+
+
+def _oauth_redirect_to_frontend(**params: str) -> RedirectResponse:
+    """Как _yandex_redirect_to_frontend, но с общими ключами #oauth_jwt=…,
+    #oauth_error=…, #oauth_provider=… — фронт разбирает их одним кодом."""
+    from urllib.parse import urlencode
+    base = (settings.MINIAPP_URL or "").rstrip("/") or "/"
+    frag = urlencode({k: v for k, v in params.items() if v is not None})
+    return RedirectResponse(url=f"{base}/#{frag}", status_code=302)
+
+
+@router.post("/vk/start")
+async def auth_vk_start(
+    body: _VkStartIn, authorization: Optional[str] = Header(None),
+) -> dict:
+    """Старт входа через VK ID. via выбирает сервис: ВКонтакте, OK или Mail.ru.
+
+    Возвращает {token, url}: сайт делает window.location.href = url, после
+    входа VK ID редиректит на /api/auth/vk/callback.
+    """
+    _require_db()
+    if not settings.VK_ID_CLIENT_ID:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "vk_oauth_not_configured")
+    mode = (body.mode or "").strip().lower()
+    via = (body.via or "vk").strip().lower()
+    if mode not in ("login", "link") or via not in _VK_VIAS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_mode")
+
+    from .db import Repo
+    user_id: Optional[int] = None
+    if mode == "link":
+        async with db_session() as session:
+            user = await auth_lib.resolve_user(Repo(session), authorization=authorization)
+            user_id = user.id
+    async with db_session() as session:
+        repo = Repo(session)
+        token = await repo.create_auth_action(f"{mode}_vk_{via}", user_id=user_id, ttl_sec=600)
+        await session.commit()
+    return {"token": token, "url": auth_lib.vk_authorize_url(token, via)}
+
+
+@router.get("/vk/callback")
+async def auth_vk_callback(
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    device_id: Optional[str] = None,
+    error: Optional[str] = None,
+) -> RedirectResponse:
+    """Колбэк VK ID: code → access_token → профиль → вход/привязка → JWT во фрагменте."""
+    _require_db()
+    if error or not code or not state or not device_id:
+        return _oauth_redirect_to_frontend(oauth_provider="vk", oauth_error=error or "bad_callback")
+
+    from .db import Repo
+    async with db_session() as session:
+        repo = Repo(session)
+        action = await repo.get_pending_action(state)
+        name = action.action if action is not None else ""
+        parts = name.split("_")       # login_vk_ok → ['login', 'vk', 'ok']
+        if action is None or len(parts) != 3 or parts[1] != "vk" or parts[0] not in ("login", "link") \
+                or parts[2] not in _VK_VIAS:
+            return _oauth_redirect_to_frontend(oauth_provider="vk", oauth_error="state_invalid")
+        mode, via = parts[0], parts[2]
+
+        token_payload = await auth_lib.exchange_vk_code(code, state=state, device_id=device_id)
+        if not token_payload:
+            await repo.mark_action_failed(state)
+            await session.commit()
+            return _oauth_redirect_to_frontend(oauth_provider="vk", oauth_error="exchange_failed")
+        info = await auth_lib.fetch_vk_userinfo(token_payload["access_token"])
+        if not info:
+            await repo.mark_action_failed(state)
+            await session.commit()
+            return _oauth_redirect_to_frontend(oauth_provider="vk", oauth_error="userinfo_failed")
+
+        vk_uid = str(info["user_id"])
+        email = (info.get("email") or "").strip() or None
+
+        merged = False
+        if mode == "login":
+            existing = await repo.get_user_by_identity("vk", vk_uid)
+            if existing is not None:
+                resulting_user_id = existing.id
+            else:
+                user = await repo.create_user_with_identity(
+                    provider="vk", provider_uid=vk_uid, email=email,
+                    first_name=info.get("first_name") or None,
+                    last_name=info.get("last_name") or None,
+                )
+                resulting_user_id = user.id
+        else:
+            if action.user_id is None:
+                await repo.mark_action_failed(state)
+                await session.commit()
+                return _oauth_redirect_to_frontend(oauth_provider="vk", oauth_error="no_initiator")
+            res = await repo.link_or_merge(action.user_id, "vk", vk_uid, email)
+            if res["kind"] == "conflict":
+                await repo.mark_action_failed(state)
+                await session.commit()
+                return _oauth_redirect_to_frontend(oauth_provider="vk", oauth_error="identity_conflict")
+            resulting_user_id = int(res["primary_id"])
+            merged = res["kind"] == "merged"
+
+        await repo.set_identity_via("vk", vk_uid, via)
+        await repo.mark_action_done(state, resulting_user_id=resulting_user_id)
+        await session.commit()
+
+    params: dict = {"oauth_jwt": auth_lib.issue_jwt(resulting_user_id), "mode": mode,
+                    "oauth_provider": "vk", "via": via}
+    if merged:
+        params["merged"] = "1"
+    return _oauth_redirect_to_frontend(**params)
+
+
 @router.post("/register")
 async def auth_register(body: _RegisterIn) -> dict:
     """Регистрация по email+password. Без верификации email (компромисс)."""
@@ -429,7 +552,7 @@ async def auth_set_password(
         identities = await repo.list_identities(user.id)
         await session.commit()
     return {"ok": True, "identities": [
-        {"provider": i["provider"], "email": i.get("email")} for i in identities
+        {"provider": i["provider"], "email": i.get("email"), "via": i.get("via")} for i in identities
     ]}
 
 
@@ -549,7 +672,7 @@ async def auth_link(body: _LinkIn, authorization: Optional[str] = Header(None)) 
         "primary_id": primary_id,
         "token": new_token,
         "identities": [
-            {"provider": i["provider"], "email": i.get("email")} for i in identities
+            {"provider": i["provider"], "email": i.get("email"), "via": i.get("via")} for i in identities
         ],
     }
 
@@ -577,7 +700,7 @@ async def auth_unlink(body: _UnlinkIn, authorization: Optional[str] = Header(Non
         identities = await repo.list_identities(user.id)
         await session.commit()
     return {"ok": True, "identities": [
-        {"provider": i["provider"], "email": i.get("email")} for i in identities
+        {"provider": i["provider"], "email": i.get("email"), "via": i.get("via")} for i in identities
     ]}
 
 

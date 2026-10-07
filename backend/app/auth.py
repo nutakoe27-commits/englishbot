@@ -220,6 +220,120 @@ async def fetch_yandex_userinfo(access_token: str) -> Optional[dict]:
         return None
 
 
+# ─── VK ID: ВКонтакте, Одноклассники, Mail.ru (миграция 0040) ────────────
+#
+# Протокол VK ID — OAuth 2.1 с PKCE (id.vk.ru):
+#   1. /authorize?response_type=code&client_id&redirect_uri&state&scope
+#      &code_challenge&code_challenge_method=S256[&provider=ok_ru|mail_ru]
+#   2. Колбэк получает code, state и device_id.
+#   3. POST /oauth2/auth (grant_type=authorization_code, code, code_verifier,
+#      client_id, device_id, redirect_uri, state) → access_token, user_id.
+#   4. POST /oauth2/user_info (client_id, access_token) → {user: {user_id,
+#      first_name, last_name, email, phone, avatar}}.
+# OK и Mail.ru — способы входа внутри VK ID: провайдер выбирается
+# параметром provider, ответ всегда — пользователь VK ID.
+
+VK_VIA_TO_PROVIDER = {"vk": "vkid", "ok": "ok_ru", "mail": "mail_ru"}
+
+
+def vk_redirect_uri() -> str:
+    if settings.VK_ID_REDIRECT_URI:
+        return settings.VK_ID_REDIRECT_URI
+    base = (settings.API_PUBLIC_URL or "").rstrip("/")
+    if not base:
+        raise RuntimeError("API_PUBLIC_URL or VK_ID_REDIRECT_URI must be set")
+    return f"{base}/api/auth/vk/callback"
+
+
+def vk_code_verifier(state: str) -> str:
+    """PKCE code_verifier, выведенный из state и серверного секрета.
+
+    Хранить его не нужно: колбэк пересчитает тот же verifier по state, а без
+    секрета его не подобрать. 43 символа base64url — в пределах RFC 7636.
+    """
+    import base64
+    import hashlib
+    import hmac
+    secret = (settings.AUTH_JWT_SECRET or "").encode() or b"vkid"
+    mac = hmac.new(secret, f"vkid-pkce:{state}".encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(mac).rstrip(b"=").decode()
+
+
+def _vk_code_challenge(verifier: str) -> str:
+    import base64
+    import hashlib
+    digest = hashlib.sha256(verifier.encode()).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+
+def vk_authorize_url(state: str, via: str) -> str:
+    from urllib.parse import urlencode
+    params = {
+        "response_type": "code",
+        "client_id": settings.VK_ID_CLIENT_ID or "",
+        "redirect_uri": vk_redirect_uri(),
+        "state": state,
+        "scope": settings.VK_ID_SCOPE,
+        "code_challenge": _vk_code_challenge(vk_code_verifier(state)),
+        "code_challenge_method": "S256",
+    }
+    provider = VK_VIA_TO_PROVIDER.get(via, "vkid")
+    if provider != "vkid":
+        params["provider"] = provider
+    return settings.VK_ID_BASE_URL.rstrip("/") + "/authorize?" + urlencode(params)
+
+
+async def exchange_vk_code(code: str, *, state: str, device_id: str) -> Optional[dict]:
+    """Обмен code → access_token. None при ошибке."""
+    if not settings.VK_ID_CLIENT_ID:
+        logger.warning("[auth] vk code-exchange skipped: VK_ID_CLIENT_ID not set")
+        return None
+    import httpx
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "code_verifier": vk_code_verifier(state),
+        "client_id": settings.VK_ID_CLIENT_ID,
+        "device_id": device_id,
+        "redirect_uri": vk_redirect_uri(),
+        "state": state,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                settings.VK_ID_BASE_URL.rstrip("/") + "/oauth2/auth", data=data,
+            )
+        payload = resp.json() if resp.content else {}
+        if resp.status_code != 200 or payload.get("error") or not payload.get("access_token"):
+            logger.warning("[auth] vk token exchange failed %s: %s",
+                           resp.status_code, resp.text[:300])
+            return None
+        return payload
+    except Exception as exc:
+        logger.warning("[auth] vk token exchange exception: %r", exc)
+        return None
+
+
+async def fetch_vk_userinfo(access_token: str) -> Optional[dict]:
+    """Профиль VK ID: {user_id, first_name, last_name, email, …} или None."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                settings.VK_ID_BASE_URL.rstrip("/") + "/oauth2/user_info",
+                data={"client_id": settings.VK_ID_CLIENT_ID or "", "access_token": access_token},
+            )
+        payload = resp.json() if resp.content else {}
+        user = payload.get("user") if isinstance(payload, dict) else None
+        if resp.status_code != 200 or not isinstance(user, dict) or not user.get("user_id"):
+            logger.warning("[auth] vk userinfo failed %s: %s", resp.status_code, resp.text[:300])
+            return None
+        return user
+    except Exception as exc:
+        logger.warning("[auth] vk userinfo exception: %r", exc)
+        return None
+
+
 def _bearer_token(authorization: Optional[str]) -> Optional[str]:
     if not authorization:
         return None

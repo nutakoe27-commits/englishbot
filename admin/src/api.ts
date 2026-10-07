@@ -366,6 +366,9 @@ export const api = {
       `/api/admin/adlinks/${id}/hits?limit=${limit}`,
     ),
 
+  // ─── Способы входа ────────────────────────────────────
+  authStats: (days = 30) => request<AuthStats>(`/api/admin/auth-stats?days=${days}`),
+
   // ─── Тест уровня ──────────────────────────────────────
   levelTests: (days = 30, limit = 50) =>
     request<LevelTestsResponse>(
@@ -585,4 +588,16 @@ export interface PaymentsMonthChart {
   today_day: number;
   total_rub: number;
   series: PaymentsMonthChartPoint[];
+}
+
+// ─── Способы входа (миграция 0040) ───────────────────────────────────────────
+
+export interface AuthStats {
+  period_days: number;
+  new_users: number;
+  /** Регистрации за период по первому способу входа: telegram | native |
+   *  yandex | vk:vk | vk:ok | vk:mail | none. */
+  signups: Record<string, number>;
+  /** Все привязки по способам. */
+  totals: Record<string, number>;
 }
