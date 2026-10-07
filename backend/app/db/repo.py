@@ -118,14 +118,71 @@ class Repo:
 
     async def list_identities(self, user_id: int) -> list[dict]:
         res = await self.s.execute(
-            select(UserIdentity.provider, UserIdentity.email, UserIdentity.created_at)
+            select(UserIdentity.provider, UserIdentity.email, UserIdentity.created_at,
+                   UserIdentity.via)
             .where(UserIdentity.user_id == user_id)
             .order_by(UserIdentity.created_at.asc())
         )
         return [
-            {"provider": p, "email": e, "created_at": c}
-            for p, e, c in res.all()
+            {"provider": p, "email": e, "created_at": c, "via": v}
+            for p, e, c, v in res.all()
         ]
+
+    @staticmethod
+    def identity_key(provider: str, via: Optional[str]) -> str:
+        """Ключ способа входа для статистики: telegram | native | yandex |
+        vk:vk | vk:ok | vk:mail (у VK ID важно, через какой сервис)."""
+        if provider == "vk":
+            return f"vk:{via or 'vk'}"
+        return str(provider)
+
+    async def auth_method_stats(self, days: int = 30) -> dict:
+        """Способы входа для админки.
+
+        signups — новые аккаунты за период по способу регистрации (первая
+        привязанная личность); totals — сколько всего привязок каждого способа.
+        """
+        since = utcnow() - timedelta(days=int(days))
+        res = await self.s.execute(
+            select(UserIdentity.user_id, UserIdentity.provider, UserIdentity.via,
+                   UserIdentity.created_at, UserIdentity.id)
+            .join(User, User.id == UserIdentity.user_id)
+            .where(User.created_at >= since)
+            .order_by(UserIdentity.user_id, UserIdentity.created_at, UserIdentity.id)
+        )
+        first: dict[int, str] = {}
+        for uid, prov, via, _c, _i in res.all():
+            first.setdefault(int(uid), self.identity_key(prov, via))
+        new_users = (await self.s.execute(
+            select(func.count(User.id)).where(User.created_at >= since)
+        )).scalar() or 0
+        signups: dict[str, int] = {}
+        for key in first.values():
+            signups[key] = signups.get(key, 0) + 1
+        no_identity = int(new_users) - len(first)
+        if no_identity > 0:
+            signups["none"] = no_identity
+        res = await self.s.execute(
+            select(UserIdentity.provider, UserIdentity.via, func.count(UserIdentity.id))
+            .group_by(UserIdentity.provider, UserIdentity.via)
+        )
+        totals: dict[str, int] = {}
+        for prov, via, cnt in res.all():
+            k = self.identity_key(prov, via)
+            totals[k] = totals.get(k, 0) + int(cnt or 0)
+        return {"period_days": int(days), "new_users": int(new_users),
+                "signups": signups, "totals": totals}
+
+    async def set_identity_via(self, provider: str, provider_uid: str, via: str) -> None:
+        """Запомнить, через какой сервис VK ID пришёл человек. Первый вход
+        не перезаписываем: для статистики важно, откуда он зарегистрировался."""
+        await self.s.execute(
+            update(UserIdentity)
+            .where(UserIdentity.provider == provider,
+                   UserIdentity.provider_uid == provider_uid,
+                   UserIdentity.via.is_(None))
+            .values(via=via[:16])
+        )
 
     async def _ensure_identity(
         self, user_id: int, provider: str, provider_uid: str, email: Optional[str],

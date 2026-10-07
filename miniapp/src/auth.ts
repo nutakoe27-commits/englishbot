@@ -207,21 +207,42 @@ export interface YandexCallback {
   mode?: "login" | "link";
   merged?: boolean;
   error?: string;
+  /** Кто вернул: yandex | vk. Для vk — ещё через какой сервис (vk|ok|mail). */
+  provider?: "yandex" | "vk";
+  via?: VkVia;
 }
 
-/** Разобрать URL fragment после возврата с Яндекса.
- *  Backend редиректит на <MINIAPP_URL>/#yandex_jwt=…&mode=…[&merged=1] или
- *  #yandex_error=<reason>. После чтения чистит URL.
+/** Сервис внутри VK ID: ВКонтакте, Одноклассники, Mail.ru. */
+export type VkVia = "vk" | "ok" | "mail";
+
+/** Старт входа/привязки через VK ID. via — какой из трёх сервисов. */
+export async function startVkFlow(mode: "login" | "link", via: VkVia): Promise<YandexStartResponse | null> {
+  try {
+    const res = await _postJson("/api/auth/vk/start", { mode, via });
+    if (!res.ok) return null;
+    return (await res.json()) as YandexStartResponse;
+  } catch {
+    return null;
+  }
+}
+
+/** Разобрать URL fragment после возврата с OAuth (Яндекс или VK ID).
+ *  Яндекс: <MINIAPP_URL>/#yandex_jwt=…&mode=…[&merged=1] или #yandex_error=…
+ *  VK ID:  #oauth_jwt=…&oauth_provider=vk&via=ok&mode=… или #oauth_error=…
+ *  После чтения чистит URL.
  */
 export function extractYandexCallback(): YandexCallback | null {
   if (typeof window === "undefined") return null;
   const hash = window.location.hash || "";
-  if (!hash || (!hash.includes("yandex_jwt=") && !hash.includes("yandex_error="))) return null;
+  if (!hash || !/(yandex|oauth)_(jwt|error)=/.test(hash)) return null;
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
   const out: YandexCallback = {};
-  const jwt = params.get("yandex_jwt");
-  const err = params.get("yandex_error");
+  const jwt = params.get("yandex_jwt") || params.get("oauth_jwt");
+  const err = params.get("yandex_error") || params.get("oauth_error");
   const mode = params.get("mode");
+  out.provider = params.get("oauth_provider") === "vk" ? "vk" : "yandex";
+  const via = params.get("via");
+  if (via === "vk" || via === "ok" || via === "mail") out.via = via;
   if (jwt) {
     out.jwt = jwt;
     setToken(jwt);
@@ -287,6 +308,8 @@ export async function loginTelegramWidget(widget: Record<string, unknown>): Prom
 export interface MeIdentity {
   provider: string;
   email: string | null;
+  /** Для provider='vk': через какой сервис VK ID вошли — vk | ok | mail. */
+  via?: string | null;
 }
 
 // ─── Подписка / оплата (PR-8: ЮKassa) ────────────────────────────────

@@ -2242,3 +2242,32 @@
   text-underline-offset: 3px;
 }
 .dsx-pushask__no:hover { color: var(--text-dim); }
+
+/* ─── Вход через VK ID: ряд иконок ВКонтакте / OK / Mail.ru ─── */
+.vkvia-row {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+.vkvia-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-1);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: transform .12s, border-color .15s;
+}
+.vkvia-btn:hover:not(:disabled) { border-color: var(--accent); }
+.vkvia-btn:active:not(:disabled) { transform: scale(0.94); }
+.vkvia-btn:disabled { opacity: .55; cursor: not-allowed; }
+.login-v2__alt-caption {
+  margin: 14px 0 10px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.login-v2__email-toggle { margin-top: 18px; }

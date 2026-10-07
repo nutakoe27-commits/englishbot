@@ -24,6 +24,7 @@ import {
   type AdLinkHit,
   type UserReferral,
   type LevelTestsResponse,
+  type AuthStats,
   type PushStats,
   type PushSendResult,
 } from "./api";
@@ -345,14 +346,33 @@ function modeMeta(mode: string): { label: string; emoji: string } {
 }
 
 // Провайдеры входа → компактные иконки для списка/детали.
+// Ключи способов входа приходят с backend'а (Repo.identity_key): у VK ID
+// важно, через какой сервис вошли — vk:vk / vk:ok / vk:mail.
 const PROVIDER_EMOJI: Record<string, string> = {
   telegram: "✈️",
   native: "✉️",
+  yandex: "🟡",
   vk: "🔵",
+  "vk:vk": "🔵",
+  "vk:ok": "🟠",
+  "vk:mail": "📧",
+};
+const PROVIDER_NAME: Record<string, string> = {
+  telegram: "Telegram",
+  native: "Email/пароль",
+  yandex: "Яндекс ID",
+  vk: "ВКонтакте",
+  "vk:vk": "ВКонтакте",
+  "vk:ok": "Одноклассники",
+  "vk:mail": "Mail.ru",
+  none: "Без привязки (Mini App до входа)",
 };
 function authProvidersLabel(providers?: string[]): string {
   if (!providers || providers.length === 0) return "—";
   return providers.map((p) => PROVIDER_EMOJI[p] ?? p).join(" ");
+}
+function providerNames(providers?: string[]): string {
+  return (providers || []).map((p) => PROVIDER_NAME[p] ?? p).join(", ");
 }
 
 function modeBadgeStyle(mode: string): React.CSSProperties {
@@ -626,6 +646,7 @@ function Dashboard() {
 
       <ModesTodayCard metrics={metrics} />
       <ActiveAvgCard metrics={metrics} />
+      <AuthStatsCard />
 
       <ChartBlock
         title="DAU за 30 дней"
@@ -648,6 +669,82 @@ function Dashboard() {
       />
 
       <RetentionTable data={retention} />
+    </div>
+  );
+}
+
+// ─── Способы входа (миграция 0040) ───────────────────────────────────────────
+
+const AUTH_ORDER = ["yandex", "vk:vk", "vk:ok", "vk:mail", "native", "telegram", "none"];
+
+function AuthStatsCard() {
+  const [days, setDays] = useState<number>(30);
+  const [data, setData] = useState<AuthStats | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setData(null); setErr(null);
+    api.authStats(days).then((r) => { if (alive) setData(r); })
+      .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); });
+    return () => { alive = false; };
+  }, [days]);
+
+  const keys = data
+    ? Array.from(new Set([...AUTH_ORDER, ...Object.keys(data.signups), ...Object.keys(data.totals)]))
+        .filter((k) => (data.signups[k] || 0) + (data.totals[k] || 0) > 0)
+    : [];
+  const maxSignup = data ? Math.max(1, ...Object.values(data.signups)) : 1;
+  return (
+    <div style={S.chartCard}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <h3 style={{ ...S.chartTitle, margin: 0 }}>🔑 Способы входа</h3>
+        <div style={{ display: "flex", gap: 6 }}>
+          {[7, 30, 90].map((d) => (
+            <button key={d} style={days === d ? S.tabActive : S.tab} onClick={() => setDays(d)}>{d} дн.</button>
+          ))}
+        </div>
+      </div>
+      {err && <div style={S.error}>{err}</div>}
+      {!data ? (
+        !err && <div style={S.muted}>Загрузка…</div>
+      ) : keys.length === 0 ? (
+        <div style={S.muted}>Нет данных</div>
+      ) : (
+        <>
+          <div style={{ fontSize: 13, color: colors.textMuted, margin: "8px 0 12px" }}>
+            Регистрации за {data.period_days} дн. по первому способу входа (всего новых: {data.new_users})
+            и сколько привязок каждого способа сейчас.
+          </div>
+          <table style={S.table}>
+            <thead>
+              <tr>
+                <th style={S.th}>Способ</th>
+                <th style={S.th}>Регистрации</th>
+                <th style={S.th}>Доля</th>
+                <th style={S.th}>Привязано всего</th>
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((k) => {
+                const n = data.signups[k] || 0;
+                return (
+                  <tr key={k}>
+                    <td style={S.td}>{PROVIDER_EMOJI[k] ?? ""} {PROVIDER_NAME[k] ?? k}</td>
+                    <td style={S.td}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: `${Math.round(100 * n / maxSignup)}px`, height: 8, borderRadius: 4, background: colors.primary, opacity: n ? 1 : 0.15 }} />
+                        <b>{n}</b>
+                      </div>
+                    </td>
+                    <td style={S.td}>{data.new_users ? `${Math.round(100 * n / data.new_users)}%` : "—"}</td>
+                    <td style={S.td}>{data.totals[k] ?? "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
     </div>
   );
 }
@@ -994,7 +1091,7 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
       <div style={{ ...S.muted, marginTop: 4 }}>
         Вход: {authProvidersLabel(u.auth_providers)}
         {u.auth_providers && u.auth_providers.length
-          ? ` (${u.auth_providers.join(", ")})`
+          ? ` (${providerNames(u.auth_providers)})`
           : ""}
         {u.email ? ` · ${u.email}` : ""}
       </div>

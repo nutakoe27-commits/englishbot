@@ -261,7 +261,8 @@ async def _user_to_detail(repo: Repo, u) -> UserDetail:
 async def _user_to_brief(repo: Repo, u) -> UserBrief:
     has_sub = await repo.has_active_subscription(u)
     try:
-        providers = [i["provider"] for i in await repo.list_identities(u.id)]
+        providers = [Repo.identity_key(i["provider"], i.get("via"))
+                     for i in await repo.list_identities(u.id)]
     except Exception:
         providers = []
     return UserBrief(
@@ -1303,3 +1304,10 @@ async def admin_adlink_hits(
     async with db_session() as s:
         items = await Repo(s).ad_link_hits(link_id, limit)
     return {"items": items, "total": len(items)}
+
+
+@router.get("/auth-stats", dependencies=[Depends(require_admin_token)])
+async def admin_auth_stats(days: int = Query(30, ge=1, le=365)) -> dict:
+    """Способы входа: регистрации за период и все привязки (миграция 0040)."""
+    async with db_session() as s:
+        return await Repo(s).auth_method_stats(days)

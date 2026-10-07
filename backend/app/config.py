@@ -89,6 +89,16 @@ class Settings(BaseSettings):
     # Если пусто — собирается из API_PUBLIC_URL + '/api/auth/yandex/callback'.
     YANDEX_REDIRECT_URI: Optional[str] = None
 
+    # ─── VK ID: ВКонтакте, Одноклассники, Mail.ru (миграция 0040) ────────
+    # Одно приложение на id.vk.ru (кабинет VK ID для бизнеса) — в нём же
+    # включаются способы входа «Одноклассники» и «Mail». OAuth 2.1 + PKCE,
+    # секрет приложения для входа не нужен. Redirect URI =
+    # <API_PUBLIC_URL>/api/auth/vk/callback (docs/vk-id.md).
+    VK_ID_CLIENT_ID: Optional[str] = None
+    VK_ID_REDIRECT_URI: Optional[str] = None
+    VK_ID_BASE_URL: str = "https://id.vk.ru"
+    VK_ID_SCOPE: str = "vkid.personal_info email"
+
     # ─── ЮKassa веб-оплата (PR-8) ────────────────────────────────────────
     # Прямой API ЮKassa для оплаты подписки на сайте — параллельно с
     # Telegram Payments в боте (тот идёт через provider_token).

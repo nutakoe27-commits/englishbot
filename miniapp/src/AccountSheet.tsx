@@ -23,8 +23,12 @@ import {
   fetchRecurring,
   setRecurring,
   type RecurringState,
+  startVkFlow,
+  type VkVia,
 } from "./auth";
 import { ThemeToggle } from "./ThemeToggle";
+import { VK_VIA_LABEL, VkViaRow } from "./ProviderIcons";
+import { _oauthErrorMessage } from "./LoginScreen";
 import { SchoolCabinetScreen } from "./SchoolCabinetScreen";
 import {
   disablePush, enablePush, pushState, pushSubscribed, type PushState,
@@ -45,6 +49,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   telegram: "Telegram",
   native: "Email/пароль",
   yandex: "Яндекс ID",
+  vk: "VK ID (ВК, OK, Mail.ru)",
 };
 
 // Ключ pending TG link-токена в sessionStorage. На монтировании компонента
@@ -108,26 +113,37 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
   const hasTelegram = linked.has("telegram");
   const hasNative = linked.has("native");
   const hasYandex = linked.has("yandex");
+  const hasVk = linked.has("vk");
 
   // ── Привязка через Яндекс OAuth: после возврата (#yandex_jwt=…) ────────
   const [yandexBusy, setYandexBusy] = useState<boolean>(false);
   useEffect(() => {
     const r = extractYandexCallback();
     if (!r) return;
+    const service = r.provider === "vk" ? (r.via ? VK_VIA_LABEL[r.via] : "VK ID") : "Яндекс";
     if (r.error) {
-      setMsg(r.error === "identity_conflict"
-        ? "Этот Яндекс уже привязан к другому аккаунту, и у обоих есть свои способы входа. Сначала отвяжи лишний способ в одном из аккаунтов."
-        : "Не удалось привязать Яндекс. Попробуй ещё раз.");
+      setMsg(_oauthErrorMessage(r.error, service));
       return;
     }
     if (r.jwt && r.mode === "link") {
       setToken(r.jwt);                  // мог обновиться после merge
       setMsg(r.merged
         ? "Аккаунты объединены ✓ — данные сохранены."
-        : "Яндекс привязан ✓");
+        : `${service} привязан ✓`);
       void reload();
     }
   }, [reload]);
+
+  const [vkBusy, setVkBusy] = useState<boolean>(false);
+  const startVkLink = async (via: VkVia) => {
+    if (vkBusy) return;
+    setVkBusy(true); setMsg("");
+    try {
+      const r = await startVkFlow("link", via);
+      if (!r) { setMsg(`Не удалось запустить привязку ${VK_VIA_LABEL[via]}. Попробуй позже.`); return; }
+      window.location.href = r.url;
+    } finally { setVkBusy(false); }
+  };
 
   const startYandexLink = async () => {
     if (yandexBusy) return;
@@ -380,11 +396,12 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
                 заблокируют. Если у него уже есть свой аккаунт, они объединятся.
               </p>
               <div className="acc-list">
-                {(["telegram", "native", "yandex"] as const).map((p) => {
+                {(["telegram", "native", "yandex", "vk"] as const).map((p) => {
                   const id = me?.identities.find((i) => i.provider === p);
+                  const via = id?.via === "vk" || id?.via === "ok" || id?.via === "mail" ? id.via : null;
                   return (
                     <div key={p} className="acc-row">
-                      <span className="acc-row__name">{PROVIDER_LABEL[p]}</span>
+                      <span className="acc-row__name">{p === "vk" && via ? VK_VIA_LABEL[via] : PROVIDER_LABEL[p]}</span>
                       {id ? (
                         <span className="acc-row__on">
                           ✓ {id.email || "привязан"}
@@ -436,6 +453,16 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
                   </button>
                   <p className="acc-hint">
                     Перейдёшь на oauth.yandex.ru, вернёшься на сайт уже привязанным.
+                  </p>
+                </div>
+              )}
+
+              {!hasVk && !inTelegram && (
+                <div className="acc-link-block">
+                  <div className="acc-link-title">Привязать ВКонтакте, Одноклассники или Mail.ru</div>
+                  <VkViaRow onPick={(via) => void startVkLink(via)} disabled={vkBusy} size={48} />
+                  <p className="acc-hint" style={{ marginTop: 8 }}>
+                    Перейдёшь на страницу VK ID, вернёшься на сайт уже привязанным.
                   </p>
                 </div>
               )}
@@ -568,7 +595,7 @@ function RecurringBlock({ subscriptionUntil }: { subscriptionUntil: string | nul
     return () => { alive = false; };
   }, []);
 
-  if (!st || st.status === "none") return null;
+  if (!st || !["active", "canceled", "failed"].includes(st.status)) return null;
 
   const act = async (action: "cancel" | "resume") => {
     setBusy(true); setErr("");

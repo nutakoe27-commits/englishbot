@@ -34,7 +34,9 @@ class Base(DeclarativeBase):
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True,
+    )
     tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, unique=True)
     username: Mapped[Optional[str]] = mapped_column(String(64))
     first_name: Mapped[Optional[str]] = mapped_column(String(128))
@@ -105,16 +107,21 @@ class UserIdentity(Base):
 
     __tablename__ = "user_identities"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True,
+    )
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     provider: Mapped[str] = mapped_column(
-        SAEnum("telegram", "native", "yandex", name="identity_provider"),
+        SAEnum("telegram", "native", "vk", "yandex", name="identity_provider"),
         nullable=False,
     )
     provider_uid: Mapped[str] = mapped_column(String(191), nullable=False)
     email: Mapped[Optional[str]] = mapped_column(String(255))
+    # Для provider='vk': через какой сервис VK ID вошли — vk | ok | mail
+    # (миграция 0040). Для остальных провайдеров NULL.
+    via: Mapped[Optional[str]] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 

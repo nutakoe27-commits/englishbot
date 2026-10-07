@@ -1,8 +1,10 @@
 /**
  * LoginScreen.tsx — экран входа для веб-версии (вне Telegram).
  *
- * Основной вход: Яндекс ID (OAuth 2.0, миграция 0023). Email/пароль —
- * вторичный вариант. Telegram как способ входа на сайте УБРАН (юр.
+ * Основной вход: Яндекс ID (OAuth 2.0, миграция 0023) и под ним три иконки
+ * VK ID — ВКонтакте, Одноклассники, Mail.ru (миграция 0040). Email/пароль —
+ * за отдельной кнопкой: вход через сервисы быстрее и чаще доходит до
+ * регистрации. Telegram как способ входа на сайте УБРАН (юр.
  * ограничения РФ); привязка Telegram-аккаунта остаётся в Аккаунте.
  *
  * UI v2: warm cream surface, Source Serif heading, sage CTA для Яндекс,
@@ -14,8 +16,11 @@ import {
   extractYandexCallback,
   loginNative,
   registerNative,
+  startVkFlow,
   startYandexFlow,
+  type VkVia,
 } from "./auth";
+import { VK_VIA_LABEL, VkViaRow } from "./ProviderIcons";
 import { Button } from "./ds-react/Button";
 import { LogoBox } from "./ds-react/LogoBox";
 import { SerifH } from "./ds-react/typography";
@@ -36,8 +41,10 @@ export function LoginScreen({ onAuthed }: Props) {
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [firstName, setFirstName] = useState<string>("");
+  // Форма email/пароля свёрнута за кнопкой — основной путь через сервисы.
+  const [emailOpen, setEmailOpen] = useState<boolean>(false);
 
-  useLucide(`${tab}-${busy}-${!!error}`);
+  useLucide(`${tab}-${busy}-${!!error}-${emailOpen}`);
 
   useEffect(() => {
     const r = extractYandexCallback();
@@ -47,9 +54,22 @@ export function LoginScreen({ onAuthed }: Props) {
       return;
     }
     if (r.error) {
-      setError(_yandexErrorMessage(r.error));
+      setError(_oauthErrorMessage(r.error, r.provider === "vk" ? (r.via ? VK_VIA_LABEL[r.via] : "VK ID") : "Яндекс"));
     }
   }, [onAuthed]);
+
+  const startVk = async (via: VkVia) => {
+    if (busy) return;
+    setError(""); setBusy(true);
+    try {
+      const r = await startVkFlow("login", via);
+      if (!r) {
+        setError(`Не удалось запустить вход через ${VK_VIA_LABEL[via]}. Попробуй ещё раз.`);
+        return;
+      }
+      window.location.href = r.url;
+    } finally { setBusy(false); }
+  };
 
   const startYandex = async () => {
     if (busy) return;
@@ -110,9 +130,21 @@ export function LoginScreen({ onAuthed }: Props) {
           <span className="login-v2__yandex-mark" aria-hidden>Я</span>
           <span>Войти через Яндекс ID</span>
         </button>
-        <p className="login-v2__hint">Быстрый вход через аккаунт Яндекса.</p>
+        <p className="login-v2__alt-caption">или через</p>
+        <VkViaRow onPick={(via) => void startVk(via)} disabled={busy} />
 
-        <div className="login-v2__divider"><span>или войти по email</span></div>
+        {!emailOpen ? (
+          <Button
+            variant="ghost"
+            fullWidth
+            className="login-v2__email-toggle"
+            onClick={() => { setEmailOpen(true); setError(""); }}
+          >
+            Войти по email и паролю
+          </Button>
+        ) : (
+        <>
+        <div className="login-v2__divider"><span>по email и паролю</span></div>
 
         <div className="login-v2__tabs" role="tablist">
           <button
@@ -169,6 +201,8 @@ export function LoginScreen({ onAuthed }: Props) {
             {busy ? "…" : tab === "login" ? "Войти" : "Зарегистрироваться"}
           </Button>
         </form>
+        </>
+        )}
 
         {error && <p className="login-v2__error">{error}</p>}
 
@@ -190,18 +224,18 @@ export function LoginScreen({ onAuthed }: Props) {
   );
 }
 
-function _yandexErrorMessage(code: string): string {
+export function _oauthErrorMessage(code: string, service = "Яндекс"): string {
   switch (code) {
     case "state_invalid":
       return "Ссылка устарела. Попробуй войти ещё раз.";
     case "exchange_failed":
     case "userinfo_failed":
-      return "Не получилось проверить аккаунт Яндекса. Попробуй ещё раз.";
+      return `Не получилось проверить аккаунт (${service}). Попробуй ещё раз.`;
     case "access_denied":
-      return "Доступ к аккаунту Яндекса не разрешён.";
+      return `Доступ к аккаунту (${service}) не разрешён.`;
     case "identity_conflict":
-      return "Этот Яндекс уже привязан к другому аккаунту, и у обоих есть свои способы входа. Сначала отвяжи лишний способ в одном из аккаунтов.";
+      return `Этот аккаунт (${service}) уже привязан к другому профилю, и у обоих есть свои способы входа. Сначала отвяжи лишний способ в одном из профилей.`;
     default:
-      return "Не удалось войти через Яндекс. Попробуй ещё раз.";
+      return `Не удалось войти через ${service}. Попробуй ещё раз.`;
   }
 }

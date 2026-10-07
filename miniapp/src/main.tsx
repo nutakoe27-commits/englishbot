@@ -253,7 +253,9 @@ function Root() {
       // достаём JWT и кладём в localStorage до проверки getToken().
       // Иначе main.tsx покажет лендинг (showLogin локальный = false после
       // полной перезагрузки), и юзеру придётся ещё раз кликнуть «Войти».
-      extractYandexCallback();
+      // Только успешный вход: ошибку (#…_error=) оставляем экрану входа —
+      // иначе фрагмент очистится раньше, чем LoginScreen покажет причину.
+      if (/(yandex|oauth)_jwt=/.test(window.location.hash || "")) extractYandexCallback();
       // 2. Браузер: есть сохранённый токен → проверим; иначе экран входа.
       if (getToken()) {
         const ok = await verifySession();
