@@ -4,12 +4,12 @@ grammar.py — третий режим тренировки: текстовые 
 Поток:
   1. POST /api/grammar/generate: фронт шлёт {init_data, mode, level, category?}.
      Backend строит prompt (для mode=weak_points подмешивает recent_mistakes),
-     зовёт vLLM, парсит JSON → 10 упражнений (MCQ + fill-in-the-blank). Также
-     открывает Session (mode='grammar') в БД и регистрирует presence.
-  2. POST /api/grammar/heartbeat: фронт шлёт раз в 20с пока юзер на экране
-     упражнений. presence.touch — чтобы в админке было видно «занимается».
-  3. POST /api/grammar/finish: фронт шлёт {session_id, results, duration_sec}.
-     Backend закрывает Session, инкрементит DailyUsage, поднимает streak.
+     зовёт vLLM, парсит JSON → упражнения и временный ключ подготовки.
+  2. POST /api/grammar/start создаёт сессию при переходе к практике.
+     /heartbeat сохраняет активность и длительность каждые 20 секунд;
+     /abandon закрывает прерванную практику без начисления прохождения.
+  3. POST /api/grammar/finish закрывает Session, инкрементит DailyUsage,
+     поднимает streak. Повторный запрос возвращает сохранённый результат.
 
 Категории mistakes (те же 6 что в session_recap.py / SessionSummary.tsx):
   article, tense, preposition, word_choice, phrasal, other.
@@ -17,6 +17,7 @@ grammar.py — третий режим тренировки: текстовые 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -29,6 +30,7 @@ from pydantic import BaseModel, Field
 from . import presence
 from .config import settings
 from .db import db_session
+from . import grammar_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +58,7 @@ CATEGORY_HINTS = {
     "other": "general grammar (conditionals, modals, word order, agreement, etc.)",
 }
 
-# In-memory store: session_id → {user_id, exercises, started_at}.
-# TTL не нужен — finish удаляет запись; если юзер бросил — запись висит, ничего
-# плохого, gc по необходимости можно добавить позже.
-_SESSION_STORE: dict[str, dict] = {}
+# Generating/prefetching exercises is not a started practice session.
 
 
 # ─── Schemas ─────────────────────────────────────────────────────────────────
@@ -90,6 +89,7 @@ class _GenerateOut(BaseModel):
 class _HeartbeatIn(BaseModel):
     init_data: Optional[str] = None
     session_id: str
+    duration_sec: int = 0
 
 
 class _ResultItem(BaseModel):
@@ -154,7 +154,10 @@ async def _call_llm(system_prompt: str, user_prompt: str, max_tokens: int) -> st
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY, f"LLM returned {resp.status_code}",
             )
-        data = resp.json()
+        try:
+            data = resp.json()
+        except ValueError:
+            raise HTTPException(502, "llm_invalid_response") from None
     try:
         content = data["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError, TypeError):
@@ -288,6 +291,19 @@ def _coerce_exercises(raw_items: list, default_category: str) -> list[Exercise]:
 
 
 async def _generate_exercises(
+    sys_prompt: str, usr_prompt: str, *, default_category: str, tag: str,
+) -> list[Exercise]:
+    try:
+        return await asyncio.wait_for(_generate_exercises_attempts(
+            sys_prompt, usr_prompt, default_category=default_category, tag=tag,
+        ), timeout=240)
+    except (TimeoutError, httpx.TimeoutException):
+        raise HTTPException(504, "generation_timeout") from None
+    except httpx.RequestError:
+        raise HTTPException(502, "llm_unavailable") from None
+
+
+async def _generate_exercises_attempts(
     sys_prompt: str, usr_prompt: str, *, default_category: str, tag: str,
 ) -> list[Exercise]:
     """LLM → JSON → нормализация. Одна повторная попытка, если валидных
@@ -473,33 +489,10 @@ async def generate_exercises(
                 status.HTTP_502_BAD_GATEWAY, "too_few_exercises",
             )
 
-        # ── Открываем Session в БД и кладём в in-memory store ────────────
-        session_id_str = ""
-        if user_id is not None and settings.DATABASE_URL:
-            from .db import Repo
-            async with db_session() as session:
-                repo = Repo(session)
-                row = await repo.open_session(
-                    user_id=user_id,
-                    mode="grammar",
-                    level=body.level,
-                    role=body.mode if body.mode == "weak_points" else default_category,
-                )
-                session_id_str = str(row.id)
-                await session.commit()
-        else:
-            # Dev-режим без БД — синтетический id
-            import secrets
-            session_id_str = "dev-" + secrets.token_urlsafe(8)
-
-        _SESSION_STORE[session_id_str] = {
-            "user_id": user_id,
-            "level": body.level,
-            "mode": body.mode,
-            "category": default_category,
-            "exercises_count": len(exercises),
-        }
-
+        session_id_str = grammar_sessions.prepare(
+            user_id=user_id, level=body.level,
+            role=body.mode if body.mode == "weak_points" else default_category,
+        )
         return _GenerateOut(session_id=session_id_str, exercises=exercises)
     finally:
         # Очищаем presence для generate-окна; heartbeat/finish управляют дальше.
@@ -509,93 +502,50 @@ async def generate_exercises(
         pass
 
 
+@router.post("/start")
+async def start_practice(body: _HeartbeatIn, authorization: Optional[str] = Header(None)) -> dict:
+    return {"session_id": await grammar_sessions.activate(body.session_id, authorization, body.init_data)}
+
+
+@router.post("/abandon")
+async def abandon_practice(body: _HeartbeatIn, authorization: Optional[str] = Header(None)) -> dict:
+    await grammar_sessions.abandon(body.session_id, authorization, body.init_data, body.duration_sec)
+    return {"ok": True}
+
+
 @router.post("/heartbeat")
 async def heartbeat(body: _HeartbeatIn, authorization: Optional[str] = Header(None)) -> dict:
-    """Продлевает онлайн-присутствие. Фронт шлёт раз в 20с пока юзер на
-    экране упражнений. Не делает БД-запросов — максимально лёгкий."""
-    from .auth import auth_key
-    auth_key(authorization, body.init_data)  # validate auth
-    entry = _SESSION_STORE.get(body.session_id)
-    if entry is None:
-        # Сессия не из этого процесса (рестарт backend) — мягко игнорируем
-        return {"ok": True, "known": False}
-    user_id = entry.get("user_id")
-    if user_id is not None:
-        presence.touch(user_id, PRESENCE_TTL)
-    return {"ok": True, "known": True}
+    known = await grammar_sessions.heartbeat(body.session_id, authorization, body.init_data, body.duration_sec)
+    return {"ok": True, "known": known}
 
 
 @router.post("/finish", response_model=_FinishOut)
 async def finish_session(body: _FinishIn, authorization: Optional[str] = Header(None)) -> _FinishOut:
-    entry = _SESSION_STORE.pop(body.session_id, None)
-    user_id = entry.get("user_id") if entry else None
-
-    # Если store потерял запись (рестарт) — резолвим юзера заново, чтобы
-    # хотя бы streak/usage всё равно начислился.
-    if user_id is None and settings.DATABASE_URL:
-        from .db import Repo
-        from .auth import resolve_user
-        async with db_session() as session:
-            repo = Repo(session)
-            user = await resolve_user(
-                repo, authorization=authorization, init_data=body.init_data,
-            )
-            if user is not None:
-                user_id = user.id
-
-    # ── Длительность: берём ту что прислал фронт; clip снизу/сверху ─────
-    # Снизу — чтобы случайные «вышел сразу» не давали streak.
-    # Сверху — чтобы кто-то с открытой вкладкой час не накручивал минуты.
-    duration_sec = max(0, min(int(body.duration_sec or 0), 30 * 60))
-
-    streak_current = 0
-    streak_best = 0
-
-    if user_id is not None and settings.DATABASE_URL:
-        from .db import Repo
-        from .voice import STREAK_MIN_DURATION_SEC
-        try:
-            async with db_session() as session:
-                repo = Repo(session)
-                # Если в generate уже была открыта Session — закрываем её.
-                try:
-                    sess_id_int = int(body.session_id)
-                except ValueError:
-                    sess_id_int = 0
-                if sess_id_int > 0:
-                    try:
-                        await repo.close_session(
-                            session_id=sess_id_int, used_seconds=duration_sec,
-                        )
-                    except Exception as exc:
-                        logger.warning("[grammar] close_session failed: %s", exc)
-                # DailyUsage — минуты идут в общий счётчик / 30-дневный график.
-                if duration_sec > 0:
-                    await repo.add_used_seconds(user_id=user_id, seconds=duration_sec)
-                # Streak: тот же порог, что у voice / listening.
-                if duration_sec >= STREAK_MIN_DURATION_SEC:
-                    role_for_streak = (
-                        entry.get("mode") if entry else "weak_points"
-                    )
-                    try:
-                        streak_current, streak_best = await repo.bump_streak(
-                            user_id, role=role_for_streak,
-                        )
-                    except Exception as exc:
-                        logger.warning("[grammar] bump_streak failed: %s", exc)
-                await session.commit()
-        except Exception as exc:
-            logger.warning("[grammar] finish DB error: %s", exc)
-
-    # Снимаем онлайн-присутствие.
-    if user_id is not None:
-        presence.clear(user_id)
-
-    return _FinishOut(
-        ok=True,
-        streak_current=streak_current,
-        streak_best=streak_best,
-    )
+    from .db import Repo
+    from .voice import STREAK_MIN_DURATION_SEC
+    key = await grammar_sessions.active_key(body.session_id, authorization, body.init_data, allow_completed=True)
+    async with db_session() as session:
+        repo = Repo(session)
+        uid = await grammar_sessions.user_id(repo, authorization, body.init_data)
+        row = await grammar_sessions.row_for_user(session, key, uid)
+        if row.role not in ALLOWED_CATEGORIES | {"weak_points"}:
+            raise HTTPException(409, "grammar_session_kind_mismatch")
+        if row.grammar_status == "completed":
+            return _FinishOut(**(row.grammar_result or {}))
+        duration = max(row.used_seconds or 0, min(grammar_sessions.MAX_DURATION, max(0, body.duration_sec)))
+        streak_current = streak_best = 0
+        if duration:
+            await repo.add_used_seconds(user_id=uid, seconds=duration)
+        if duration >= STREAK_MIN_DURATION_SEC:
+            streak_current, streak_best = await repo.bump_streak(uid, role=row.role)
+        result = _FinishOut(streak_current=streak_current, streak_best=streak_best)
+        row.used_seconds = duration
+        row.ended_at = grammar_sessions.now()
+        row.grammar_last_seen_at = row.ended_at
+        row.grammar_status = "completed"
+        row.grammar_result = result.model_dump()
+    presence.clear(uid)
+    return result
 
 
 # ═══ Grammar Learn: трек «Учить правила» (миграция 0011) ═════════════════════
@@ -758,9 +708,8 @@ async def _resolve_topic_for_user(
             repo, authorization=authorization, init_data=body_init_data,
         )
         user_id = user.id
-        # Посекционный дневной лимит (free: 1 урок/тест в день). Сессия урока
-        # открывается только в /lesson/exercises, поэтому в рамках текущего
-        # урока счётчик ещё 0 — повторно не блокирует. Блокирует ВТОРОЙ урок/тест.
+        # Предварительная проверка лимита; повторная проверка и создание
+        # сессии выполняются атомарно в /start, когда начинается практика.
         if await is_section_limit_reached(repo, user, section="grammar"):
             await session.commit()
             raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "limit_reached")
@@ -820,8 +769,7 @@ async def get_lesson_exercises(
     body: _LessonIn, request: Request,
     authorization: Optional[str] = Header(None),
 ) -> _LessonExercisesOut:
-    """Медленный endpoint: LLM-генерация упражнений (каждому юзеру свежие)
-    + открытие Session. Фронт зовёт его в фоне сразу после /lesson."""
+    """Prefetch exercises without a sessions row or daily quota consumption."""
     user_id, topic_level, topic_title, topic_category = await _resolve_topic_for_user(
         body.init_data, body.topic_key, authorization,
     )
@@ -848,112 +796,56 @@ async def get_lesson_exercises(
     if len(exercises) < 4:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "too_few_exercises")
 
-    from .db import Repo
-    async with db_session() as session:
-        repo = Repo(session)
-        row = await repo.open_session(
-            user_id=user_id,
-            mode="grammar",
-            level=topic_level,
-            role=body.topic_key,
-        )
-        session_id_str = str(row.id)
-        await session.commit()
-
-    _SESSION_STORE[session_id_str] = {
-        "user_id": user_id,
-        "level": topic_level,
-        "mode": "lesson",
-        "category": topic_category,
-        "topic_key": body.topic_key,
-    }
+    session_id_str = grammar_sessions.prepare(
+        user_id=user_id, level=topic_level, role=body.topic_key, topic_key=body.topic_key,
+    )
 
     return _LessonExercisesOut(exercises=exercises, session_id=session_id_str)
 
 
 @router.post("/lesson/finish", response_model=_LessonFinishOut)
 async def finish_lesson(body: _LessonFinishIn, authorization: Optional[str] = Header(None)) -> _LessonFinishOut:
-    if not settings.DATABASE_URL:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db_not_configured")
-
-    entry = _SESSION_STORE.pop(body.session_id, None)
-    user_id = entry.get("user_id") if entry else None
-
     from .db import Repo
     from .voice import STREAK_MIN_DURATION_SEC
-
-    total = max(1, int(body.total or 0))
-    correct = max(0, min(int(body.correct or 0), total))
-    score = round(correct / total * 100)
-    passed = score >= PASS_THRESHOLD
-    duration_sec = max(0, min(int(body.duration_sec or 0), 30 * 60))
-
-    streak_current = 0
-    streak_best = 0
-    best_score = score
-    next_topic_key: Optional[str] = None
-
+    key = await grammar_sessions.active_key(body.session_id, authorization, body.init_data, allow_completed=True)
     async with db_session() as session:
         repo = Repo(session)
-        if user_id is None:
-            from .auth import resolve_user
-            user = await resolve_user(
-                repo, authorization=authorization, init_data=body.init_data,
-            )
-            user_id = user.id if user else None
-        if user_id is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "user_not_found")
-
+        uid = await grammar_sessions.user_id(repo, authorization, body.init_data)
+        row = await grammar_sessions.row_for_user(session, key, uid)
+        if row.role != body.topic_key:
+            raise HTTPException(409, "grammar_session_kind_mismatch")
+        if row.grammar_status == "completed" and row.grammar_result:
+            return _LessonFinishOut(**row.grammar_result)
         topic = await repo.get_grammar_topic(body.topic_key)
         if topic is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "topic_not_found")
-
-        # Прогресс по теме
-        best_score = await repo.upsert_grammar_progress(
-            user_id=user_id, topic_key=body.topic_key, score=score, passed=passed,
-        )
-
-        # Следующая тема уровня (для кнопки «Дальше» в summary)
+            raise HTTPException(404, "topic_not_found")
+        total = max(1, int(body.total or 0))
+        correct = max(0, min(int(body.correct or 0), total))
+        score = round(correct / total * 100)
+        passed = score >= PASS_THRESHOLD
+        if row.grammar_status == "completed":
+            previous = (await repo.get_user_grammar_progress(uid)).get(body.topic_key, {})
+            return _LessonFinishOut(passed=passed, score=score, best_score=previous.get("best_score", score))
+        best_score = await repo.upsert_grammar_progress(user_id=uid, topic_key=body.topic_key, score=score, passed=passed)
         topics = list(await repo.list_grammar_topics())
-        same_level = sorted(
-            (t for t in topics if t.level == topic.level),
-            key=lambda t: t.sort_order,
-        )
-        for i, t in enumerate(same_level):
-            if t.key == body.topic_key and i + 1 < len(same_level):
-                next_topic_key = same_level[i + 1].key
+        same_level = sorted((t for t in topics if t.level == topic.level), key=lambda t: t.sort_order)
+        next_topic_key = None
+        for index, candidate in enumerate(same_level):
+            if candidate.key == body.topic_key and index + 1 < len(same_level):
+                next_topic_key = same_level[index + 1].key
                 break
-
-        # Session close + DailyUsage + streak — как в тест-треке.
-        try:
-            sess_id_int = int(body.session_id)
-        except ValueError:
-            sess_id_int = 0
-        if sess_id_int > 0:
-            try:
-                await repo.close_session(
-                    session_id=sess_id_int, used_seconds=duration_sec,
-                )
-            except Exception as exc:
-                logger.warning("[grammar lesson] close_session failed: %s", exc)
-        if duration_sec > 0:
-            await repo.add_used_seconds(user_id=user_id, seconds=duration_sec)
-        if duration_sec >= STREAK_MIN_DURATION_SEC:
-            try:
-                streak_current, streak_best = await repo.bump_streak(
-                    user_id, role=body.topic_key,
-                )
-            except Exception as exc:
-                logger.warning("[grammar lesson] bump_streak failed: %s", exc)
-        await session.commit()
-
-    presence.clear(user_id)
-
-    return _LessonFinishOut(
-        passed=passed,
-        score=score,
-        best_score=best_score,
-        next_topic_key=next_topic_key,
-        streak_current=streak_current,
-        streak_best=streak_best,
-    )
+        duration = max(row.used_seconds or 0, min(grammar_sessions.MAX_DURATION, max(0, body.duration_sec)))
+        streak_current = streak_best = 0
+        if duration:
+            await repo.add_used_seconds(user_id=uid, seconds=duration)
+        if duration >= STREAK_MIN_DURATION_SEC:
+            streak_current, streak_best = await repo.bump_streak(uid, role=body.topic_key)
+        result = _LessonFinishOut(passed=passed, score=score, best_score=best_score,
+                                 next_topic_key=next_topic_key, streak_current=streak_current, streak_best=streak_best)
+        row.used_seconds = duration
+        row.ended_at = grammar_sessions.now()
+        row.grammar_last_seen_at = row.ended_at
+        row.grammar_status = "completed"
+        row.grammar_result = result.model_dump()
+    presence.clear(uid)
+    return result

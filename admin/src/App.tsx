@@ -1332,7 +1332,9 @@ function SessionsTab({ userId }: { userId: number }) {
               <td style={S.td}>{fmtDate(s.started_at)}</td>
               <td style={S.td}>
                 {fmtSeconds(s.used_seconds)}
-                {s.ended_at === null && (
+                {s.status === "abandoned" ? (
+                  <span style={{ ...S.muted, marginLeft: 6 }}>(прервана)</span>
+                ) : s.ended_at === null && (
                   <span style={{ ...S.muted, marginLeft: 6 }}>(в процессе)</span>
                 )}
               </td>

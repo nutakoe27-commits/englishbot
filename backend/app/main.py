@@ -67,8 +67,10 @@ async def lifespan(_: FastAPI):
     background_tasks = []
     if db_ok:
         from .recurring import recurring_loop
+        from .grammar_sessions import cleanup_loop
         background_tasks.append(asyncio.create_task(recurring_loop()))
         background_tasks.append(asyncio.create_task(delivery_loop()))
+        background_tasks.append(asyncio.create_task(cleanup_loop()))
     try:
         yield
     finally:

@@ -1529,13 +1529,17 @@ class Repo:
         # Полночь МСК сегодня → naive UTC.
         msk_midnight = datetime.combine(msk_today(), time(0, 0), tzinfo=MSK)
         utc_boundary = msk_midnight.astimezone(timezone.utc).replace(tzinfo=None)
-        res = await self.s.execute(
-            select(func.count(SessionRow.id)).where(
-                SessionRow.user_id == user_id,
-                SessionRow.mode == mode,
-                SessionRow.started_at >= utc_boundary,
-            )
+        statement = select(func.count(SessionRow.id)).where(
+            SessionRow.user_id == user_id,
+            SessionRow.mode == mode,
+            SessionRow.started_at >= utc_boundary,
         )
+        if mode == "grammar":
+            statement = statement.where(or_(
+                SessionRow.grammar_status.is_(None),
+                SessionRow.grammar_status != "abandoned", SessionRow.used_seconds > 0,
+            ))
+        res = await self.s.execute(statement)
         return int(res.scalar() or 0)
 
     # ─── streak ─────────────────────────────────────────────────────────
@@ -1979,6 +1983,8 @@ class Repo:
             mode=mode,
             level=level,
             role=role,
+            grammar_status="active" if mode == "grammar" else None,
+            grammar_last_seen_at=utcnow() if mode == "grammar" else None,
         )
         self.s.add(row)
         await self.s.flush()  # чтобы row.id появился
@@ -2765,6 +2771,7 @@ class Repo:
                 SessionRow.id, SessionRow.started_at, SessionRow.ended_at,
                 SessionRow.used_seconds, SessionRow.mode,
                 SessionRow.level, SessionRow.role,
+                SessionRow.grammar_status,
             )
             .where(SessionRow.user_id == user_id)
             .order_by(SessionRow.started_at.desc())
@@ -2779,6 +2786,7 @@ class Repo:
                 "mode": row.mode,
                 "level": row.level,
                 "role": row.role,
+                "status": row.grammar_status or ("completed" if row.ended_at else "active"),
             }
             for row in res.all()
         ]

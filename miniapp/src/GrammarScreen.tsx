@@ -36,6 +36,7 @@ import { IconButton } from "./ds-react/IconButton";
 import { SerifH } from "./ds-react/typography";
 import { Icon } from "./ds-react/Icon";
 import { useLucide } from "./lucide";
+import { GrammarRound, GrammarRequestError, grammarRequest, type GrammarTicket } from "./grammarRequests";
 
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
@@ -181,8 +182,7 @@ export function GrammarScreen({ onExit }: Props) {
   const [wordsOpen, setWordsOpen] = useState<boolean>(false);
   const [paywall, setPaywall] = useState<boolean>(false);
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
-  const inTelegram = !!WebApp.initData;
-  const abortRef = useRef<AbortController | null>(null);
+  const roundRef = useRef(new GrammarRound());
   useLucide(`${progressOpen}-${wordsOpen}-${paywall}`);
 
   // Learn-трек
@@ -192,6 +192,62 @@ export function GrammarScreen({ onExit }: Props) {
   const [lesson, setLesson] = useState<LessonData | null>(null);
   const [lessonResult, setLessonResult] = useState<LessonResult | null>(null);
   const [exState, setExState] = useState<ExercisesState>("idle");
+  type PreparedRound = { exercises: Exercise[]; session_id: string };
+  const preparedRef = useRef<PreparedRound | null>(null);
+  const practiceRequestedRef = useRef(false);
+  const activationRef = useRef<Promise<void> | null>(null);
+  const activeSessionRef = useRef("");
+  const [retryPractice, setRetryPractice] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveError, setSaveError] = useState("");
+  const finishRef = useRef<{ path: string; body: unknown } | null>(null);
+
+  const duration = () => sessionStartRef.current ? Math.max(0, Math.round((Date.now() - sessionStartRef.current) / 1000)) : 0;
+  const cancelRound = () => {
+    roundRef.current.cancel();
+    const key = activeSessionRef.current || preparedRef.current?.session_id;
+    if (key) void grammarRequest(`${API_BASE}/api/grammar/abandon`, {
+      init_data: WebApp.initData || "", session_id: key, duration_sec: duration(),
+    }, { keepalive: true }).catch(() => {});
+    activeSessionRef.current = "";
+    preparedRef.current = null;
+    practiceRequestedRef.current = false;
+    activationRef.current = null;
+  };
+  useEffect(() => {
+    const hide = () => cancelRound();
+    window.addEventListener("pagehide", hide);
+    return () => { window.removeEventListener("pagehide", hide); cancelRound(); };
+  }, []);
+
+  const activatePractice = (prepared: PreparedRound, ticket: GrammarTicket): Promise<void> => {
+    if (activationRef.current) return activationRef.current;
+    const pending = (async () => {
+      setPhase("loading");
+      try {
+        const data = await grammarRequest<{ session_id: string }>(`${API_BASE}/api/grammar/start`, {
+          init_data: WebApp.initData || "", session_id: prepared.session_id,
+        }, { signal: ticket.signal, retry: true });
+        if (!roundRef.current.owns(ticket)) return;
+        activeSessionRef.current = data.session_id;
+        setSessionId(data.session_id);
+        sessionStartRef.current = Date.now();
+        setRetryPractice(false);
+        setPhase("exercise");
+      } catch (e) {
+        if (!roundRef.current.owns(ticket)) return;
+        if (e instanceof GrammarRequestError && e.status === 402) { setPaywall(true); setPhase("home"); return; }
+        const expired = e instanceof GrammarRequestError && e.status === 410;
+        if (expired) preparedRef.current = null;
+        setRetryPractice(!expired);
+        setError(e instanceof Error ? e.message : String(e));
+        setPhase("error");
+      }
+    })();
+    activationRef.current = pending;
+    void pending.finally(() => { if (activationRef.current === pending) activationRef.current = null; });
+    return pending;
+  };
 
   useEffect(() => {
     try { WebApp.ready(); } catch { /* ignore */ }
@@ -216,11 +272,13 @@ export function GrammarScreen({ onExit }: Props) {
         body: JSON.stringify({
           init_data: WebApp.initData || "",
           session_id: sessionId,
+          duration_sec: duration(),
         }),
       }).catch(() => {
         /* heartbeat best-effort */
       });
     };
+    tick();
     const id = window.setInterval(tick, HEARTBEAT_MS);
     return () => window.clearInterval(id);
   }, [phase, sessionId]);
@@ -243,36 +301,34 @@ export function GrammarScreen({ onExit }: Props) {
   };
 
   // ── Learn: фоновая генерация упражнений (пока юзер читает теорию) ──────
-  const fetchLessonExercises = async (topicKey: string) => {
+  const fetchLessonExercises = async (topicKey: string, ticket: GrammarTicket) => {
     setExState("pending");
     try {
-      const res = await fetch(`${API_BASE}/api/grammar/lesson/exercises`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          init_data: WebApp.initData || "",
-          topic_key: topicKey,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
-      }
-      const data: { exercises: Exercise[]; session_id: string } = await res.json();
-      if (!Array.isArray(data.exercises) || data.exercises.length === 0) {
-        throw new Error("Сервер не вернул упражнений");
-      }
+      const data = await grammarRequest<PreparedRound>(`${API_BASE}/api/grammar/lesson/exercises`, {
+        init_data: WebApp.initData || "", topic_key: topicKey,
+      }, { signal: ticket.signal });
+      if (!roundRef.current.owns(ticket)) return;
+      if (!Array.isArray(data.exercises) || data.exercises.length === 0) throw new Error("Сервер не вернул упражнений");
+      preparedRef.current = data;
       setExercises(data.exercises);
-      setSessionId(data.session_id);
       setExState("ready");
-    } catch (e: unknown) {
+      if (practiceRequestedRef.current) await activatePractice(data, ticket);
+    } catch (e) {
+      if (!roundRef.current.owns(ticket)) return;
       setError(e instanceof Error ? e.message : String(e));
       setExState("error");
+      if (practiceRequestedRef.current) setPhase("error");
     }
   };
 
   // ── Learn: открыть урок — теория приходит мгновенно (рукописная) ──────
   const openLesson = async (topicKey: string) => {
+    cancelRound();
+    const ticket = roundRef.current.begin();
+    sessionStartRef.current = 0;
+    finishRef.current = null;
+    setRetryPractice(false);
+    setSaveState("idle");
     setError("");
     setExercises([]);
     setAnswers([]);
@@ -283,9 +339,6 @@ export function GrammarScreen({ onExit }: Props) {
     setPhase("loading");
     setTrack("learn");
 
-    const controller = new AbortController();
-    abortRef.current = controller;
-
     try {
       const res = await fetch(`${API_BASE}/api/grammar/lesson`, {
         method: "POST",
@@ -294,8 +347,9 @@ export function GrammarScreen({ onExit }: Props) {
           init_data: WebApp.initData || "",
           topic_key: topicKey,
         }),
-        signal: controller.signal,
+        signal: ticket.signal,
       });
+      if (!roundRef.current.owns(ticket)) return;
       if (res.status === 402) {
         setPaywall(true);
         setPhase("topics");
@@ -307,6 +361,7 @@ export function GrammarScreen({ onExit }: Props) {
       }
       const data: { topic_key: string; title_ru: string; theory: string } =
         await res.json();
+      if (!roundRef.current.owns(ticket)) return;
       setLesson({
         topic_key: data.topic_key,
         title_ru: data.title_ru,
@@ -315,106 +370,50 @@ export function GrammarScreen({ onExit }: Props) {
       setSettings((s) => ({ ...s, lastTopicKey: data.topic_key }));
       setPhase("theory");
       // Упражнения готовятся в фоне, пока юзер читает теорию.
-      void fetchLessonExercises(topicKey);
+      void fetchLessonExercises(topicKey, ticket);
     } catch (e: unknown) {
-      if (controller.signal.aborted) {
-        setPhase("topics");
-        return;
-      }
+      if (!roundRef.current.owns(ticket)) return;
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
-    } finally {
-      if (abortRef.current === controller) abortRef.current = null;
     }
   };
 
   const startLessonPractice = () => {
-    if (exState === "ready") {
-      sessionStartRef.current = Date.now();
-      setPhase("exercise");
-    } else if (exState === "error") {
-      setPhase("error");
-    } else {
-      // Ещё генерятся — показываем короткое ожидание; useEffect ниже
-      // переключит на exercise, как только будут готовы.
-      setPhase("loading");
-    }
+    practiceRequestedRef.current = true;
+    const ticket = roundRef.current.current();
+    if (preparedRef.current && ticket) void activatePractice(preparedRef.current, ticket);
+    else if (exState === "error") setPhase("error");
+    else setPhase("loading");
   };
-
-  // Автопереход из ожидания, когда фоновая генерация завершилась.
-  useEffect(() => {
-    if (phase !== "loading" || track !== "learn") return;
-    if (exState === "ready") {
-      sessionStartRef.current = Date.now();
-      setPhase("exercise");
-    } else if (exState === "error") {
-      setPhase("error");
-    }
-  }, [phase, track, exState]);
 
   // ── Test: «Проверить себя» — всегда по реальным ошибкам, без настроек ──
   const startWeakPoints = async () => {
-    setError("");
-    setExercises([]);
-    setAnswers([]);
-    setCurrentIndex(0);
-    setSessionId("");
-    setLesson(null);
-    setLessonResult(null);
-    setPhase("loading");
-    setTrack("test");
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-
+    cancelRound();
+    const ticket = roundRef.current.begin();
+    sessionStartRef.current = 0;
+    finishRef.current = null;
+    setRetryPractice(false);
+    setSaveState("idle");
+    setError(""); setExercises([]); setAnswers([]); setCurrentIndex(0); setSessionId("");
+    setLesson(null); setLessonResult(null); setPhase("loading"); setTrack("test");
     try {
-      const res = await fetch(`${API_BASE}/api/grammar/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          init_data: WebApp.initData || "",
-          mode: "weak_points",
-          // Уровень берём из настроек speaking-тьютора — отдельных
-          // настроек у теста больше нет.
-          level: loadTutorSettings().level,
-        }),
-        signal: controller.signal,
-      });
-      if (res.status === 409) {
-        // Нет накопленных ошибок — показываем заглушку.
-        setPhase("no_mistakes");
-        return;
-      }
-      if (res.status === 402) {
-        setPaywall(true);
-        setPhase("home");
-        return;
-      }
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
-      }
-      const data: { session_id: string; exercises: Exercise[] } = await res.json();
-      if (!Array.isArray(data.exercises) || data.exercises.length === 0) {
-        throw new Error("Сервер не вернул упражнений");
-      }
-      setSessionId(data.session_id);
+      const data = await grammarRequest<PreparedRound>(`${API_BASE}/api/grammar/generate`, {
+        init_data: WebApp.initData || "", mode: "weak_points", level: loadTutorSettings().level,
+      }, { signal: ticket.signal });
+      if (!roundRef.current.owns(ticket)) return;
+      if (!Array.isArray(data.exercises) || data.exercises.length === 0) throw new Error("Сервер не вернул упражнений");
+      preparedRef.current = data;
       setExercises(data.exercises);
-      sessionStartRef.current = Date.now();
-      setPhase("exercise");
-    } catch (e: unknown) {
-      if (controller.signal.aborted) {
-        setPhase("home");
-        return;
-      }
-      setError(e instanceof Error ? e.message : String(e));
-      setPhase("error");
-    } finally {
-      if (abortRef.current === controller) abortRef.current = null;
+      await activatePractice(data, ticket);
+    } catch (e) {
+      if (!roundRef.current.owns(ticket)) return;
+      if (e instanceof GrammarRequestError && e.status === 409) { setPhase("no_mistakes"); return; }
+      if (e instanceof GrammarRequestError && e.status === 402) { setPaywall(true); setPhase("home"); return; }
+      setError(e instanceof Error ? e.message : String(e)); setPhase("error");
     }
   };
 
-  const cancelGeneration = () => abortRef.current?.abort();
+  const cancelGeneration = () => { cancelRound(); setPhase(track === "learn" ? "topics" : "home"); };
 
   const handleAnswer = (userAnswer: string, isCorrect: boolean) => {
     const ex = exercises[currentIndex];
@@ -440,63 +439,32 @@ export function GrammarScreen({ onExit }: Props) {
     }
   };
 
-  // ── Test: финиш ───────────────────────────────────────────────────────
-  const finishSession = async () => {
-    const durationSec = Math.max(
-      0,
-      Math.round((Date.now() - sessionStartRef.current) / 1000),
-    );
-    setPhase("summary");
+  const saveResult = async (path: string, body: unknown) => {
+    const ticket = roundRef.current.current();
+    const submission = finishRef.current || { path, body };
+    finishRef.current = submission;
+    setPhase("summary"); setSaveState("saving"); setSaveError("");
     try {
-      await fetch(`${API_BASE}/api/grammar/finish`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          init_data: WebApp.initData || "",
-          session_id: sessionId,
-          results: answers.map((a) => ({
-            exercise_id: a.exercise_id,
-            user_answer: a.user_answer,
-            is_correct: a.is_correct,
-            category: a.category,
-          })),
-          duration_sec: durationSec,
-        }),
-      });
-    } catch {
-      /* fail тихо */
+      const result = await grammarRequest<LessonResult>(`${API_BASE}${submission.path}`, submission.body, { retry: true, keepalive: true });
+      if (ticket && !roundRef.current.owns(ticket)) return;
+      activeSessionRef.current = "";
+      setSaveState("saved");
+      if (submission.path.includes("lesson")) setLessonResult(result);
+    } catch (e) {
+      if (ticket && !roundRef.current.owns(ticket)) return;
+      setSaveState("error");
+      setSaveError(e instanceof Error ? e.message : String(e));
     }
   };
 
-  // ── Learn: финиш урока ────────────────────────────────────────────────
-  const finishLesson = async () => {
-    const durationSec = Math.max(
-      0,
-      Math.round((Date.now() - sessionStartRef.current) / 1000),
-    );
-    const correctCount = answers.filter((a) => a.is_correct).length;
-    setPhase("summary");
-    try {
-      const res = await fetch(`${API_BASE}/api/grammar/lesson/finish`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          init_data: WebApp.initData || "",
-          topic_key: lesson?.topic_key || "",
-          session_id: sessionId,
-          correct: correctCount,
-          total: exercises.length,
-          duration_sec: durationSec,
-        }),
-      });
-      if (res.ok) {
-        const data: LessonResult = await res.json();
-        setLessonResult(data);
-      }
-    } catch {
-      /* fail тихо — summary покажет локальный счёт */
-    }
-  };
+  const finishSession = () => saveResult("/api/grammar/finish", {
+    init_data: WebApp.initData || "", session_id: sessionId, duration_sec: duration(),
+    results: answers.map(a => ({ exercise_id: a.exercise_id, user_answer: a.user_answer, is_correct: a.is_correct, category: a.category })),
+  });
+  const finishLesson = () => saveResult("/api/grammar/lesson/finish", {
+    init_data: WebApp.initData || "", session_id: sessionId, topic_key: lesson?.topic_key || "",
+    correct: answers.filter(a => a.is_correct).length, total: exercises.length, duration_sec: duration(),
+  });
 
   // ── Сводка ───────────────────────────────────────────────────────────
   const total = answers.length;
@@ -510,6 +478,11 @@ export function GrammarScreen({ onExit }: Props) {
   }
 
   const resetRound = () => {
+    cancelRound();
+    sessionStartRef.current = 0;
+    finishRef.current = null;
+    setRetryPractice(false);
+    setSaveState("idle");
     setExercises([]);
     setAnswers([]);
     setCurrentIndex(0);
@@ -711,7 +684,7 @@ export function GrammarScreen({ onExit }: Props) {
             <p className="lst-loading__title">
               {track === "learn" ? "Готовлю урок…" : "Собираю твои ошибки…"}
             </p>
-            <p className="lst-loading__hint">Это займёт ~10 секунд.</p>
+            <p className="lst-loading__hint">Готовлю задания. Иногда это занимает несколько минут.</p>
             <button type="button" className="lst-secondary-btn" onClick={cancelGeneration}>
               Отмена
             </button>
@@ -734,6 +707,11 @@ export function GrammarScreen({ onExit }: Props) {
         {/* ── SUMMARY ── */}
         {phase === "summary" && (
           <div className="grm-summary">
+            {saveState === "saving" && <p role="status">Сохраняю результат…</p>}
+            {saveState === "error" && <div role="alert">
+              <p>Результат пока не сохранён. {saveError}</p>
+              <button type="button" className="grm-primary-btn" onClick={() => { if (finishRef.current) void saveResult(finishRef.current.path, finishRef.current.body); }}>Сохранить ещё раз</button>
+            </div>}
             {track === "learn" && (
               <div
                 className="grm-lesson-badge"
@@ -829,7 +807,7 @@ export function GrammarScreen({ onExit }: Props) {
         {/* ── ERROR ── */}
         {phase === "error" && (
           <div className="lst-error">
-            <p className="lst-error__title">Не получилось сгенерировать</p>
+            <p className="lst-error__title">{retryPractice ? "Не получилось начать практику" : "Не получилось сгенерировать"}</p>
             <p className="lst-error__hint">{error || "Попробуй ещё раз через минуту."}</p>
             <div className="lst-error__actions">
               <button
@@ -847,7 +825,9 @@ export function GrammarScreen({ onExit }: Props) {
                 type="button"
                 className="grm-primary-btn"
                 onClick={() => {
-                  if (track === "learn" && settings.lastTopicKey) {
+                  if (retryPractice && preparedRef.current && roundRef.current.current()) {
+                    void activatePractice(preparedRef.current, roundRef.current.current()!);
+                  } else if (track === "learn" && settings.lastTopicKey) {
                     void openLesson(settings.lastTopicKey);
                   } else {
                     void startWeakPoints();

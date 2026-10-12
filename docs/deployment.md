@@ -148,6 +148,11 @@ curl https://api-english.krichigindocs.ru/health
 затем пересобрать backend и miniapp. Полные команды и проверки — в
 [инструкции MyTracker](mytracker-deploy.md).
 
+Для исправления грамматических упражнений применить миграцию 0042,
+увеличить таймаут `/api/grammar/` в системном Nginx до 300 секунд и
+пересобрать backend, miniapp и admin. Команды — в
+[инструкции грамматики](grammar-deploy.md).
+
 ---
 
 ## Управление сервисами

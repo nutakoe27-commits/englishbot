@@ -117,6 +117,17 @@ export interface OnlineResponse {
   sessions: OnlineSession[];
 }
 
+export interface UserSession {
+  id: number;
+  started_at: string | null;
+  ended_at: string | null;
+  used_seconds: number;
+  mode: string;
+  level: string | null;
+  role: string | null;
+  status?: "active" | "completed" | "abandoned";
+}
+
 export interface UserBrief {
   id: number;
   tg_id: number | null;
