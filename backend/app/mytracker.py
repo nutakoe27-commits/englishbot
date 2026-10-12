@@ -1,75 +1,40 @@
+"""Android funnel events linked to the native SDK instanceId and queued in SQL.
+
+The S2S wire format follows github.com/tracker-my-com/s2s-api. Credentials are
+read only when sending, never saved in payloads. A 2xx response means accepted
+by MyTracker, not yet visible in its reports or delivered to VK Ads.
 """
-mytracker.py — серверные события Android-приложения в VK MyTracker (S2S API).
-
-Зачем. Кампания VK на установку видит установку через SDK MyTracker внутри
-APK. Регистрация и оплата происходят в веб-части приложения (TWA), и SDK о
-них не знает: моста между страницей и нативным кодом у TWA нет. Поэтому:
-
-  1. Нативная обёртка при запуске добавляет к стартовому адресу
-     ?mt_iid=<instanceId> (scripts/twa-mytracker.sh).
-  2. Сайт запоминает его и после входа отдаёт сюда:
-     POST /api/analytics/mt-install {instance_id}.
-  3. Бэкенд хранит связку аккаунт ↔ установка (mytracker_installs) и шлёт в
-     MyTracker события с этим instanceId:
-       - registration — аккаунт создан незадолго до связки (вошёл впервые
-         прямо в приложении);
-       - login        — уже существующий аккаунт вошёл в приложении;
-       - customRevenue + customEvent «subscription_paid» — оплата подписки.
-
-Формат запросов — по официальному клиенту github.com/tracker-my-com/s2s-api:
-POST https://tracker-s2s.my.com/v1/<method>/?idApp=<id>,
-заголовок Authorization: <S2S-ключ>, JSON-тело с instanceId, customUserId,
-eventTimestamp и полями метода. Параметры customEvent — только строки.
-
-Всё fire-and-forget: ошибки MyTracker не должны мешать входу и оплате.
-Без MYTRACKER_APP_ID / MYTRACKER_S2S_TOKEN модуль молчит.
-"""
-
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
+from datetime import datetime, timedelta, timezone
 import logging
 import re
-from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.dialects.mysql import insert
 
+from .admin import require_admin_token
 from .config import settings
 from .db import db_session
+from .db.models import MytrackerEvent, MytrackerInstall, User
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
-
 S2S_ENDPOINT = "https://tracker-s2s.my.com/v1"
-
-# Аккаунт, созданный не раньше чем за это время до связки, считаем
-# зарегистрированным в приложении (регистрация → вход → связка идут подряд).
 REGISTRATION_WINDOW = timedelta(hours=2)
-
-# instanceId у MyTracker — hex/UUID-подобная строка. Берём с запасом, но не
-# пускаем в БД и в запросы что попало из адресной строки.
-_IID_RE = re.compile(r"^[A-Za-z0-9\-_.]{8,64}$")
-
-
-_warned = False
+_IID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+current_instance_id: ContextVar[Optional[str]] = ContextVar("mytracker_instance_id", default=None)
 
 
 def _app_id() -> Optional[int]:
-    """MYTRACKER_APP_ID → int. Кривое значение — None и одно предупреждение."""
-    global _warned
     raw = str(settings.MYTRACKER_APP_ID or "").strip().strip('"').strip("'")
-    if not raw:
-        return None
-    if raw.isdigit():
-        return int(raw)
-    if not _warned:
-        _warned = True
-        logger.warning("[mytracker] MYTRACKER_APP_ID=%r не число — MyTracker выключен", raw[:40])
-    return None
+    return int(raw) if raw.isascii() and raw.isdigit() and int(raw) > 0 else None
 
 
 def _token() -> str:
@@ -80,172 +45,172 @@ def enabled() -> bool:
     return bool(_app_id() and _token())
 
 
-def valid_instance_id(value: str) -> bool:
-    return bool(_IID_RE.match(value or ""))
+def valid_instance_id(value: Optional[str]) -> bool:
+    # The native SDK supplies the UUID documented in the official S2S client.
+    return bool(_IID_RE.fullmatch(value or ""))
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    # The migrations use DATETIME(0); do not let MySQL round a due event forward.
+    return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
 
 
-def _ts(dt: Optional[datetime]) -> int:
-    """Unix timestamp; naive datetime в БД хранится в UTC."""
-    if dt is None:
-        return int(_utcnow().replace(tzinfo=timezone.utc).timestamp())
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return int(dt.timestamp())
+def _ts(at: Optional[datetime] = None) -> int:
+    at = at or _utcnow()
+    return int(at.replace(tzinfo=timezone.utc).timestamp() if at.tzinfo is None else at.timestamp())
+
+
+def _base(user_id: int, instance_id: str, at: Optional[datetime] = None) -> dict:
+    return {"customUserId": str(user_id), "instanceId": instance_id, "eventTimestamp": _ts(at)}
 
 
 async def _post(method: str, body: dict) -> bool:
-    """Один запрос к S2S API. True — MyTracker ответил 2xx."""
     if not enabled():
         return False
-    url = f"{S2S_ENDPOINT}/{method}/"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=5.0)) as client:
-            r = await client.post(
-                url,
-                params={"idApp": _app_id()},
-                headers={"Authorization": _token()},
-                json=body,
+            response = await client.post(
+                f"{S2S_ENDPOINT}/{method}", params={"idApp": _app_id()},
+                headers={"Authorization": _token()}, json=body,
             )
-        if 200 <= r.status_code < 300:
+        if 200 <= response.status_code < 300:
+            logger.info("[mytracker] accepted method=%s", method)
             return True
-        logger.warning("[mytracker] %s → HTTP %s: %s", method, r.status_code, r.text[:300])
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[mytracker] %s failed: %r", method, e)
+        # Do not log response bodies: remote errors may echo identifiers/secrets.
+        logger.warning("[mytracker] method=%s HTTP=%s", method, response.status_code)
+    except httpx.HTTPError as exc:
+        logger.warning("[mytracker] method=%s transport=%s", method, type(exc).__name__)
     return False
 
 
-def _fire(coro) -> None:
-    try:
-        asyncio.create_task(coro)
-    except RuntimeError:
-        logger.warning("[mytracker] нет event loop — событие пропущено")
-
-
-# ─── События ─────────────────────────────────────────────────────────────────
-
-
-async def send_user_event(kind: str, *, user_id: int, instance_id: str,
-                          at: Optional[datetime] = None) -> bool:
-    """registration | login."""
-    return await _post(kind, {
-        "customUserId": str(user_id),
-        "instanceId": instance_id,
-        "eventTimestamp": _ts(at),
-    })
-
-
-async def send_payment(*, user_id: int, instance_id: str, payment_id: int,
-                       amount_rub: float, plan: str, days: int,
-                       at: Optional[datetime] = None) -> None:
-    """Выручка (customRevenue) + одноимённое веб-цели событие subscription_paid."""
-    base = {
-        "customUserId": str(user_id),
-        "instanceId": instance_id,
-        "eventTimestamp": _ts(at),
-    }
-    await _post("customRevenue", {
-        **base,
-        "idTransaction": f"yk-{payment_id}",
-        "currency": "RUB",
-        "total": float(amount_rub),
-    })
-    await _post("customEvent", {
-        **base,
-        "customEventName": "subscription_paid",
-        "customEventParams": {
-            "plan": str(plan),
-            "amount_rub": str(int(amount_rub)) if float(amount_rub).is_integer() else str(amount_rub),
-            "days": str(int(days)),
-            "platform": "app",
-        },
-    })
-
-
-# ─── Хранилище связок ────────────────────────────────────────────────────────
-
-
-async def _link(user_id: int, instance_id: str) -> bool:
-    """Сохранить связку. True — связка новая (первый вход с этой установки)."""
-    from .db.models import MytrackerInstall
+async def enqueue(session, *, user_id: int, key: str, method: str, payload: dict) -> None:
     now = _utcnow()
-    async with db_session() as s:
-        row = await s.get(MytrackerInstall, (user_id, instance_id))
-        if row is not None:
-            row.last_seen_at = now
-            return False
-        s.add(MytrackerInstall(user_id=user_id, instance_id=instance_id,
-                               created_at=now, last_seen_at=now))
-        return True
+    statement = insert(MytrackerEvent).values(
+        user_id=user_id, dedup_key=key, method=method, payload=payload,
+        attempts=0, created_at=now, next_attempt_at=now,
+    )
+    # Duplicate business callbacks must never reset a successful delivery.
+    await session.execute(statement.on_duplicate_key_update(dedup_key=statement.inserted.dedup_key))
 
 
-async def latest_instance_id(user_id: int) -> Optional[str]:
-    """Установка, с которой аккаунт заходил последним."""
-    from sqlalchemy import select
-    from .db.models import MytrackerInstall
-    async with db_session() as s:
-        res = await s.execute(
-            select(MytrackerInstall.instance_id)
-            .where(MytrackerInstall.user_id == user_id)
-            .order_by(MytrackerInstall.last_seen_at.desc())
-            .limit(1)
-        )
-        return res.scalar_one_or_none()
+async def link_in_session(session, *, user_id: int, instance_id: str) -> bool:
+    """Link and enqueue the first account event in the same transaction.
+
+    Existing links from migration 0038 have no delivery history. Do not invent
+    historical registrations or replay events which may already have arrived.
+    """
+    row = await session.get(MytrackerInstall, (user_id, instance_id))
+    is_new = row is None
+    now = _utcnow()
+    statement = insert(MytrackerInstall).values(
+        user_id=user_id, instance_id=instance_id, created_at=now, last_seen_at=now,
+    )
+    await session.execute(statement.on_duplicate_key_update(last_seen_at=now))
+    if is_new:
+        user = await session.get(User, user_id)
+        if user is not None:
+            created_at = user.created_at
+            if created_at and created_at.tzinfo:
+                created_at = created_at.astimezone(timezone.utc).replace(tzinfo=None)
+            # Existing users.created_at writes may round up to the next second.
+            fresh = created_at is not None and -timedelta(seconds=1) <= now - created_at <= REGISTRATION_WINDOW
+            kind = "registration" if fresh else "login"
+            await enqueue(session, user_id=user_id, key=f"install:{user_id}:{instance_id}",
+                          method=kind, payload=_base(user_id, instance_id, created_at if fresh else now))
+    return is_new
 
 
-def track_payment_async(*, user_id: int, payment_id: int, amount_rub: float,
-                        plan: str, days: int) -> None:
-    """Вызывается из вебхука ЮKassa после зачисления. Шлёт оплату, только если
-    аккаунт хоть раз заходил из Android-приложения."""
-    if not enabled():
+async def enqueue_session_started(session, *, user_id: int, session_id: int, mode: str,
+                                  at: datetime, instance_id: Optional[str]) -> None:
+    if not valid_instance_id(instance_id):
         return
+    # Link here too: login's asynchronous HTTP link can race the first lesson.
+    await link_in_session(session, user_id=user_id, instance_id=instance_id)
+    await enqueue(session, user_id=user_id, key=f"session:{session_id}", method="customEvent",
+                  payload={**_base(user_id, instance_id, at), "customEventName": "session_started",
+                           "customEventParams": {"mode": str(mode), "session_id": str(session_id), "platform": "app"}})
 
-    async def _run() -> None:
+
+async def enqueue_payment(session, payment) -> None:
+    """Only called for a verified succeeded payment, in the credit transaction."""
+    iid = await session.scalar(select(MytrackerInstall.instance_id)
+                               .where(MytrackerInstall.user_id == payment.user_id)
+                               .order_by(MytrackerInstall.last_seen_at.desc(), MytrackerInstall.instance_id)
+                               .limit(1))
+    if not iid or not valid_instance_id(iid):
+        return
+    base = _base(int(payment.user_id), iid, payment.updated_at)
+    amount = float(payment.amount_rub or 0)
+    await enqueue(session, user_id=int(payment.user_id), key=f"payment:{payment.id}:revenue", method="customRevenue",
+                  payload={**base, "idTransaction": f"yk-{payment.id}", "currency": "RUB", "total": amount})
+    await enqueue(session, user_id=int(payment.user_id), key=f"payment:{payment.id}:event", method="customEvent",
+                  payload={**base, "customEventName": "subscription_paid", "customEventParams": {
+                      "plan": str(payment.plan), "amount_rub": str(int(amount)) if amount.is_integer() else str(amount),
+                      "days": str(int(payment.days_granted or 0)), "payment_id": str(payment.id), "platform": "app"}})
+
+
+async def deliver_pending(limit: int = 25) -> int:
+    """Lock one row at a time; successful sub-events are never replayed locally.
+
+    Like any HTTP outbox, ambiguous network timeouts can cause a remote replay.
+    customRevenue carries the stable transaction ID required by MyTracker.
+    """
+    if not enabled():
+        return 0
+    processed = 0
+    for _ in range(limit):
+        async with db_session() as session:
+            row = await session.scalar(select(MytrackerEvent)
+                                       .where(MytrackerEvent.sent_at.is_(None), MytrackerEvent.next_attempt_at <= _utcnow())
+                                       .order_by(MytrackerEvent.id).limit(1).with_for_update())
+            if row is None:
+                break
+            row.attempts += 1
+            if await _post(row.method, row.payload):
+                row.sent_at = _utcnow()
+            else:
+                delay = min(3600, 15 * 2 ** min(row.attempts, 8))
+                row.next_attempt_at = _utcnow() + timedelta(seconds=delay)
+            processed += 1
+    return processed
+
+
+async def delivery_loop() -> None:
+    logger.info("[mytracker] S2S enabled=%s app_id_configured=%s", enabled(), bool(_app_id()))
+    while True:
         try:
-            iid = await latest_instance_id(user_id)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[mytracker] lookup instance failed: %r", e)
-            return
-        if not iid:
-            return
-        await send_payment(user_id=user_id, instance_id=iid, payment_id=payment_id,
-                           amount_rub=amount_rub, plan=plan, days=days)
-
-    _fire(_run())
-
-
-# ─── API для веб-части ───────────────────────────────────────────────────────
+            await deliver_pending()
+        except Exception as exc:
+            logger.warning("[mytracker] delivery queue failed=%s; check migration 0041", type(exc).__name__)
+        await asyncio.sleep(5)
 
 
 class _InstallIn(BaseModel):
-    instance_id: str = Field(..., min_length=8, max_length=64)
+    instance_id: str = Field(..., min_length=36, max_length=36)
 
 
 @router.post("/mt-install")
 async def mt_install(body: _InstallIn, authorization: Optional[str] = Header(None)) -> dict:
-    """Привязать установку Android-приложения к вошедшему аккаунту."""
     iid = body.instance_id.strip()
     if not valid_instance_id(iid):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "bad instance_id")
     if not settings.DATABASE_URL:
-        return {"ok": True, "linked": False}
-
-    from . import auth as auth_lib
+        return {"ok": True, "linked": False, "tracking_enabled": enabled()}
+    from .auth import resolve_user
     from .db.repo import Repo
-    async with db_session() as s:
-        user = await auth_lib.resolve_user(Repo(s), authorization=authorization)
-        user_id = int(user.id)
-        created_at = user.created_at
+    async with db_session() as session:
+        user = await resolve_user(Repo(session), authorization=authorization)
+        is_new = await link_in_session(session, user_id=int(user.id), instance_id=iid)
+    logger.info("[mytracker] install linked new=%s S2S_enabled=%s", is_new, enabled())
+    return {"ok": True, "linked": is_new, "tracking_enabled": enabled()}
 
-    is_new = await _link(user_id, iid)
-    if is_new and enabled():
-        fresh = created_at is not None and (_utcnow() - created_at) <= REGISTRATION_WINDOW
-        kind = "registration" if fresh else "login"
-        _fire(send_user_event(kind, user_id=user_id, instance_id=iid, at=created_at if fresh else None))
-        logger.info("[mytracker] linked user_id=%s iid=%s… event=%s", user_id, iid[:8], kind)
-    elif is_new:
-        logger.info("[mytracker] linked user_id=%s iid=%s… (S2S выключен — событие не отправлено)", user_id, iid[:8])
-    return {"ok": True, "linked": is_new}
+
+@router.get("/mt-status", dependencies=[Depends(require_admin_token)])
+async def mt_status() -> dict:
+    async with db_session() as session:
+        pending = await session.scalar(select(func.count()).select_from(MytrackerEvent).where(MytrackerEvent.sent_at.is_(None)))
+        accepted = await session.scalar(select(func.count()).select_from(MytrackerEvent).where(MytrackerEvent.sent_at.is_not(None)))
+        retrying = await session.scalar(select(func.count()).select_from(MytrackerEvent).where(MytrackerEvent.sent_at.is_(None), MytrackerEvent.attempts > 0))
+        linked = await session.scalar(select(func.count()).select_from(MytrackerInstall))
+    return {"tracking_enabled": enabled(), "app_id": _app_id(), "linked_installs": linked,
+            "pending": pending, "accepted": accepted, "retrying": retrying}

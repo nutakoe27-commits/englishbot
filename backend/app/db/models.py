@@ -771,6 +771,22 @@ class MytrackerInstall(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class MytrackerEvent(Base):
+    """S2S outbox: a stable event key, payload and independent delivery state."""
+
+    __tablename__ = "mytracker_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    dedup_key: Mapped[str] = mapped_column(String(191), unique=True, nullable=False)
+    method: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class RecurringSubscription(Base):
     """Автопродление месячной подписки (миграция 0039, docs/recurring.md)."""
 

@@ -458,11 +458,6 @@ async def charge_one(sub_id: int) -> str:
                 await repo.credit_subscription_for_payment(int(local.id))
                 notes = await after_credit(repo, local, resp)
                 outcome = "succeeded"
-                if await repo.nudge_once(user_id=user_id, kind="recurring_mt", dedup_key=str(local.id)):
-                    notes.append({"_mytracker": dict(
-                        user_id=user_id, payment_id=int(local.id), amount_rub=float(amount),
-                        plan=sub_plan, days=int(sub.period_days),
-                    )})
             elif st == "canceled":
                 if local.status != "succeeded":
                     await repo.mark_payment_status(int(local.id), "canceled")
@@ -475,11 +470,7 @@ async def charge_one(sub_id: int) -> str:
                 outcome = "pending"
         await s.commit()
 
-    for n in notes:
-        if "_mytracker" in n:
-            from . import mytracker
-            mytracker.track_payment_async(**n["_mytracker"])
-    dispatch([n for n in notes if "_mytracker" not in n])
+    dispatch(notes)
     logger.info("[recurring] sub=%s charge outcome=%s", sub_id, outcome)
     return outcome
 

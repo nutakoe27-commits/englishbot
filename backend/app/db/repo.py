@@ -7,6 +7,7 @@ db_session() и не переживает её. Никакой кеширова�
 from __future__ import annotations
 
 from datetime import datetime, date, time, timedelta, timezone
+import logging
 from typing import Optional, Sequence
 
 from sqlalchemy import and_, case, delete, func, or_, select, update
@@ -1284,6 +1285,14 @@ class Repo:
                 payment_id=payment.id,
                 discount_percent=int(payment.discount_percent or 0),
             )
+        # Analytics shares the payment's commit; delivery happens separately.
+        # A missing migration must not prevent the buyer receiving access.
+        from ..mytracker import enqueue_payment
+        try:
+            async with self.s.begin_nested():
+                await enqueue_payment(self.s, payment)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("[mytracker] payment enqueue failed=%s; check migration 0041", type(exc).__name__)
         return True
 
     # ─── Промокоды ──────────────────────────────────────────────────────
@@ -1962,6 +1971,7 @@ class Repo:
         mode: str,
         level: Optional[str],
         role: Optional[str],
+        mytracker_instance_id: Optional[str] = None,
     ) -> SessionRow:
         row = SessionRow(
             user_id=user_id,
@@ -1972,6 +1982,15 @@ class Repo:
         )
         self.s.add(row)
         await self.s.flush()  # чтобы row.id появился
+        from ..mytracker import current_instance_id, enqueue_session_started
+        try:
+            async with self.s.begin_nested():
+                await enqueue_session_started(
+                    self.s, user_id=user_id, session_id=int(row.id), mode=mode,
+                    at=row.started_at, instance_id=mytracker_instance_id or current_instance_id.get(),
+                )
+        except Exception as exc:
+            logging.getLogger(__name__).warning("[mytracker] session enqueue failed=%s; check migration 0041", type(exc).__name__)
         return row
 
     async def close_session(self, *, session_id: int, used_seconds: int) -> None:

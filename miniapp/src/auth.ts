@@ -12,7 +12,7 @@
  */
 
 import { mtSetUser } from "./metrika";
-import { linkInstall } from "./mtInstall";
+import { getInstallId, linkInstall } from "./mtInstall";
 
 export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
@@ -71,11 +71,14 @@ export function installFetchAuth(): void {
           ? input.toString()
           : (input as Request).url;
       const token = getToken();
-      if (token && url && url.startsWith(API_BASE)) {
-        const headers = new Headers(init?.headers || {});
-        if (!headers.has("Authorization")) {
+      if (url && new URL(url, window.location.href).origin === new URL(API_BASE, window.location.href).origin) {
+        const originalHeaders = input instanceof Request ? input.headers : undefined;
+        const headers = new Headers(init?.headers ?? originalHeaders);
+        if (token && !headers.has("Authorization")) {
           headers.set("Authorization", `Bearer ${token}`);
         }
+        const iid = getInstallId();
+        if (iid) headers.set("X-MyTracker-Instance-ID", iid);
         init = { ...(init || {}), headers };
       }
     } catch {

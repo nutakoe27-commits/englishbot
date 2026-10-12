@@ -24,6 +24,15 @@ jobs:
               echo "ERROR: /var/www/englishbot/.env not found — create it manually on first deploy"
               exit 1
             fi
+            # Use the existing backend image and its DATABASE_URL before replacing
+            # the running services. A failed migration stops this deployment.
+            docker compose run --rm -T --no-deps \
+              -v "$PWD/db/migrations:/migrations:ro" \
+              -v "$PWD/scripts/apply_mytracker_migrations.py:/tmp/apply_mytracker_migrations.py:ro" \
+              backend python /tmp/apply_mytracker_migrations.py \
+                --directory /migrations \
+                --expected-database megotim4y2 \
+                --expected-user megotim4y2
             docker compose pull || true
             docker compose up -d --build
             docker image prune -f

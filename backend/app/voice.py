@@ -313,6 +313,7 @@ async def _run_chat_session(
                     mode="chat",
                     level=session_settings.level,
                     role=session_settings.role,
+                    mytracker_instance_id=websocket.query_params.get("mt_iid"),
                 )
                 chat_session_db_id = int(row.id)
         except Exception as exc:
@@ -964,6 +965,7 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                     mode="voice",
                     level=session_settings.level,
                     role=session_settings.role,
+                    mytracker_instance_id=websocket.query_params.get("mt_iid"),
                 )
                 session_db_id = int(row.id)
         except Exception as exc:

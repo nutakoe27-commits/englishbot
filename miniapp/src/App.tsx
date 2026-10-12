@@ -27,6 +27,7 @@ import { ProgressScreen } from "./ProgressScreen";
 import { ModalScreen } from "./ModalScreen";
 import { wordDiff, diffLooksMeaningful, type DiffOp } from "./wordDiff";
 import { wsTokenParam } from "./auth";
+import { getInstallId } from "./mtInstall";
 import {
   loadSettings,
   saveSettings,
@@ -642,6 +643,8 @@ export default function App({ onExit }: AppProps = {}) {
         const tp = wsTokenParam();
         if (tp) queryParts.push(tp);
       }
+      const mtIid = getInstallId();
+      if (mtIid) queryParts.push(`mt_iid=${encodeURIComponent(mtIid)}`);
       queryParts.push(settingsToQuery(settingsRef.current));
       const wsUrl = queryParts.length
         ? `${WS_URL}?${queryParts.join("&")}`

@@ -118,7 +118,7 @@ englishbot/
 │   └── app/ (main, reminders, internal_http, backend_client)
 ├── miniapp/                 # React Mini App (speaking + listening)
 ├── admin/                   # React админ-панель
-├── db/migrations/           # SQL-миграции (применяются вручную)
+├── db/migrations/           # SQL-миграции (кроме MyTracker — вручную)
 ├── docker/nginx/vps-site/   # конфиги системного Nginx (эталон)
 ├── v100/                    # серверные скрипты для GPU (Kokoro TTS)
 ├── docs/                    # подробная документация
@@ -148,7 +148,8 @@ Backend обращается к ним по `host.docker.internal:<порт>` (�
 ## База данных
 
 MySQL 8 на хосте VPS. Миграции — обычные SQL-файлы в `db/migrations/`,
-применяются **вручную** (CI их не накатывает), идемпотентны, версия пишется в
+применяются **вручную**, кроме миграций MyTracker 0038/0041 в автодеплое.
+Миграции идемпотентны, версия пишется в
 таблицу `schema_version`.
 
 ```bash
@@ -227,12 +228,15 @@ cd admin   && npm install && npm run dev
 
 **Последующие деплои — автоматически.** Пуш в `main` запускает
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): SSH на VPS →
-`git reset --hard origin/main` → `docker compose up -d --build` → prune.
+`git reset --hard origin/main` → миграции MyTracker 0038/0041 →
+`docker compose up -d --build` → prune.
 
-> ⚠️ CI **не** применяет миграции БД и не перекладывает Nginx-конфиги — это
-> делается вручную при изменениях схемы или роутинга.
+> CI применяет только миграции MyTracker 0038/0041 до обновления сервисов,
+> проверяя базу и пользователя `megotim4y2`. Остальные миграции БД и
+> Nginx-конфиги обновляются вручную.
 
 Подробно — в [`docs/deployment.md`](docs/deployment.md).
+Для событий MyTracker → VK Ads — в [`docs/mytracker-deploy.md`](docs/mytracker-deploy.md).
 
 ### GitHub Actions Secrets
 
