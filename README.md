@@ -48,7 +48,7 @@ AI-стек (LLM, распознавание и синтез речи) — **sel
 | GPU | NVIDIA V100, проброс на VPS через reverse SSH-туннель |
 | Прокси | системный Nginx на VPS + Let's Encrypt |
 | Оркестрация | Docker Compose |
-| CI/CD | GitHub Actions (SSH-деплой в `main`) |
+| Деплой | Ручной; workflow GitHub Actions сохранён |
 
 > Redis и контейнерный MySQL в `docker-compose.yml` намеренно закомментированы:
 > БД работает как сервис **на самом VPS**, а контейнеры ходят в неё через
@@ -118,7 +118,7 @@ englishbot/
 │   └── app/ (main, reminders, internal_http, backend_client)
 ├── miniapp/                 # React Mini App (speaking + listening)
 ├── admin/                   # React админ-панель
-├── db/migrations/           # SQL-миграции (кроме MyTracker — вручную)
+├── db/migrations/           # SQL-миграции (применяются вручную)
 ├── docker/nginx/vps-site/   # конфиги системного Nginx (эталон)
 ├── v100/                    # серверные скрипты для GPU (Kokoro TTS)
 ├── docs/                    # подробная документация
@@ -148,8 +148,7 @@ Backend обращается к ним по `host.docker.internal:<порт>` (�
 ## База данных
 
 MySQL 8 на хосте VPS. Миграции — обычные SQL-файлы в `db/migrations/`,
-применяются **вручную**, кроме миграций MyTracker 0038/0041 в автодеплое.
-Миграции идемпотентны, версия пишется в
+применяются **вручную**, идемпотентны, версия пишется в
 таблицу `schema_version`.
 
 ```bash
@@ -226,14 +225,13 @@ cd admin   && npm install && npm run dev
 4. Накатить миграции из `db/migrations/` (см. выше).
 5. `docker compose up -d --build`.
 
-**Последующие деплои — автоматически.** Пуш в `main` запускает
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): SSH на VPS →
-`git reset --hard origin/main` → миграции MyTracker 0038/0041 →
-`docker compose up -d --build` → prune.
+**Текущий production обновляется вручную; GitHub Actions отключён владельцем.**
+Пуш в `main` публикует код, после чего на VPS нужно получить изменения,
+применить необходимые SQL-миграции и пересобрать сервисы.
 
-> CI применяет только миграции MyTracker 0038/0041 до обновления сервисов,
-> проверяя базу и пользователя `megotim4y2`. Остальные миграции БД и
-> Nginx-конфиги обновляются вручную.
+В репозитории сохранён [workflow](.github/workflows/deploy.yml) для случая
+возобновления автодеплоя. Он не применяет SQL-миграции и не обновляет
+Nginx-конфиги.
 
 Подробно — в [`docs/deployment.md`](docs/deployment.md).
 Для событий MyTracker → VK Ads — в [`docs/mytracker-deploy.md`](docs/mytracker-deploy.md).
