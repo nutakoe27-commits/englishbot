@@ -13,6 +13,7 @@ import {
   type UserBrief,
   type UserDetail,
   type UserSession,
+  type LearningProgram,
   type PaymentItem,
   type PaymentsMonthChart,
   type PromoItem,
@@ -339,6 +340,7 @@ const MODE_META: Record<string, { label: string; emoji: string }> = {
   listening: { label: "Слушание", emoji: "🎧" },
   grammar: { label: "Грамматика", emoji: "📝" },
   srs: { label: "Слова", emoji: "📚" },
+  lesson: { label: "Полный урок", emoji: "📖" },
 };
 
 function modeMeta(mode: string): { label: string; emoji: string } {
@@ -1183,6 +1185,7 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
 
       {/* ── Рефералка ───────────────────── */}
       <UserReferralCard userId={id} />
+      <LearningProgramCard userId={id} />
 
       {/* ── Активность (стрик / режимы / словарь / медали) ── */}
       <div style={{ ...S.card, marginTop: 16 }}>
@@ -1219,7 +1222,7 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
           />
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-          {["voice", "chat", "listening", "grammar", "srs"].map((mode) => {
+          {["voice", "chat", "listening", "grammar", "srs", "lesson"].map((mode) => {
             const mins = (u.minutes_by_mode ?? {})[mode] ?? 0;
             const meta = modeMeta(mode);
             return (
@@ -1334,6 +1337,8 @@ function SessionsTab({ userId }: { userId: number }) {
                 {fmtSeconds(s.used_seconds)}
                 {s.status === "abandoned" ? (
                   <span style={{ ...S.muted, marginLeft: 6 }}>(прервана)</span>
+                ) : s.status === "paused" ? (
+                  <span style={{ ...S.muted, marginLeft: 6 }}>(приостановлена)</span>
                 ) : s.ended_at === null && (
                   <span style={{ ...S.muted, marginLeft: 6 }}>(в процессе)</span>
                 )}
@@ -1351,6 +1356,24 @@ function SessionsTab({ userId }: { userId: number }) {
       </table>
     </div>
   );
+}
+
+function LearningProgramCard({userId}: {userId: number}) {
+  const [data,setData]=useState<LearningProgram | null>(null), [error,setError]=useState("");
+  useEffect(() => {let alive=true; void api.learningProgram(userId).then(result => {if(alive) setData(result);})
+    .catch(e => {if(alive) setError(String(e));}); return () => {alive=false;};},[userId]);
+  if(error) return <div style={S.card}><h3 style={S.h3}>Учебная программа</h3><p style={S.muted}>Не удалось загрузить: {error}</p></div>;
+  if(!data?.enabled) return null;
+  const p=data.profile;
+  return <div style={S.card}><h3 style={S.h3}>Учебная программа</h3>
+    {!p ? <p style={S.muted}>Программа пока не создана.</p> : <>
+      <p><b>{p.level}</b> · {p.goal_label} · завершено {p.completed_count} уроков</p>
+      <p>{p.checkpoint_due ? "Ожидается проверка уровня" : `До проверки: ${p.until_checkpoint} уроков`}</p>
+      {data.next_lesson && <p>Следующий: {data.next_lesson.content.spec.ordinal}. {data.next_lesson.content.spec.title} · {data.next_lesson.status === "active" ? "в процессе" : data.next_lesson.status === "paused" ? "приостановлен" : "готов"} · этап {data.next_lesson.step_index+1}/6</p>}
+      <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{data.skills?.map(skill => <StatusPill key={skill.key} label={skill.label} value={skill.accuracy === null ? "пока не оценено" : `${skill.accuracy}% · ${skill.attempts} наблюдений`} tone="muted" />)}</div>
+      {!!data.history?.length && <><h4>История диагностик</h4>{data.history.map(item => <p key={item.id}>{fmtDate(item.date)} · после {item.after_count} уроков: {item.result.level_before} → {item.result.cefr}</p>)}</>}
+    </>}
+  </div>;
 }
 
 function SendMessageCard({ user }: { user: UserDetail }) {
@@ -3290,6 +3313,7 @@ function LevelTestsPage() {
   const o = data.overview;
   const appTests = o.tests_by_source["app"] || 0;
   const landingTests = o.tests_by_source["landing"] || 0;
+  const courseTests = o.tests_by_source["course"] || 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -3362,7 +3386,8 @@ function LevelTestsPage() {
         <h3 style={S.h3}>📚 Прохождения в истории за {o.period_days} дн.</h3>
         <div style={{ fontSize: 13, color: colors.textMuted, marginBottom: 12 }}>
           Записанные в <code>level_tests</code>, то есть привязанные к юзеру:
-          из приложения <b>{appTests}</b>, с лендинга <b>{landingTests}</b>.
+          из приложения <b>{appTests}</b>, с лендинга <b>{landingTests}</b>,
+          из учебной программы <b>{courseTests}</b>.
         </div>
         <LevelBars data={o.test_levels} />
       </div>

@@ -2271,7 +2271,7 @@ class Repo:
         for mode, cnt, secs in res.all():
             secs = int(secs or 0)
             cnt = int(cnt or 0)
-            if mode in ("voice", "chat"):
+            if mode in ("voice", "chat", "lesson"):
                 speak_sec += secs
             elif mode == "listening":
                 listen_sec += secs
@@ -2300,7 +2300,7 @@ class Repo:
         first_utc, nxt_utc = self._month_bounds_utc()
         # Очки агрегируем прямо в SQL: minutes(speaking)+minutes(listening)+5·grammar.
         speak = func.sum(
-            case((SessionRow.mode.in_(("voice", "chat")), SessionRow.used_seconds), else_=0)
+            case((SessionRow.mode.in_(("voice", "chat", "lesson")), SessionRow.used_seconds), else_=0)
         )
         listen = func.sum(
             case((SessionRow.mode == "listening", SessionRow.used_seconds), else_=0)
@@ -2342,7 +2342,7 @@ class Repo:
         from ..points import GRAMMAR_POINTS
         first_utc, nxt_utc = self._month_bounds_utc()
         speak = func.sum(
-            case((SessionRow.mode.in_(("voice", "chat")), SessionRow.used_seconds), else_=0)
+            case((SessionRow.mode.in_(("voice", "chat", "lesson")), SessionRow.used_seconds), else_=0)
         )
         listen = func.sum(
             case((SessionRow.mode == "listening", SessionRow.used_seconds), else_=0)
@@ -2777,6 +2777,13 @@ class Repo:
             .order_by(SessionRow.started_at.desc())
             .limit(limit)
         )
+        rows = res.all()
+        learning_status = {}
+        from ..config import settings
+        if settings.LEARNING_ENABLED:
+            from ..learning_models import LearningLesson
+            learning_status = dict((await self.s.execute(select(LearningLesson.session_id, LearningLesson.status)
+                .where(LearningLesson.user_id == user_id, LearningLesson.session_id.in_([r.id for r in rows])))).all())
         return [
             {
                 "id": int(row.id),
@@ -2786,9 +2793,9 @@ class Repo:
                 "mode": row.mode,
                 "level": row.level,
                 "role": row.role,
-                "status": row.grammar_status or ("completed" if row.ended_at else "active"),
+                "status": learning_status.get(row.id) or row.grammar_status or ("completed" if row.ended_at else "active"),
             }
-            for row in res.all()
+            for row in rows
         ]
 
     # ─── Массовые операции ──────────────────────────────────────────────

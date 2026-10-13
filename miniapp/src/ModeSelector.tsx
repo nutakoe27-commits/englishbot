@@ -16,8 +16,9 @@ import { StatTile } from "./ds-react/StatTile";
 import { TopBar } from "./ds-react/TopBar";
 import { LogoBox } from "./ds-react/LogoBox";
 import { SerifH } from "./ds-react/typography";
+import { CourseHomeCard } from "./LearningProgress";
 
-export type Mode = "speaking" | "listening" | "grammar" | "srs" | "level";
+export type Mode = "speaking" | "listening" | "grammar" | "srs" | "level" | "learning";
 
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ||
@@ -36,7 +37,7 @@ interface MeStats {
   achievements_total: number;
 }
 
-export function ModeSelector({ onPick, onLoggedOut }: Props) {
+export function ModeSelector({ onPick }: Props) {
   const [userName, setUserName] = useState<string>("there");
   const [stats, setStats] = useState<MeStats | null>(null);
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
@@ -52,6 +53,7 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
   // Уровень по тесту. null — тест ещё не проходили: показываем предложение,
   // а не сухую строчку. Для новичка это и есть первый осмысленный шаг.
   const [cefr, setCefr] = useState<string | null>(null);
+  const [learningEnabled, setLearningEnabled] = useState(false);
   // Если юзер вернулся с ЮKassa — в URL ?payment_id=N. Открываем SubscribeScreen
   // в режиме «return» с поллингом статуса.
   const [returnPaymentId, setReturnPaymentId] = useState<number | null>(() => {
@@ -141,6 +143,7 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
 
       <main className="mode-selector__main">
         <LevelProgressBar />
+        <CourseHomeCard onOpen={() => onPick("learning")} onAvailability={setLearningEnabled} />
         {trialDaysLeft !== null && (
           <button
             type="button"
@@ -278,7 +281,8 @@ export function ModeSelector({ onPick, onLoggedOut }: Props) {
         open={onboardingAuto || onboardingManual}
         markDoneOnFinish={onboardingAuto && !onboardingManual}
         onClose={() => { setOnboardingAuto(false); setOnboardingManual(false); }}
-        onStart={() => onPick("speaking")}
+        learning={learningEnabled}
+        onStart={() => onPick(learningEnabled ? "learning" : "speaking")}
       />
     </div>
   );

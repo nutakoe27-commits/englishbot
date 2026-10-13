@@ -236,6 +236,8 @@ Nginx-конфиги.
 Подробно — в [`docs/deployment.md`](docs/deployment.md).
 Для событий MyTracker → VK Ads — в [`docs/mytracker-deploy.md`](docs/mytracker-deploy.md).
 Для исправления генерации грамматики — в [`docs/grammar-deploy.md`](docs/grammar-deploy.md).
+Учебная программа и тестовый деплой — в [`docs/learning-program.md`](docs/learning-program.md)
+и [`docs/learning-deploy.md`](docs/learning-deploy.md).
 
 ### GitHub Actions Secrets
 

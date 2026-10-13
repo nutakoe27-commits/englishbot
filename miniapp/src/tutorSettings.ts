@@ -1,7 +1,7 @@
 // tutorSettings.ts — типы и утилиты для настроек AI-тьютора.
 // Значения совпадают с ключами в backend/app/tutor_prompt.py.
 
-export type Level = "A2" | "B1" | "B2" | "C1";
+export type Level = "A1" | "A2" | "B1" | "B2" | "C1";
 export type Length = "short" | "long";
 // Режим ввода: voice — микрофон + TTS-ответ; chat — текстовый двухсторонний чат.
 export type Mode = "voice" | "chat";
@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: TutorSettings = {
 };
 
 export const LEVEL_OPTIONS: { value: Level; label: string; hint: string }[] = [
+  { value: "A1", label: "A1", hint: "Начальный" },
   { value: "A2", label: "A2", hint: "Элементарный" },
   { value: "B1", label: "B1", hint: "Средний" },
   { value: "B2", label: "B2", hint: "Выше среднего" },
@@ -113,7 +114,7 @@ export function settingsToQuery(settings: TutorSettings): string {
 // ─── Валидаторы ──────────────────────────────────────────────────────────────
 
 function isLevel(v: unknown): v is Level {
-  return v === "A2" || v === "B1" || v === "B2" || v === "C1";
+  return v === "A1" || v === "A2" || v === "B1" || v === "B2" || v === "C1";
 }
 
 function isLength(v: unknown): v is Length {

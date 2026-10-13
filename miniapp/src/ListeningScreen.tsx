@@ -60,7 +60,6 @@ export function ListeningScreen({ onExit }: Props) {
   const [wordsOpen, setWordsOpen] = useState<boolean>(false);
   const [paywall, setPaywall] = useState<boolean>(false);
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
-  const inTelegram = !!WebApp.initData;
   const abortRef = useRef<AbortController | null>(null);
   useLucide(`${phase}-${progressOpen}-${wordsOpen}-${paywall}`);
 

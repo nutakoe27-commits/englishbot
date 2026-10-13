@@ -19,6 +19,7 @@ import { Badge } from "./ds-react/Badge";
 import { Icon } from "./ds-react/Icon";
 import { IconButton } from "./ds-react/IconButton";
 import { useLucide } from "./lucide";
+import { LearningProgress } from "./LearningProgress";
 
 interface Props {
   apiBase: string;
@@ -94,6 +95,7 @@ export function ProgressScreen({ apiBase, initData, onClose }: Props) {
         <SerifH as="h1" size={28}>Мой прогресс</SerifH>
         <IconButton icon="x" size="md" label="Закрыть" onClick={onClose} />
       </header>
+      <LearningProgress />
 
       {error && (
         <NoteCard padding={16} tone="warn">

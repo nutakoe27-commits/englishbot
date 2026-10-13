@@ -65,7 +65,7 @@ export function saveGrammarSettings(settings: GrammarSettings): void {
 }
 
 function isLevel(v: unknown): v is Level {
-  return v === "A2" || v === "B1" || v === "B2" || v === "C1";
+  return v === "A1" || v === "A2" || v === "B1" || v === "B2" || v === "C1";
 }
 
 function isCategory(v: unknown): v is MistakeCategory {

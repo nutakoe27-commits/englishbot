@@ -117,6 +117,9 @@ export interface OnlineResponse {
   sessions: OnlineSession[];
 }
 
+export interface ChartPoint { date: string; value: number }
+export interface RetentionCohort { cohort_date: string; size: number; d1: number | null; d7: number | null; d30: number | null }
+
 export interface UserSession {
   id: number;
   started_at: string | null;
@@ -125,7 +128,15 @@ export interface UserSession {
   mode: string;
   level: string | null;
   role: string | null;
-  status?: "active" | "completed" | "abandoned";
+  status?: "active" | "completed" | "abandoned" | "paused";
+}
+
+export interface LearningProgram {
+  enabled: boolean;
+  profile?: {level: string; goal_label: string; completed_count: number; until_checkpoint: number; checkpoint_due: boolean} | null;
+  next_lesson?: {status: string; step_index: number; content: {spec: {title: string; ordinal: number}}} | null;
+  skills?: {key: string; label: string; attempts: number; accuracy: number | null}[];
+  history?: {id: string; after_count: number; date: string; result: {cefr: string; level_before: string}}[];
 }
 
 export interface UserBrief {
@@ -279,6 +290,7 @@ export const api = {
     request<{ sessions: UserSession[] }>(
       `/api/admin/users/${userId}/sessions?limit=${limit}`,
     ),
+  learningProgram: (userId: number) => request<LearningProgram>(`/api/learning/admin/users/${userId}`),
 
   // ─── Payments admin tab ───────────────────────────────
   listPayments: (params: {

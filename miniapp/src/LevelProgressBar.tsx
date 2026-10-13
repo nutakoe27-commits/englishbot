@@ -46,7 +46,7 @@ export function LevelProgressBar() {
     <div className="lvl-bar">
       <div className="lvl-bar__top">
         <span className="lvl-bar__badge">
-          <Icon name="star" size={13} /> Уровень {data.level}
+          <Icon name="star" size={13} /> Опыт · ступень {data.level}
         </span>
         <span className="lvl-bar__counter">
           {data.into_level} / {data.level_span} очков
@@ -54,7 +54,7 @@ export function LevelProgressBar() {
       </div>
       <ProgressBar value={data.into_level} max={data.level_span} tone="accent" height={8} />
       <div className="lvl-bar__hint">
-        До уровня {data.level + 1} — ещё {Math.max(0, data.level_span - data.into_level)} очков
+        До следующей ступени опыта — ещё {Math.max(0, data.level_span - data.into_level)} очков
       </div>
     </div>
   );

@@ -61,7 +61,7 @@ ALLOWED_CATEGORIES = {
     "science", "travel", "business", "culture",
 }
 ALLOWED_SPEEDS = {0.75, 1.0, 1.25}
-ALLOWED_LEVELS = {"A2", "B1", "B2", "C1"}
+ALLOWED_LEVELS = {"A1", "A2", "B1", "B2", "C1"}
 
 CATEGORY_HINTS = {
     "news": "current events and recent global news",

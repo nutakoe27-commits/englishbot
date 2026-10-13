@@ -11,6 +11,9 @@ class Settings(BaseSettings):
 
     # Режим окружения
     ENVIRONMENT: str = "production"
+    # Enable on staging first. Existing production stays on the current flow.
+    LEARNING_ENABLED: bool = False
+    LEARNING_MEDIA_DIR: str = "data/learning"
 
     # URL Mini App — используется в CORS
     MINIAPP_URL: str = "https://englishbot.krichigindocs.ru"

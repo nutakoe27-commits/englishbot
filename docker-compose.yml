@@ -27,6 +27,7 @@ services:
     volumes:
       # Записи Battle Mode (webm/opus). Лежат на VPS, не теряются при rebuild.
       - ./data/battles:/app/data/battles
+      - ./data/learning:/app/data/learning
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

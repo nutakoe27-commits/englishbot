@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import WebApp from "@twa-dev/sdk";
 import {
   startLevelTest,
   answerLevelTest,
@@ -22,13 +23,13 @@ import {
 } from "./auth";
 import { ymReachGoal } from "./metrika";
 import { Icon } from "./ds-react/Icon";
-import { IconButton } from "./ds-react/IconButton";
 import { SerifH } from "./ds-react/typography";
 import { loadSettings, saveSettings, type Level } from "./tutorSettings";
 import { useLucide } from "./lucide";
 
 interface Props {
   onExit: () => void;
+  onLearning?: () => void;
 }
 
 type Phase = "intro" | "running" | "result";
@@ -58,14 +59,20 @@ const CEFR_MEANING: Record<string, string> = {
   C1: "Продвинутый — говоришь бегло и точно, улавливаешь оттенки смысла.",
 };
 
-/** Уровень теста мапится на уровень тьютора: у настроек нет A1. */
+/** Preserve the measured level, including complete beginners. */
 function toTutorLevel(cefr: string): Level {
-  if (cefr === "A1") return "A2";
-  if (cefr === "A2" || cefr === "B1" || cefr === "B2" || cefr === "C1") return cefr;
+  if (cefr === "A1" || cefr === "A2" || cefr === "B1" || cefr === "B2" || cefr === "C1") return cefr;
   return "B1";
 }
 
-export function LevelTestScreen({ onExit }: Props) {
+export function LevelTestScreen({ onExit, onLearning }: Props) {
+  const [learningEnabled, setLearningEnabled] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void fetch(`${API_BASE}/api/learning/overview?init_data=${encodeURIComponent(WebApp.initData || "")}`)
+      .then(response => response.ok ? response.json() : null).then(data => { if (alive) setLearningEnabled(!!data?.enabled); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const [phase, setPhase] = useState<Phase>("intro");
   const [testId, setTestId] = useState<string>("");
   const [screen, setScreen] = useState<LevelScreen | null>(null);
@@ -480,6 +487,9 @@ export function LevelTestScreen({ onExit }: Props) {
             ? `✓ Уровень ${toTutorLevel(result.cefr)} применён`
             : `Настроить занятия под ${toTutorLevel(result.cefr)}`}
         </button>
+        {learningEnabled && onLearning && <button type="button" className="grm-primary-btn" onClick={() => { applyLevel(); onLearning(); }}>
+          Составить мою программу →
+        </button>}
         <button type="button" className="lvt-secondary" onClick={onExit}>
           Вернуться к режимам
         </button>

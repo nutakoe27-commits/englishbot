@@ -38,6 +38,7 @@ import { ModeSelector, type Mode } from "./ModeSelector";
 import { ListeningScreen } from "./ListeningScreen";
 import { GrammarScreen } from "./GrammarScreen";
 import { LevelTestScreen } from "./LevelTestScreen";
+import { LearningScreen } from "./LearningScreen";
 import { SrsScreen } from "./SrsScreen";
 import { LoginScreen } from "./LoginScreen";
 import { LandingScreen } from "./LandingScreen";
@@ -170,7 +171,7 @@ function initialModeFromUrl(): Mode | null {
       return "level";
     }
     const m = new URLSearchParams(window.location.search).get("mode");
-    if (m === "speaking" || m === "listening" || m === "grammar" || m === "level") {
+    if (m === "speaking" || m === "listening" || m === "grammar" || m === "level" || m === "learning") {
       return m;
     }
   } catch { /* битый адрес */ }
@@ -496,7 +497,9 @@ function TabShell({
   } else if (mode === "grammar") {
     body = <GrammarScreen onExit={exitMode} />;
   } else if (mode === "level") {
-    body = <LevelTestScreen onExit={exitMode} />;
+    body = <LevelTestScreen onExit={exitMode} onLearning={() => setMode("learning")} />;
+  } else if (mode === "learning") {
+    body = <LearningScreen onExit={exitMode} onPlacement={() => setMode("level")} />;
   } else if (tab === "home") {
     body = (
       <ModeSelector

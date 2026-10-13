@@ -20,12 +20,12 @@ from typing import Literal, Optional
 
 # ─── Типы и дефолты ──────────────────────────────────────────────────────────
 
-Level = Literal["A2", "B1", "B2", "C1"]
+Level = Literal["A1", "A2", "B1", "B2", "C1"]
 Length = Literal["short", "long"]
 # Режим сессии: voice — микрофон + TTS-ответ; chat — только текст в обе стороны.
 Mode = Literal["voice", "chat"]
 
-VALID_LEVELS: tuple[Level, ...] = ("A2", "B1", "B2", "C1")
+VALID_LEVELS: tuple[Level, ...] = ("A1", "A2", "B1", "B2", "C1")
 VALID_LENGTHS: tuple[Length, ...] = ("short", "long")
 VALID_MODES: tuple[Mode, ...] = ("voice", "chat")
 
@@ -174,6 +174,12 @@ class SessionSettings:
 # ─── Билдер системного промпта ───────────────────────────────────────────────
 
 _LEVEL_GUIDANCE: dict[str, str] = {
+    "A1": (
+        "The learner is a complete beginner at A1. Use common concrete words, "
+        "one short sentence of 3-7 words at a time, and one simple question. "
+        "Focus on be, have, present simple and everyday phrases. Avoid idioms "
+        "and complex tenses. Offer a short Russian explanation when needed."
+    ),
     "A2": (
         "The learner is at A2 (elementary). "
         "Use very simple vocabulary and short sentences (6-10 words). "

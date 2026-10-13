@@ -173,7 +173,7 @@ function formatMmSs(totalSeconds: number): string {
 // ─── Утилиты ──────────────────────────────────────────────────────────────────
 
 /** Декодирует PCM 16-bit little-endian в Float32Array */
-function pcm16ToFloat32(buffer: ArrayBuffer): Float32Array {
+function pcm16ToFloat32(buffer: ArrayBuffer): Float32Array<ArrayBuffer> {
   const int16 = new Int16Array(buffer);
   const float32 = new Float32Array(int16.length);
   for (let i = 0; i < int16.length; i++) {
@@ -212,7 +212,6 @@ export default function App({ onExit }: AppProps = {}) {
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
   // На вебе оплата идёт через ЮKassa (SubscribeScreen). В Mini App внутри
   // Telegram остаётся Telegram Payments — там callback не пробрасываем.
-  const inTelegram = !!WebApp.initData;
   // Тап по слову в реплике тьютора → popover с переводом
   const [translateTarget, setTranslateTarget] = useState<TranslateTarget | null>(null);
   // Confirm-модалка перед закрытием сессии. Чат-композер близко к "End

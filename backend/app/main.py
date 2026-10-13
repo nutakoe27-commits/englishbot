@@ -35,6 +35,7 @@ from .grammar import router as grammar_router
 from .listening import router as listening_router
 from .srs import router as srs_router
 from .tts import router as tts_router
+from .learning import router as learning_router, preparation_loop, maintenance_loop
 from .auth import resolve_user
 from .config import settings
 from .db import db_session, init_db
@@ -71,6 +72,9 @@ async def lifespan(_: FastAPI):
         background_tasks.append(asyncio.create_task(recurring_loop()))
         background_tasks.append(asyncio.create_task(delivery_loop()))
         background_tasks.append(asyncio.create_task(cleanup_loop()))
+        if settings.LEARNING_ENABLED:
+            background_tasks.append(asyncio.create_task(preparation_loop()))
+            background_tasks.append(asyncio.create_task(maintenance_loop()))
     try:
         yield
     finally:
@@ -169,6 +173,7 @@ app.include_router(listening_router)
 app.include_router(grammar_router)
 app.include_router(srs_router)
 app.include_router(tts_router)
+app.include_router(learning_router)
 
 
 @app.get("/health", tags=["System"])

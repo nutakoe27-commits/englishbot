@@ -39,7 +39,7 @@ router = APIRouter(prefix="/api/grammar", tags=["Grammar"])
 
 # ─── Конфигурация ────────────────────────────────────────────────────────────
 
-ALLOWED_LEVELS = {"A2", "B1", "B2", "C1"}
+ALLOWED_LEVELS = {"A1", "A2", "B1", "B2", "C1"}
 ALLOWED_CATEGORIES = {"article", "tense", "preposition", "word_choice", "phrasal", "other"}
 ALLOWED_MODES = {"weak_points", "topic"}
 

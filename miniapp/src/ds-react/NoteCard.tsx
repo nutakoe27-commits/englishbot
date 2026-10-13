@@ -5,7 +5,7 @@
 
 interface Props extends React.HTMLAttributes<HTMLDivElement> {
   tone?: "default" | "sage" | "cream" | "warn";
-  padding?: number;
+  padding?: React.CSSProperties["padding"];
   interactive?: boolean;
   children?: React.ReactNode;
 }

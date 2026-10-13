@@ -299,10 +299,10 @@ export function userFullName(u: {
   first_name: string | null;
   last_name: string | null;
   username: string | null;
-  tg_id: number;
+  tg_id: number | null;
 }): string {
   const parts = [u.first_name, u.last_name].filter(Boolean).join(" ");
   if (parts) return parts;
   if (u.username) return `@${u.username}`;
-  return `tg_id ${u.tg_id}`;
+  return u.tg_id === null ? "Пользователь" : `tg_id ${u.tg_id}`;
 }

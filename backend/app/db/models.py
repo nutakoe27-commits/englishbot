@@ -113,10 +113,10 @@ class UserIdentity(Base):
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    provider: Mapped[str] = mapped_column(
-        SAEnum("telegram", "native", "vk", "yandex", name="identity_provider"),
-        nullable=False,
-    )
+    # Storage is still a MySQL ENUM. Read legacy providers as strings so a
+    # restored schema can preserve old identities without breaking /auth/me.
+    # New login routes only create the currently supported providers.
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
     provider_uid: Mapped[str] = mapped_column(String(191), nullable=False)
     email: Mapped[Optional[str]] = mapped_column(String(255))
     # Для provider='vk': через какой сервис VK ID вошли — vk | ok | mail
@@ -163,7 +163,7 @@ class Session(Base):
     grammar_preparation_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
     used_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     mode: Mapped[str] = mapped_column(
-        SAEnum("voice", "chat", "listening", "grammar", "srs", name="session_mode"),
+        SAEnum("voice", "chat", "listening", "grammar", "srs", "lesson", name="session_mode"),
         nullable=False,
         default="voice",
     )

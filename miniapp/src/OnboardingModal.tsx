@@ -30,6 +30,7 @@ interface Props {
   onClose: () => void;
   /** Увести сразу в разговор. Новичку нужно одно действие, а не тур. */
   onStart?: () => void;
+  learning?: boolean;
 }
 
 interface Step {
@@ -96,7 +97,7 @@ const STEPS: Step[] = [
   },
 ];
 
-export function OnboardingModal({ open, markDoneOnFinish, onClose, onStart }: Props) {
+export function OnboardingModal({ open, markDoneOnFinish, onClose, onStart, learning = false }: Props) {
   const [step, setStep] = useState(0);
   // Новичку показываем ОДИН экран с одним действием. Тур из четырёх
   // модалок отодвигал первую фразу по-английски на минуту-полторы и
@@ -148,16 +149,18 @@ export function OnboardingModal({ open, markDoneOnFinish, onClose, onStart }: Pr
             Полный доступ уже открыт
           </SerifH>
           <div className="ob-v2__body">
+            {learning ? <>Определим твой уровень и составим программу. В каждом уроке — слова,
+              грамматика, аудирование и разговор. Через каждые 20 занятий проверим развитие.</> : <>
             Я — твой AI-репетитор. Говори со мной вслух: пойму, отвечу и
             объясню ошибки <b>по-русски</b>.<br /><br />
             Первые {TRIAL_PERIOD} — <b>без ограничений</b>: разговор,
             подкасты, грамматика, словарь. Настраивать ничего не нужно,
-            просто скажи первую фразу — хоть «hello, how are you».
+            просто скажи первую фразу — хоть «hello, how are you».</>}
           </div>
 
           <div className="ob-v2__nav">
             <Button variant="primary" fullWidth onClick={() => void startTalking()}>
-              🎤 Сказать первую фразу
+              {learning ? "Начать обучение" : "🎤 Сказать первую фразу"}
             </Button>
           </div>
           <button
