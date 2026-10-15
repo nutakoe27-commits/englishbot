@@ -56,7 +56,10 @@ const CATEGORY_LABELS_RU: Record<string, string> = {
   other: "Другое",
 };
 
+import type { GuidedModule } from "./learningApi";
+
 interface Props {
+  course?: GuidedModule & { track: "learn" | "test" };
   onExit: () => void;
 }
 
@@ -167,7 +170,7 @@ function renderTheoryBlocks(text: string): React.ReactNode[] {
   return blocks;
 }
 
-export function GrammarScreen({ onExit }: Props) {
+export function GrammarScreen({ onExit, course }: Props) {
   const [settings, setSettings] = useState<GrammarSettings>(() => loadGrammarSettings());
   const [phase, setPhase] = useState<Phase>("home");
   const [track, setTrack] = useState<Track>("test");
@@ -207,7 +210,7 @@ export function GrammarScreen({ onExit }: Props) {
     roundRef.current.cancel();
     const key = activeSessionRef.current || preparedRef.current?.session_id;
     if (key) void grammarRequest(`${API_BASE}/api/grammar/abandon`, {
-      init_data: WebApp.initData || "", session_id: key, duration_sec: duration(),
+      init_data: WebApp.initData || "", learning_lesson_id: course?.lessonId, session_id: key, duration_sec: duration(),
     }, { keepalive: true }).catch(() => {});
     activeSessionRef.current = "";
     preparedRef.current = null;
@@ -226,7 +229,7 @@ export function GrammarScreen({ onExit }: Props) {
       setPhase("loading");
       try {
         const data = await grammarRequest<{ session_id: string }>(`${API_BASE}/api/grammar/start`, {
-          init_data: WebApp.initData || "", session_id: prepared.session_id,
+          init_data: WebApp.initData || "", learning_lesson_id: course?.lessonId, session_id: prepared.session_id,
         }, { signal: ticket.signal, retry: true });
         if (!roundRef.current.owns(ticket)) return;
         activeSessionRef.current = data.session_id;
@@ -270,7 +273,7 @@ export function GrammarScreen({ onExit }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          init_data: WebApp.initData || "",
+          init_data: WebApp.initData || "", learning_lesson_id: course?.lessonId,
           session_id: sessionId,
           duration_sec: duration(),
         }),
@@ -305,7 +308,7 @@ export function GrammarScreen({ onExit }: Props) {
     setExState("pending");
     try {
       const data = await grammarRequest<PreparedRound>(`${API_BASE}/api/grammar/lesson/exercises`, {
-        init_data: WebApp.initData || "", topic_key: topicKey,
+        init_data: WebApp.initData || "", learning_lesson_id: course?.lessonId, topic_key: topicKey,
       }, { signal: ticket.signal });
       if (!roundRef.current.owns(ticket)) return;
       if (!Array.isArray(data.exercises) || data.exercises.length === 0) throw new Error("Сервер не вернул упражнений");
@@ -344,7 +347,7 @@ export function GrammarScreen({ onExit }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          init_data: WebApp.initData || "",
+          init_data: WebApp.initData || "", learning_lesson_id: course?.lessonId,
           topic_key: topicKey,
         }),
         signal: ticket.signal,
@@ -398,7 +401,7 @@ export function GrammarScreen({ onExit }: Props) {
     setLesson(null); setLessonResult(null); setPhase("loading"); setTrack("test");
     try {
       const data = await grammarRequest<PreparedRound>(`${API_BASE}/api/grammar/generate`, {
-        init_data: WebApp.initData || "", mode: "weak_points", level: loadTutorSettings().level,
+        init_data: WebApp.initData || "", learning_lesson_id: course?.lessonId, mode: "weak_points", level: course?.level || loadTutorSettings().level,
       }, { signal: ticket.signal });
       if (!roundRef.current.owns(ticket)) return;
       if (!Array.isArray(data.exercises) || data.exercises.length === 0) throw new Error("Сервер не вернул упражнений");
@@ -407,13 +410,13 @@ export function GrammarScreen({ onExit }: Props) {
       await activatePractice(data, ticket);
     } catch (e) {
       if (!roundRef.current.owns(ticket)) return;
-      if (e instanceof GrammarRequestError && e.status === 409) { setPhase("no_mistakes"); return; }
+      if (e instanceof GrammarRequestError && e.status === 409 && e.detail === "no_mistakes") { setPhase("no_mistakes"); return; }
       if (e instanceof GrammarRequestError && e.status === 402) { setPaywall(true); setPhase("home"); return; }
       setError(e instanceof Error ? e.message : String(e)); setPhase("error");
     }
   };
 
-  const cancelGeneration = () => { cancelRound(); setPhase(track === "learn" ? "topics" : "home"); };
+  const cancelGeneration = () => { if (course) { onExit(); return; } cancelRound(); setPhase(track === "learn" ? "topics" : "home"); };
 
   const handleAnswer = (userAnswer: string, isCorrect: boolean) => {
     const ex = exercises[currentIndex];
@@ -458,12 +461,13 @@ export function GrammarScreen({ onExit }: Props) {
   };
 
   const finishSession = () => saveResult("/api/grammar/finish", {
-    init_data: WebApp.initData || "", session_id: sessionId, duration_sec: duration(),
+    init_data: WebApp.initData || "", learning_lesson_id: course?.lessonId, session_id: sessionId, duration_sec: duration(),
     results: answers.map(a => ({ exercise_id: a.exercise_id, user_answer: a.user_answer, is_correct: a.is_correct, category: a.category })),
   });
   const finishLesson = () => saveResult("/api/grammar/lesson/finish", {
-    init_data: WebApp.initData || "", session_id: sessionId, topic_key: lesson?.topic_key || "",
+    init_data: WebApp.initData || "", learning_lesson_id: course?.lessonId, session_id: sessionId, topic_key: lesson?.topic_key || "",
     correct: answers.filter(a => a.is_correct).length, total: exercises.length, duration_sec: duration(),
+    results: answers.map(a => ({exercise_id:a.exercise_id,user_answer:a.user_answer,is_correct:a.is_correct,category:a.category})),
   });
 
   // ── Сводка ───────────────────────────────────────────────────────────
@@ -494,6 +498,7 @@ export function GrammarScreen({ onExit }: Props) {
 
   // Назад в шапке — фазозависимый.
   const handleBack = () => {
+    if (course) { onExit(); return; }
     if (phase === "home") {
       onExit();
     } else if (phase === "topics" || phase === "no_mistakes") {
@@ -510,6 +515,15 @@ export function GrammarScreen({ onExit }: Props) {
       onExit();
     }
   };
+
+  useEffect(() => {
+    if (!course) return;
+    const timer=window.setTimeout(() => {
+      if (course.track==="learn") void openLesson(course.topicKey);
+      else void startWeakPoints();
+    },0);
+    return () => clearTimeout(timer);
+  },[course?.lessonId,course?.track]);
 
   const levelTabs: TopicLevel[] = ["A1", "A2", "B1", "B2", "C1"];
   const currentTopics = topicLevels?.[topicsLevel] ?? [];
@@ -562,7 +576,7 @@ export function GrammarScreen({ onExit }: Props) {
               <span className="grm-mode-card__emoji" aria-hidden>🎯</span>
               <span className="grm-mode-card__title">Проверить себя</span>
               <span className="grm-mode-card__hint">
-                10 упражнений по ошибкам из твоих реальных разговоров с
+                10 упражнений по ошибкам из твоих уроков и разговоров с
                 AI Tutor — без настроек, сразу в бой.
               </span>
             </button>
@@ -575,15 +589,15 @@ export function GrammarScreen({ onExit }: Props) {
             <span className="grm-stub__emoji" aria-hidden>🎙️</span>
             <p className="grm-stub__title">Пока нечего разбирать</p>
             <p className="grm-stub__hint">
-              Сначала поговори с AI Tutor — я запомню твои ошибки из живой
-              речи и соберу из них персональные упражнения.
+              Ошибок для повторения пока нет. Ошибки из уроков и разговоров
+              появятся здесь — разберём их в персональных упражнениях.
             </p>
             <button
               type="button"
               className="grm-primary-btn"
-              onClick={() => { resetRound(); setPhase("home"); }}
+              onClick={() => course ? course.onComplete() : (resetRound(), setPhase("home"))}
             >
-              Понятно
+              {course ? "Продолжить урок →" : "Понятно"}
             </button>
           </div>
         )}
@@ -750,7 +764,9 @@ export function GrammarScreen({ onExit }: Props) {
             )}
 
             <div className="grm-summary__actions">
-              {track === "learn" ? (
+              {course ? (
+                <button type="button" className="grm-primary-btn" disabled={saveState !== "saved"} onClick={course.onComplete}>Продолжить урок →</button>
+              ) : track === "learn" ? (
                 <>
                   <button
                     type="button"

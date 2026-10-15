@@ -24,6 +24,7 @@ from .learning_models import LearningCheckpoint, LearningLesson, LearningProfile
 from . import learning_content as content
 from . import learning_assessment as assessment
 from . import mytracker, presence
+from . import learning_modules as modules
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/learning',tags=['Learning'])
@@ -81,7 +82,8 @@ def lesson_data(row):
     return {'id':row.id,'status':row.status,'step_index':row.step_index,'used_seconds':row.used_seconds,
         'activity_token':row.answers.get('_activity_token'),
         'content':data,'conversation':row.conversation,'result':row.answers.get('_result'),
-        'listening_text_mode':bool(row.answers.get('_listening_text'))}
+        'listening_text_mode':bool(row.answers.get('_listening_text')),
+        'modules':row.answers.get('_modules',{})}
 
 async def prepare_next(session,p):
     if p.completed_count >= p.checkpoint_count+20: return None
@@ -97,9 +99,10 @@ async def prepare_next(session,p):
         .order_by(UserVocabulary.srs_due_at,UserVocabulary.id).limit(3))).all())
     spec = content.plan(p.level,p.goal,p.completed_count+1,weak)
     material = content.validate_material(content.material(spec,[{'word':w.word,'translation':w.translation} for w in words]))
+    material['engine'] = 'modules'
     row = LearningLesson(id=str(uuid4()),user_id=p.user_id,ordinal=spec['ordinal'],level=p.level,
         topic_key=spec['topic_key'],status='prepared',step_index=0,content=material,answers={},conversation=[],
-        used_seconds=0,created_at=now(),generation_status='pending' if settings.VLLM_BASE_URL else 'fallback',generation_attempts=0)
+        used_seconds=0,created_at=now(),generation_status='modules',generation_attempts=0)
     session.add(row); await session.flush()
     return row
 
@@ -136,7 +139,8 @@ async def refresh_prepared(session,p):
     if row.topic_key in content.topic_keys(p.level): spec['topic_key']=row.topic_key
     review=[{'word':q['word'],'translation':q['correct']} for q in row.content['warmup']]
     row.level=p.level; row.topic_key=spec['topic_key']; row.content=content.validate_material(content.material(spec,review))
-    row.generation_status='pending' if settings.VLLM_BASE_URL else 'fallback'
+    row.content={**row.content,'engine':'modules'}
+    row.generation_status='modules'
     row.generation_attempts=0; row.generation_lease=None
 
 
@@ -228,6 +232,9 @@ async def start(key:str,body:Input,authorization:Optional[str]=Header(None)):
         row=await owned(session,LearningLesson,key,account.id)
         if row.status=='completed': return lesson_data(row)
         if row.ordinal!=p.completed_count+1: raise HTTPException(409,'lesson_out_of_order')
+        if row.content.get('engine')!='modules':
+            row.content={**row.content,'engine':'modules'}
+            row.answers={'_legacy':row.answers}; row.step_index=0
         if row.status=='prepared':
             if not settings.FREE_PERIOD and not await Repo(session).has_full_access(account):
                 quota=await Repo(session).get_kv_int('free_lessons_per_day',1)
@@ -262,7 +269,7 @@ async def heartbeat(key:str,body:HeartbeatInput,authorization:Optional[str]=Head
         row.used_seconds=max(row.used_seconds,min(body.elapsed_sec,row.used_seconds+35,1800))
         row.last_seen_at=now()
         activity=await session.get(Session,row.session_id)
-        if activity: activity.used_seconds=row.used_seconds
+        if activity: activity.used_seconds=0 if row.content.get('engine')=='modules' else row.used_seconds
         presence.mark(account.id,mode='lesson',level=row.level,role=row.topic_key,ttl=180)
         return {'ok':True,'active':True,'used_seconds':row.used_seconds}
 
@@ -276,7 +283,7 @@ async def pause(key:str,body:HeartbeatInput,authorization:Optional[str]=Header(N
             row.used_seconds=max(row.used_seconds,min(body.elapsed_sec,row.used_seconds+35,1800))
             row.status='paused'; row.last_seen_at=now()
             activity=await session.get(Session,row.session_id)
-            if activity: activity.ended_at=now(); activity.used_seconds=row.used_seconds
+            if activity: activity.ended_at=now(); activity.used_seconds=0 if row.content.get('engine')=='modules' else row.used_seconds
             presence.clear(account.id)
         return {'ok':True}
 
@@ -315,6 +322,17 @@ async def listening_text(key:str,body:Input,authorization:Optional[str]=Header(N
         row.answers={**row.answers,'_listening_text':True}
         return lesson_data(row)
 
+@router.post('/lessons/{key}/listened')
+async def listened(key:str,body:Input,authorization:Optional[str]=Header(None)):
+    async with db_session() as session:
+        account=await user(session,authorization,body.init_data)
+        row=await modules.require(session,account.id,key,'listening',finishing=True)
+        if not modules.result(row,'listening').get('podcast'):
+            raise HTTPException(409,'podcast_required')
+        modules.save(row,'listening',completed=True)
+        return lesson_data(row)
+
+
 @router.post('/lessons/{key}/advance')
 async def advance(key:str,body:AdvanceInput,authorization:Optional[str]=Header(None)):
     async with db_session() as session:
@@ -323,6 +341,17 @@ async def advance(key:str,body:AdvanceInput,authorization:Optional[str]=Header(N
         if row.step_index>body.step_index: return lesson_data(row)
         active(row)
         if row.step_index!=body.step_index or row.step_index>=5: raise HTTPException(409,'step_out_of_order')
+        if row.content.get('engine')=='modules':
+            stage=modules.STAGES[row.step_index]
+            if not modules.result(row,stage).get('completed'):
+                if stage=='mistakes' and not await Repo(session).get_recent_mistakes(account.id,limit=5,days=30):
+                    modules.save(row,stage,completed=True,skipped=True,reason='no_mistakes',seconds=0)
+                else: raise HTTPException(409,'module_incomplete')
+            row.step_index+=1; row.last_seen_at=now()
+            if row.step_index==2:
+                for word in row.content['words']:
+                    await Repo(session).add_user_word(account.id,word['word'],translation=word['translation'])
+            return lesson_data(row)
         if any(q['id'] not in row.answers for q in current_questions(row)): raise HTTPException(409,'answers_required')
         if row.step_index==4 and len(row.conversation)<3: raise HTTPException(409,'conversation_required')
         row.step_index+=1; row.last_seen_at=now()
@@ -461,6 +490,8 @@ async def finish(key:str,body:HeartbeatInput,authorization:Optional[str]=Header(
         active(row)
         if row.step_index!=5 or row.ordinal!=p.completed_count+1: raise HTTPException(409,'lesson_incomplete')
         row.used_seconds=max(row.used_seconds,min(body.elapsed_sec,row.used_seconds+35,1800))
+        if row.content.get('engine')=='modules':
+            return await finish_modules(session,account,p,row)
         graded=[a for name,a in row.answers.items() if not name.startswith('_')]
         for result in graded:
             domain=result['skill']
@@ -475,7 +506,7 @@ async def finish(key:str,body:HeartbeatInput,authorization:Optional[str]=Header(
         if row.used_seconds: await Repo(session).add_used_seconds(user_id=account.id,seconds=row.used_seconds)
         if row.used_seconds>=30: await Repo(session).bump_streak(account.id,role='lesson')
         activity=await session.get(Session,row.session_id)
-        if activity: activity.ended_at=now(); activity.used_seconds=row.used_seconds
+        if activity: activity.ended_at=now(); activity.used_seconds=0 if row.content.get('engine')=='modules' else row.used_seconds
         p.completed_count+=1; p.updated_at=now()
         row.status='completed'; row.completed_at=now(); row.last_seen_at=now()
         row.answers={**row.answers,'_result':{'correct':sum(int(a['correct']) for a in graded),'total':len(graded),
@@ -485,6 +516,32 @@ async def finish(key:str,body:HeartbeatInput,authorization:Optional[str]=Header(
         await prepare_next(session,p)
         presence.clear(account.id)
         return lesson_data(row)
+
+
+async def finish_modules(session,account,p,row):
+    results=row.answers.get('_modules',{})
+    if any(not results.get(stage,{}).get('completed') for stage in modules.STAGES):
+        raise HTTPException(409,'lesson_incomplete')
+    for stage,domain in [('grammar','grammar'),('mistakes','grammar'),('words','vocabulary')]:
+        item=results[stage]
+        if item.get('total'):
+            await evidence(session,account.id,row.topic_key if stage=='grammar' else domain,
+                domain,row.id,100*item['correct']/item['total'])
+    # Listening and speaking receive no invented accuracy score from completion.
+    row.used_seconds=sum(item.get('seconds',0) for item in results.values())
+    activity=await session.get(Session,row.session_id)
+    if activity: activity.ended_at=now(); activity.used_seconds=0
+    p.completed_count+=1; p.updated_at=now()
+    row.status='completed'; row.completed_at=now(); row.last_seen_at=now()
+    row.answers={**row.answers,'_result':{
+        'correct':sum(item.get('correct',0) for item in results.values()),
+        'total':sum(item.get('total',0) for item in results.values()),
+        'objective':row.content['spec']['objective'],'words':row.content['words'],
+        'speaking_assessed':False,'checkpoint_due':p.completed_count>=p.checkpoint_count+20}}
+    await event(session,account.id,row.id,'lesson_completed',{'level':row.level,'ordinal':row.ordinal,'seconds':row.used_seconds},row.instance_id)
+    await prepare_next(session,p)
+    presence.clear(account.id)
+    return lesson_data(row)
 
 
 def checkpoint_data(row):
@@ -648,7 +705,7 @@ async def close_idle():
         for row in rows:
             row.status='paused'
             activity=await session.get(Session,row.session_id)
-            if activity: activity.ended_at=row.last_seen_at; activity.used_seconds=row.used_seconds
+            if activity: activity.ended_at=row.last_seen_at; activity.used_seconds=0 if row.content.get('engine')=='modules' else row.used_seconds
     return len(rows)
 
 async def preparation_loop():
@@ -667,6 +724,9 @@ async def maintenance_loop():
                 cutoff=(now()-timedelta(days=14)).replace(tzinfo=timezone.utc).timestamp()
                 for path in Path(settings.LEARNING_MEDIA_DIR).glob('*.wav'):
                     try:
+                        if path.name.startswith('podcast-'):
+                            if path.stat().st_mtime<cutoff: path.unlink(missing_ok=True)
+                            continue
                         identifier=path.stem.split('.',1)[0].removeprefix('checkpoint-')
                         if str(UUID(identifier))==identifier and path.stat().st_mtime<cutoff: path.unlink(missing_ok=True)
                     except (ValueError,FileNotFoundError): pass

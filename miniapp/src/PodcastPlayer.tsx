@@ -7,21 +7,23 @@ import { useRef } from "react";
 interface Props {
   audioUrl: string;
   onRegenerate: () => void;
+  onEnded?: () => void;
+  onError?: () => void;
 }
 
-export function PodcastPlayer({ audioUrl, onRegenerate }: Props) {
+export function PodcastPlayer({ audioUrl, onRegenerate, onEnded, onError }: Props) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const handleReplay = () => {
     const a = audioRef.current;
     if (!a) return;
     a.currentTime = 0;
-    void a.play();
+    void a.play().catch(() => {});
   };
 
   return (
     <div className="lst-player">
-      <audio ref={audioRef} src={audioUrl} controls preload="auto" />
+      <audio ref={audioRef} src={audioUrl} controls preload="auto" onEnded={onEnded} onError={onError} aria-label="Подкаст" />
       <div className="lst-player__actions">
         <button type="button" className="lst-secondary-btn" onClick={handleReplay}>
           ↻ С начала

@@ -337,6 +337,7 @@ async def _synthesize_full(text: str, speed: float) -> bytes:
 
 
 class _GenerateIn(BaseModel):
+    learning_lesson_id: Optional[str] = None
     init_data: Optional[str] = None
     duration_min: int = Field(..., ge=1, le=MAX_DURATION_MIN)
     category: str
@@ -373,6 +374,9 @@ async def generate_podcast(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_level")
 
     # ── Подгружаем user-слова если включён тумблер ──────────────────────
+    lesson_objective = None
+    restore_podcast = None
+    restore_speed = body.speed
     user_id: Optional[int] = None
     vocab_words: list[str] = []
     avoid_topics: list[str] = []
@@ -386,9 +390,24 @@ async def generate_podcast(
                 repo, authorization=authorization, init_data=body.init_data,
             )
             user_id = user.id
+            from . import learning_modules as course
+            guided=await course.require(session,user_id,body.learning_lesson_id,'listening')
+            if guided is not None:
+                previous=course.result(guided,'listening').get('podcast')
+                if previous:
+                    from pathlib import Path
+                    audio_key=previous['audio_url'].rsplit('/',1)[-1].removesuffix('.wav')
+                    cached=_AUDIO_STORE.get(audio_key)
+                    path=Path(settings.LEARNING_MEDIA_DIR)/f'podcast-{audio_key}.wav'
+                    if (cached and cached[1]>time.time()) or (path.is_file() and path.stat().st_mtime+14*86400>time.time()):
+                        return _GenerateOut(**previous)
+                    restore_podcast=previous
+                    restore_speed=course.result(guided,'listening').get('speed',1.0)
+                body.level=guided.level
+                lesson_objective=guided.content['spec']['objective']
             # Посекционный дневной лимит (free: 1 подкаст/день). Проверяем ДО
             # дорогой LLM/TTS-генерации. Подписчики/FREE_PERIOD — безлимит.
-            if await is_section_limit_reached(repo, user, section="listening"):
+            if not body.learning_lesson_id and await is_section_limit_reached(repo, user, section="listening"):
                 await session.commit()
                 raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "limit_reached")
             if body.use_vocab:
@@ -402,6 +421,17 @@ async def generate_podcast(
             except Exception as exc:
                 logger.warning("[listening] история тем недоступна: %r", exc)
             await session.commit()
+
+    if restore_podcast:
+        # Restore the same recording without another LLM call/session/usage credit.
+        from pathlib import Path
+        pcm=await _synthesize_full(restore_podcast['transcript'],speed=restore_speed)
+        wav_bytes=_wrap_pcm_to_wav(pcm)
+        audio_key=restore_podcast['audio_url'].rsplit('/',1)[-1].removesuffix('.wav')
+        directory=Path(settings.LEARNING_MEDIA_DIR); directory.mkdir(parents=True,exist_ok=True)
+        await asyncio.to_thread((directory/f'podcast-{audio_key}.wav').write_bytes,wav_bytes)
+        _AUDIO_STORE[audio_key]=(wav_bytes,time.time()+_AUDIO_TTL_SEC)
+        return _GenerateOut(**restore_podcast)
 
     # Онлайн-присутствие: на время генерации юзер виден в админке как 🎧.
     # Снимаем в finally — даже при ошибке LLM/TTS не оставляем «фантом».
@@ -423,6 +453,8 @@ async def generate_podcast(
             vocab_words=vocab_words,
             avoid_topics=avoid_topics,
         )
+        if lesson_objective:
+            sys_prompt += f'\nKeep this episode in the lesson situation: {lesson_objective}. Use the supplied vocabulary naturally.'
         # Запас по токенам: ~2 токена на слово + buffer.
         max_tokens = max(512, body.duration_min * WORDS_PER_MINUTE * 2 + 256)
         raw_script = await _call_llm_for_script(
@@ -462,6 +494,11 @@ async def generate_podcast(
             from .voice import STREAK_MIN_DURATION_SEC
             async with db_session() as session:
                 repo = Repo(session)
+                from . import learning_modules as course
+                guided=await course.require(session,user_id,body.learning_lesson_id,'listening',finishing=True)
+                # Serialize simultaneous generations before opening/crediting a session.
+                previous=course.result(guided,'listening').get('podcast')
+                if previous: return _GenerateOut(**previous)
                 row = await repo.open_session(
                     user_id=user_id,
                     mode="listening",
@@ -495,6 +532,14 @@ async def generate_podcast(
                     except Exception as exc:
                         logger.warning("[listening] bump_streak failed: %s", exc)
                 session_id = row.id
+                if guided is not None:
+                    from pathlib import Path
+                    directory=Path(settings.LEARNING_MEDIA_DIR); directory.mkdir(parents=True,exist_ok=True)
+                    await asyncio.to_thread((directory/f'podcast-{audio_id}.wav').write_bytes,wav_bytes)
+                    course.save(guided,'listening',completed=False,seconds=duration_seconds,speed=body.speed,
+                        session_id=str(row.id),podcast={
+                            'session_id':row.id,'transcript':transcript,
+                            'audio_url':f'/api/listening/audio/{audio_id}.wav','used_words':used_words})
                 await session.commit()
 
         return _GenerateOut(
@@ -514,6 +559,15 @@ async def get_audio(audio_id: str, request: Request) -> Response:
     без этого iOS Safari WebView не умеет проигрывать большие (>10 МБ) аудио
     и помечает источник как «Ошибка» рядом с play."""
     entry = _AUDIO_STORE.get(audio_id)
+    if entry is not None and entry[1]<time.time():
+        _AUDIO_STORE.pop(audio_id,None); entry=None
+    if entry is None:
+        import re
+        from pathlib import Path
+        if re.fullmatch(r'[A-Za-z0-9_-]{22}',audio_id):
+            path=Path(settings.LEARNING_MEDIA_DIR)/f'podcast-{audio_id}.wav'
+            if path.is_file() and path.stat().st_mtime+14*86400>time.time():
+                entry=(await asyncio.to_thread(path.read_bytes),path.stat().st_mtime+14*86400)
     if entry is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "audio_not_found")
     wav_bytes, expires_at = entry

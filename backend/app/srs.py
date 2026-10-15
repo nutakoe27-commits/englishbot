@@ -34,6 +34,7 @@ from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel
 
 from . import presence
+from . import learning_modules as course
 from .auth import auth_key, resolve_user
 from .config import settings
 from .db import db_session
@@ -60,6 +61,7 @@ _SESSION_STORE: dict[str, dict] = {}
 
 
 class _StartIn(BaseModel):
+    learning_lesson_id: Optional[str] = None
     init_data: Optional[str] = None
 
 
@@ -89,6 +91,7 @@ class _HeartbeatIn(BaseModel):
 
 
 class _ReviewIn(BaseModel):
+    learning_lesson_id: Optional[str] = None
     init_data: Optional[str] = None
     word: str
     correct: bool
@@ -101,6 +104,7 @@ class _ReviewOut(BaseModel):
 
 
 class _FinishIn(BaseModel):
+    learning_lesson_id: Optional[str] = None
     init_data: Optional[str] = None
     session_id: str
     reviewed: int = 0
@@ -145,7 +149,7 @@ async def stats(
 
 @router.get("/session", response_model=_SessionOut)
 async def get_session(
-    init_data: str = "", limit: int = SESSION_CARDS_LIMIT,
+    init_data: str = "", limit: int = SESSION_CARDS_LIMIT, learning_lesson_id: Optional[str] = None,
     authorization: Optional[str] = Header(None),
 ) -> _SessionOut:
     """Топ-N due-карточек для review. Если 0 — пустой массив."""
@@ -157,6 +161,11 @@ async def get_session(
     async with db_session() as session:
         repo = Repo(session)
         user = await resolve_user(repo, authorization=authorization, init_data=init_data)
+        guided=await course.require(session,user.id,learning_lesson_id,'words')
+        if guided is not None:
+            reviews=course.result(guided,'words').get('reviews',{})
+            return _SessionOut(cards=[_Card(word=w['word'],translation=w['translation'],box=0)
+                for w in guided.content['words'] if w['word'] not in reviews])
         rows = await repo.list_srs_due(user.id, limit=n)
     return _SessionOut(
         cards=[
@@ -182,10 +191,15 @@ async def start_session(
                 repo, authorization=authorization, init_data=body.init_data,
             )
             user_id = user.id
+            guided=await course.require(session,user_id,body.learning_lesson_id,'words')
+            previous=course.result(guided,'words')
+            if previous.get('session_id'):
+                return _StartOut(session_id=str(previous['session_id']))
             row = await repo.open_session(
                 user_id=user_id, mode="srs", level=None, role=None,
             )
             session_id_str = str(row.id)
+            course.save(guided,'words',session_id=session_id_str,completed=False,reviews={})
             await session.commit()
     else:
         # Dev-режим без БД — синтетический id.
@@ -223,10 +237,22 @@ async def review(body: _ReviewIn, authorization: Optional[str] = Header(None)) -
     async with db_session() as session:
         repo = Repo(session)
         user = await resolve_user(repo, authorization=authorization, init_data=body.init_data)
+        guided=await course.require(session,user.id,body.learning_lesson_id,'words')
+        reviews=dict(course.result(guided,'words').get('reviews',{}))
+        if guided is not None:
+            if body.word not in {w['word'] for w in guided.content['words']}:
+                raise HTTPException(409,'card_not_in_lesson')
+            if body.word in reviews:
+                return _ReviewOut(**reviews[body.word]['result'])
         result = await repo.record_srs_review(user.id, body.word, correct=body.correct)
         if result is None:
             await session.rollback()
             raise HTTPException(status.HTTP_404_NOT_FOUND, "card_not_found")
+        if guided is not None:
+            reviews[body.word]={'correct':body.correct,'result':{
+                'ok':True,'new_box':int(result['new_box']),
+                'next_due_at':result['next_due_at'].isoformat() if result['next_due_at'] else None}}
+            course.save(guided,'words',reviews=reviews)
         await session.commit()
     return _ReviewOut(
         ok=True,
@@ -241,6 +267,30 @@ async def finish_session(body: _FinishIn, authorization: Optional[str] = Header(
 
     Зеркалит финализацию grammar.finish / listening.
     """
+    if body.learning_lesson_id:
+        from .db import Repo
+        from .db.models import Session
+        from .learning import now
+        async with db_session() as session:
+            account=await resolve_user(Repo(session),authorization=authorization,init_data=body.init_data)
+            guided=await course.require(session,account.id,body.learning_lesson_id,'words',finishing=True)
+            previous=course.result(guided,'words')
+            if str(previous.get('session_id'))!=body.session_id:
+                raise HTTPException(409,'module_session_mismatch')
+            if previous.get('completed'): return _FinishOut()
+            reviews=previous.get('reviews',{})
+            if any(w['word'] not in reviews for w in guided.content['words']):
+                raise HTTPException(409,'cards_remaining')
+            activity=await session.get(Session,int(body.session_id),with_for_update=True)
+            if activity is None or activity.user_id!=account.id or activity.mode!='srs':
+                raise HTTPException(404,'session_not_found')
+            duration=max(0,min(body.duration_sec,1800,int((now()-activity.started_at).total_seconds())+2))
+            await Repo(session).close_session(session_id=activity.id,used_seconds=duration)
+            if duration: await Repo(session).add_used_seconds(user_id=account.id,seconds=duration)
+            if duration>=30: await Repo(session).bump_streak(account.id,role='srs')
+            course.save(guided,'words',completed=True,correct=sum(r['correct'] for r in reviews.values()),
+                total=len(reviews),seconds=duration)
+        return _FinishOut()
     entry = _SESSION_STORE.pop(body.session_id, None)
     user_id = entry.get("user_id") if entry else None
 

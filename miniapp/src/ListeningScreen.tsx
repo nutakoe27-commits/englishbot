@@ -37,7 +37,10 @@ const API_BASE =
 const BOT_USERNAME =
   (import.meta.env.VITE_BOT_USERNAME as string | undefined) || "kmo_ai_english_bot";
 
+import type { GuidedModule } from "./learningApi";
+
 interface Props {
+  course?: GuidedModule & { podcast?: PodcastResult; completed?: boolean };
   onExit: () => void;
 }
 
@@ -50,16 +53,17 @@ interface PodcastResult {
   used_words: string[];
 }
 
-export function ListeningScreen({ onExit }: Props) {
-  const [settings, setSettings] = useState<ListeningSettings>(() => loadListeningSettings());
-  const [phase, setPhase] = useState<Phase>("config");
-  const [result, setResult] = useState<PodcastResult | null>(null);
+export function ListeningScreen({ onExit, course }: Props) {
+  const [settings, setSettings] = useState<ListeningSettings>(() => ({...loadListeningSettings(),...(course ? {level:course.level,durationMin:1,useVocab:true,category:course.goal==='travel' ? 'travel' as const : course.goal==='work' ? 'business' as const : 'culture' as const} : {})}));
+  const [phase, setPhase] = useState<Phase>(course?.podcast ? "player" : "config");
+  const [result, setResult] = useState<PodcastResult | null>(() => course?.podcast ? {...course.podcast,audio_url:course.podcast.audio_url.startsWith("http") ? course.podcast.audio_url : API_BASE+course.podcast.audio_url} : null);
   const [error, setError] = useState<string>("");
   const [userName, setUserName] = useState<string>("there");
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
   const [wordsOpen, setWordsOpen] = useState<boolean>(false);
   const [paywall, setPaywall] = useState<boolean>(false);
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
+  const [listened,setListened]=useState(!!course?.completed);
   const abortRef = useRef<AbortController | null>(null);
   useLucide(`${phase}-${progressOpen}-${wordsOpen}-${paywall}`);
 
@@ -74,7 +78,7 @@ export function ListeningScreen({ onExit }: Props) {
 
   // Persist при каждом изменении настроек.
   useEffect(() => {
-    saveListeningSettings(settings);
+    if (!course) saveListeningSettings(settings);
   }, [settings]);
 
   const startGeneration = async () => {
@@ -90,7 +94,7 @@ export function ListeningScreen({ onExit }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          init_data: WebApp.initData || "",
+          init_data: WebApp.initData || "", learning_lesson_id:course?.lessonId,
           duration_min: settings.durationMin,
           category: settings.category,
           use_vocab: settings.useVocab,
@@ -127,6 +131,8 @@ export function ListeningScreen({ onExit }: Props) {
       if (abortRef.current === controller) abortRef.current = null;
     }
   };
+
+  useEffect(() => () => abortRef.current?.abort(),[]);
 
   const cancelGeneration = () => {
     abortRef.current?.abort();
@@ -205,7 +211,9 @@ export function ListeningScreen({ onExit }: Props) {
                 </span>
               )}
             </div>
-            <PodcastPlayer audioUrl={result.audio_url} onRegenerate={backToConfig} />
+            <PodcastPlayer audioUrl={result.audio_url} onRegenerate={backToConfig} onEnded={() => setListened(true)} onError={() => setError("Не удалось загрузить звук. Можно восстановить подкаст.")} />
+            {error && <div role="alert" className="lst-error"><p>{error}</p><button type="button" className="lst-secondary-btn" onClick={() => void startGeneration()}>Восстановить подкаст</button></div>}
+            {course && <><p className="learn-muted">Прослушай подкаст до конца. Можно открыть перевод любого слова в тексте ниже.</p><button type="button" className="lst-primary-btn" disabled={!listened} onClick={course.onComplete}>Продолжить урок →</button></>}
             <Transcript apiBase={API_BASE} text={result.transcript} />
           </div>
         )}

@@ -28,6 +28,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from . import presence
+from . import learning_modules as course
 from .config import settings
 from .db import db_session
 from . import grammar_sessions
@@ -65,6 +66,7 @@ CATEGORY_HINTS = {
 
 
 class _GenerateIn(BaseModel):
+    learning_lesson_id: Optional[str] = None
     init_data: Optional[str] = None
     mode: str = "weak_points"     # weak_points | topic
     level: str = "B1"
@@ -100,6 +102,7 @@ class _ResultItem(BaseModel):
 
 
 class _FinishIn(BaseModel):
+    learning_lesson_id: Optional[str] = None
     init_data: Optional[str] = None
     session_id: str
     results: list[_ResultItem]
@@ -445,8 +448,10 @@ async def generate_exercises(
                 repo, authorization=authorization, init_data=body.init_data,
             )
             user_id = user.id
+            guided=await course.require(session,user.id,body.learning_lesson_id,"mistakes")
+            if guided is not None: body.level=guided.level
             # Посекционный дневной лимит (free: 1 урок/тест в день). ДО LLM.
-            if await is_section_limit_reached(repo, user, section="grammar"):
+            if not body.learning_lesson_id and await is_section_limit_reached(repo, user, section="grammar"):
                 await session.commit()
                 raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "limit_reached")
             if body.mode == "weak_points":
@@ -492,6 +497,7 @@ async def generate_exercises(
         session_id_str = grammar_sessions.prepare(
             user_id=user_id, level=body.level,
             role=body.mode if body.mode == "weak_points" else default_category,
+            learning_lesson_id=body.learning_lesson_id, exercises=[e.model_dump() for e in exercises],
         )
         return _GenerateOut(session_id=session_id_str, exercises=exercises)
     finally:
@@ -532,6 +538,7 @@ async def finish_session(body: _FinishIn, authorization: Optional[str] = Header(
             raise HTTPException(409, "grammar_session_kind_mismatch")
         if row.grammar_status == "completed":
             return _FinishOut(**(row.grammar_result or {}))
+        correct,total=course.grade_grammar(session,row,body.learning_lesson_id,body.results)
         duration = max(row.used_seconds or 0, min(grammar_sessions.MAX_DURATION, max(0, body.duration_sec)))
         streak_current = streak_best = 0
         if duration:
@@ -544,6 +551,8 @@ async def finish_session(body: _FinishIn, authorization: Optional[str] = Header(
         row.grammar_last_seen_at = row.ended_at
         row.grammar_status = "completed"
         row.grammar_result = result.model_dump()
+        await course.grammar_completed(session,uid,body.learning_lesson_id,row,
+            correct=correct,total=total)
     presence.clear(uid)
     return result
 
@@ -568,6 +577,7 @@ class _TopicsOut(BaseModel):
 
 
 class _LessonIn(BaseModel):
+    learning_lesson_id: Optional[str] = None
     init_data: Optional[str] = None
     topic_key: str
 
@@ -581,6 +591,8 @@ class _LessonOut(BaseModel):
 
 
 class _LessonFinishIn(BaseModel):
+    results: list[_ResultItem] = Field(default_factory=list)
+    learning_lesson_id: Optional[str] = None
     init_data: Optional[str] = None
     topic_key: str
     session_id: str
@@ -692,7 +704,7 @@ async def list_topics(
 
 async def _resolve_topic_for_user(
     body_init_data: Optional[str], topic_key: str,
-    authorization: Optional[str] = None,
+    authorization: Optional[str] = None, learning_lesson_id: Optional[str] = None,
 ) -> tuple:
     """Общий preflight для /lesson и /lesson/exercises: юзер, тема,
     проверка locked. Возвращает (user_id, level, title_ru, category)."""
@@ -708,9 +720,12 @@ async def _resolve_topic_for_user(
             repo, authorization=authorization, init_data=body_init_data,
         )
         user_id = user.id
+        guided=await course.require(session,user.id,learning_lesson_id,"grammar")
+        if guided is not None and guided.topic_key!=topic_key:
+            raise HTTPException(409,"course_topic_mismatch")
         # Предварительная проверка лимита; повторная проверка и создание
         # сессии выполняются атомарно в /start, когда начинается практика.
-        if await is_section_limit_reached(repo, user, section="grammar"):
+        if not guided and await is_section_limit_reached(repo, user, section="grammar"):
             await session.commit()
             raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "limit_reached")
         topic = await repo.get_grammar_topic(topic_key)
@@ -719,7 +734,7 @@ async def _resolve_topic_for_user(
         topics = list(await repo.list_grammar_topics())
         progress = await repo.get_user_grammar_progress(user_id)
         statuses = _compute_topic_statuses(topics, progress)
-        if statuses.get(topic_key) == "locked":
+        if not guided and statuses.get(topic_key) == "locked":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "topic_locked")
         result = (user_id, topic.level, topic.title_ru, topic.category)
         await session.commit()
@@ -732,7 +747,7 @@ async def get_lesson(body: _LessonIn, authorization: Optional[str] = Header(None
     читать урок мгновенно; упражнения фронт запрашивает параллельно через
     /lesson/exercises и они готовятся, пока человек читает."""
     user_id, topic_level, topic_title, _category = await _resolve_topic_for_user(
-        body.init_data, body.topic_key, authorization,
+        body.init_data, body.topic_key, authorization, body.learning_lesson_id,
     )
 
     from .grammar_lessons import THEORY
@@ -771,7 +786,7 @@ async def get_lesson_exercises(
 ) -> _LessonExercisesOut:
     """Prefetch exercises without a sessions row or daily quota consumption."""
     user_id, topic_level, topic_title, topic_category = await _resolve_topic_for_user(
-        body.init_data, body.topic_key, authorization,
+        body.init_data, body.topic_key, authorization, body.learning_lesson_id,
     )
 
     from .grammar_lessons import THEORY
@@ -798,6 +813,7 @@ async def get_lesson_exercises(
 
     session_id_str = grammar_sessions.prepare(
         user_id=user_id, level=topic_level, role=body.topic_key, topic_key=body.topic_key,
+        learning_lesson_id=body.learning_lesson_id, exercises=[e.model_dump() for e in exercises],
     )
 
     return _LessonExercisesOut(exercises=exercises, session_id=session_id_str)
@@ -821,6 +837,8 @@ async def finish_lesson(body: _LessonFinishIn, authorization: Optional[str] = He
             raise HTTPException(404, "topic_not_found")
         total = max(1, int(body.total or 0))
         correct = max(0, min(int(body.correct or 0), total))
+        if body.learning_lesson_id:
+            correct,total=course.grade_grammar(session,row,body.learning_lesson_id,body.results)
         score = round(correct / total * 100)
         passed = score >= PASS_THRESHOLD
         if row.grammar_status == "completed":
@@ -847,5 +865,6 @@ async def finish_lesson(body: _LessonFinishIn, authorization: Optional[str] = He
         row.grammar_last_seen_at = row.ended_at
         row.grammar_status = "completed"
         row.grammar_result = result.model_dump()
+        await course.grammar_completed(session,uid,body.learning_lesson_id,row,correct=correct,total=total)
     presence.clear(uid)
     return result

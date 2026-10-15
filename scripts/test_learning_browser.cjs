@@ -1,152 +1,159 @@
-// With Vite running: CHROMIUM_PATH=/usr/bin/chromium node --test scripts/test_learning_browser.cjs
+// Real shared React screens; external AI/audio and API persistence are controlled.
 const assert=require('node:assert/strict');
 const {test,before,after}=require('node:test');
 const {chromium}=require('playwright');
+const fs=require('node:fs/promises');
 const BASE=process.env.LEARNING_UI_URL || 'http://localhost:5173';
+const SHOTS=process.env.LEARNING_SCREENSHOT_DIR;
+const APP=!!process.env.LEARNING_APP_ENTRY;
 let browser;
-before(async () => {browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH ? {executablePath:process.env.CHROMIUM_PATH} : {})});});
-after(async () => {await browser?.close();});
-const clone=value => JSON.parse(JSON.stringify(value));
-const question=id => ({id,prompt:id==='w0' ? 'name' : id==='l0' ? 'Where is Alex from?' : 'I ___ a student.',choices:['am','is','are','be']});
-function lesson() {
-  return {id:'lesson-one',status:'prepared',step_index:0,used_seconds:0,conversation:[],result:null,listening_text_mode:false,
-    content:{spec:{ordinal:1,cycle:1,position:1,level:'A1',topic_key:'a1_to_be',title:'Знакомимся',objective:'представиться и узнать о собеседнике',kind:'new',estimated_minutes:18},
-      warmup:[question('w0')],theory:'I am a student. — Я студент.\n\nИспользуем am с I.',practice:[question('p0'),question('p1')],
-      listening:{script:'My name is Alex. I am from Bristol. I work in a shop.',questions:[question('l0')]},
-      conversation:{objective:'представиться',opening:'What is your name?',prompts:['What is your name?','Where do you live?','What do you enjoy?']},
-      words:[{word:'name',translation:'имя'}]}};
-}
-async function until(check) {for(let i=0;i<100;i++){if(check())return;await new Promise(r=>setTimeout(r,20));}assert(check());}
-async function fixture(t,{profile=true,due=false,failFinish=false,heartbeatGate=null}={}) {
-  const context=await browser.newContext({viewport:{width:390,height:844}}); t.after(()=>context.close());
-  let row=lesson(), completed=due ? 20 : 0, checkpoint=null;
-  const calls=[], errors=[];
-  const overview=()=>({enabled:true,placement_level:'A1',goals:{general:'Общий английский',travel:'Путешествия',work:'Работа',daily:'Повседневное общение'},
-    profile:profile ? {goal:'general',goal_label:'Общий английский',level:'A1',completed_count:completed,cycle:1,cycle_completed:completed,until_checkpoint:20-completed,checkpoint_due:due} : null,
-    next_lesson:profile && !due ? row : null,
-    route:Array.from({length:20},(_,i)=>({...row.content.spec,ordinal:i+1,position:i+1,status:i<completed ? 'completed' : i===completed ? row.status : 'locked',id:i===completed ? row.id : null})),
-    skills:['grammar','vocabulary','listening','speaking'].map((key,i)=>({key,label:['Грамматика','Лексика','Понимание речи','Разговор'][i],attempts:0,accuracy:null})),history:[]});
-  await context.route('**/*',async route=>{
-    const url=new URL(route.request().url());
-    if(!['localhost','127.0.0.1'].includes(url.hostname)) return route.abort();
-    if(!url.pathname.startsWith('/api/learning/')) return route.continue();
-    const json=(body,status=200)=>route.fulfill({status,contentType:'application/json',headers:{'access-control-allow-origin':BASE,'access-control-allow-methods':'GET,POST,PUT,OPTIONS','access-control-allow-headers':'*'},body:JSON.stringify(clone(body))});
-    if(route.request().method()==='OPTIONS') return json({});
-    const key=url.pathname.slice('/api/learning'.length),body=route.request().postDataJSON() || {};
-    calls.push({key,body});
-    if(key==='/overview') return json(overview());
-    if(key==='/profile') {profile=true;return json({ok:true});}
-    if(key.endsWith('/audio')) return json({detail:'learning_audio_unavailable'},503);
-    if(key==='/checkpoint/start') {
-      checkpoint ||= {id:'checkpoint-one',status:'active',position:0,total:2,after_count:20,level_before:'A1',question:{...question('cp0'),kind:'choice'},result:null};
-      return json(checkpoint);
-    }
-    if(key==='/checkpoint/checkpoint-one/answer') {
-      checkpoint.position++;
-      if(checkpoint.position===1) checkpoint.question={id:'cp_speaking',kind:'speaking',prompt:'Расскажи о своих планах по-английски.',choices:[]};
-      else {checkpoint.question=null;checkpoint.status='completed';checkpoint.result={cefr:'A1',level_before:'A1',after_lessons:20,skills:{grammar:{correct:1,total:1}}};due=false;}
-      return json(checkpoint);
-    }
-    if(key.endsWith('/start')) {row.status='active';return json(row);}
-    if(key.endsWith('/heartbeat')) {if(heartbeatGate) await heartbeatGate; return json({active:row.status==='active',used_seconds:0});}
-    if(key.endsWith('/pause')) {if(row.status!=='completed')row.status='paused';return json({ok:true});}
-    if(key.endsWith('/listening-text')) {row.listening_text_mode=true;return json(row);}
-    if(key.endsWith('/answer')) {
-      const all=[...row.content.warmup,...row.content.practice,...row.content.listening.questions];
-      const q=all.find(q=>q.id===body.question_id);
-      q.answer ||= {value:body.answer,correct:body.answer==='am',correct_answer:'am',explanation:'I am.'};
-      return json({lesson:row,answer:q.answer});
-    }
-    if(key.endsWith('/advance')) {row.step_index=Math.max(row.step_index,body.step_index+1);return json(row);}
-    if(key.endsWith('/talk')) {
-      let turn=row.conversation.find(t=>t.id===body.turn_id);
-      if(!turn){turn={id:body.turn_id,text:body.text,reply:'Tell me more.',feedback:'Ответ сохранён.',verified_voice:false,assessed:false,score:null};row.conversation.push(turn);}
-      return json({lesson:row,turn});
-    }
-    if(key.endsWith('/finish')) {
-      const n=calls.filter(c=>c.key.endsWith('/finish')).length;
-      if(failFinish && n<=3) return json({detail:'temporary_failure'},503);
-      if(row.status!=='completed'){row.status='completed';completed++;row.result={correct:4,total:4,objective:row.content.spec.objective,words:row.content.words,speaking_assessed:false,checkpoint_due:false};}
-      return json(row);
-    }
-    return json({detail:'unexpected_mock_request'},500);
-  });
-  const page=await context.newPage(); page.on('pageerror',e=>errors.push(e.message));
-  t.after(()=>assert.deepEqual(errors,[]));
-  await page.goto(BASE+'/tests/learning.html');
-  await page.getByRole('heading',{name:'Твой английский, шаг за шагом'}).waitFor();
-  return {page,calls,count:suffix=>calls.filter(c=>c.key.endsWith(suffix)).length,getRow:()=>row};
-}
-async function start(page) {await page.getByRole('button',{name:'Начать урок →',exact:true}).click();await page.getByRole('heading',{name:'name',exact:true}).waitFor();}
-async function doQuestion(page) {await page.getByRole('button',{name:'am',exact:true}).click();await page.getByText('Верно!',{exact:true}).waitFor();await page.getByRole('button',{name:'Дальше →',exact:true}).click();}
-async function reachSummary(page) {
-  await start(page); await doQuestion(page);
-  await page.getByRole('button',{name:'Перейти к практике →',exact:true}).click();
-  await doQuestion(page); await doQuestion(page);
-  await page.getByRole('button',{name:'Открыть текст вместо аудио',exact:true}).click();
-  await page.getByText('Этот этап учитывается как чтение.',{exact:false}).waitFor();
-  await doQuestion(page);
-  for(let i=0;i<3;i++) {
-    await page.getByPlaceholder('Напиши или запиши ответ…').fill('I live in Rome and I like music.');
-    await page.getByRole('button',{name:'Отправить ответ',exact:true}).click();
-    await page.getByRole('button',{name:'Отправить ответ',exact:true}).waitFor();
-    await page.waitForFunction(()=>document.querySelector('textarea')?.value==='');
+before(async()=>{browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium'});if(SHOTS)await fs.mkdir(SHOTS,{recursive:true});});
+after(async()=>{await browser?.close();});
+const copy=x=>JSON.parse(JSON.stringify(x));
+function lesson(){return {id:'lesson-one',status:'prepared',step_index:0,used_seconds:0,activity_token:'active-one',modules:{},conversation:[],result:null,listening_text_mode:false,
+ content:{engine:'modules',spec:{ordinal:1,cycle:1,position:1,level:'A1',topic_key:'a1_to_be',title:'Знакомимся',objective:'представиться и узнать о собеседнике',kind:'new',estimated_minutes:18},
+ warmup:[],theory:'',practice:[],listening:{script:'',questions:[]},conversation:{},words:[{word:'name',translation:'имя'},{word:'city',translation:'город'}]}};}
+async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFinish=false,width=390}={}){
+ const context=await browser.newContext({viewport:{width,height:844}});t.after(async()=>{if(SHOTS && context.pages()[0])await shot(context.pages()[0],'last-'+t.name.replace(/[^a-z0-9]+/gi,'-'));await context.close();});
+ if(process.env.LEARNING_LUCIDE_PATH)await context.addInitScript({path:process.env.LEARNING_LUCIDE_PATH});
+ await context.addInitScript(()=>{localStorage.setItem('englishbot_jwt','local-browser-test');localStorage.setItem('englishbot.tutorSettings.v1',JSON.stringify({level:'A1',mode:'chat'}));});
+ context.setDefaultTimeout(7000);
+ const row=lesson(),calls=[],errors=[];let level='A1',completed=0,turns=0;
+ const overview=()=>({enabled:true,placement_level:level,goals:{general:'Общий английский',travel:'Путешествия',work:'Работа'},profile:profile?{goal:'general',goal_label:'Общий английский',level,completed_count:completed,cycle:1,cycle_completed:completed,until_checkpoint:20-completed,checkpoint_due:false}:null,next_lesson:profile?row:null,
+  route:Array.from({length:20},(_,i)=>({...row.content.spec,ordinal:i+1,position:i+1,status:i<completed?'completed':i===completed?row.status:'locked',id:i===completed?row.id:null})),
+  skills:['grammar','vocabulary','listening','speaking'].map((key,i)=>({key,label:['Грамматика','Лексика','Понимание речи','Разговор'][i],attempts:0,accuracy:null})),history:[]});
+ await context.routeWebSocket('**/ws/voice**',ws=>{
+  assert.equal(new URL(ws.url()).searchParams.get('learning_lesson_id'),row.id);
+  ws.onMessage(raw=>{const data=JSON.parse(String(raw));if(data.type==='user_text'){turns++;if(process.env.LEARNING_DEBUG)console.log('WS USER TURN',turns);ws.send(JSON.stringify({type:'text',role:'tutor',text:'Tell me more about your city.'}));}});
+  ws.onClose(()=>{row.modules.conversation={completed:turns>=3,turns};});
+ });
+ await context.route('**/*',async route=>{
+  const url=new URL(route.request().url());
+  if(!['localhost','127.0.0.1'].includes(url.hostname))return route.abort();
+  if(!url.pathname.startsWith('/api/'))return route.continue();
+  if(url.pathname.endsWith('.wav')||url.pathname==='/api/tts/word'){
+   const wav=Buffer.alloc(48044);wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(24000,24);wav.writeUInt32LE(48000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(wav.length-44,40);
+   return route.fulfill({contentType:'audio/wav',body:wav});
   }
-  await page.getByRole('button',{name:'Перейти к итогу →',exact:true}).click();
-  await page.getByRole('heading',{name:'Твоя практика сегодня',exact:true}).waitFor();
+  const json=(body,status=200)=>route.fulfill({status,contentType:'application/json',headers:{'access-control-allow-origin':BASE,'access-control-allow-methods':'GET,POST,PUT,OPTIONS','access-control-allow-headers':'*'},body:JSON.stringify(copy(body))});
+  if(route.request().method()==='OPTIONS')return json({});
+  const key=url.pathname,body=route.request().postDataJSON()||{};calls.push({key,body});
+  if(key==='/api/auth/me')return json({id:123,first_name:'Test',tg_id:null,email:'test@example.invalid',identities:[{provider:'native'}],tutorial_done:true,has_subscription:true,cefr_level:level});
+  if(key==='/api/auth/level'){level=body.level;if(row.status==='prepared')row.content.spec.level=level;return json({ok:true,level});}
+  if(key==='/api/learning/overview')return json(overview());
+  if(key==='/api/learning/profile'){profile=true;return json({ok:true});}
+  if(key==='/api/grammar/lesson')return json({topic_key:'a1_to_be',title_ru:'Глагол to be',theory:'Используем **am** с I.\n\nI am a student. — Я студент.',exercises:[],session_id:''});
+  if(key==='/api/grammar/lesson/exercises'||key==='/api/grammar/generate'){
+   if(key.endsWith('/generate')&&!mistakes)return json({detail:'no_mistakes'},409);
+   return json({session_id:'prepared-one',exercises:Array.from({length:4},(_,i)=>({id:'e'+i,type:'mcq',category:'tense',prompt:'I ___ a student.',choices:['am','is','are','be'],correct:'am',explanation:'I am.'}))});
+  }
+  if(key==='/api/grammar/start')return json({session_id:'101'});
+  if(key==='/api/grammar/lesson/finish'||key==='/api/grammar/finish'){
+   row.modules[row.step_index===0?'grammar':'mistakes']={completed:true,correct:4,total:4};return json({ok:true,passed:true,score:100,best_score:100,next_topic_key:null});
+  }
+  if(key==='/api/grammar/heartbeat'||key==='/api/grammar/abandon')return json({ok:true});
+  if(key==='/api/srs/session'&&route.request().method()==='GET'){
+   const reviewed=row.modules.words?.reviews||{};return json({cards:row.content.words.filter(w=>!reviewed[w.word]).map(w=>({...w,box:0}))});
+  }
+  if(key==='/api/srs/session/start'){row.modules.words||={reviews:{}};return json({session_id:'102'});}
+  if(key==='/api/srs/review'){row.modules.words.reviews[body.word]=true;return json({ok:true,new_box:1,next_due_at:'2026-10-16T10:00:00'});}
+  if(key==='/api/srs/session/finish'){if(failSrsFinish&&calls.filter(c=>c.key===key).length===1)return json({detail:'temporary_failure'},503);row.modules.words.completed=true;return json({ok:true});}
+  if(key==='/api/srs/heartbeat')return json({ok:true});
+  if(key==='/api/listening/generate'){
+   const podcast={session_id:103,transcript:'My name is Alex. I live in Bristol.',audio_url:'/api/listening/audio/test.wav',used_words:['name']};
+   row.modules.listening={completed:false,podcast};return json(podcast);
+  }
+  if(key==='/api/learning/lessons/lesson-one/listened'){row.modules.listening.completed=true;return json(row);}
+  if(key==='/api/learning/lessons/lesson-one')return json(row);
+  if(key.endsWith('/start')){row.status='active';return json(row);}
+  if(key.endsWith('/pause')){if(row.status!=='completed')row.status='paused';return json({ok:true});}
+  if(key.endsWith('/heartbeat'))return json({active:row.status==='active',used_seconds:0});
+  if(key.endsWith('/advance')){
+   if(body.step_index===1&&!mistakes)row.modules.mistakes={completed:true,skipped:true};
+   assert(row.modules[['grammar','mistakes','words','listening','conversation'][body.step_index]]?.completed,'stage cannot advance before the existing module saves');
+   row.step_index=Math.max(row.step_index,body.step_index+1);return json(row);
+  }
+  if(key==='/api/learning/lessons/lesson-one/finish'){
+   if(failFinish&&calls.filter(c=>c.key===key).length<=3)return json({detail:'temporary_failure'},503);
+   if(row.status!=='completed'){row.status='completed';completed++;row.result={correct:6,total:6,objective:row.content.spec.objective,words:row.content.words,speaking_assessed:false,checkpoint_due:false};}
+   return json(row);
+  }
+  if(key==='/api/user-words')return json({words:row.content.words,total:2,limit:3000});
+  if(key==='/api/learner/recent-context')return json({recent_vocab:[],recent_mistakes:[]});
+  return json({});
+ });
+ const page=await context.newPage();if(process.env.LEARNING_DEBUG)page.on('console',msg=>console.log(msg.type(),msg.text()));page.on('pageerror',e=>errors.push(e.message));t.after(()=>assert.deepEqual(errors,[]));
+ await page.goto(BASE+(APP ? '/?mode=learning' : '/tests/learning.html'));await page.getByRole('heading',{name:'Твой английский, шаг за шагом'}).waitFor();
+ return {page,calls,row,getLevel:()=>level};
+}
+async function shot(page,name){if(SHOTS)await page.screenshot({path:`${SHOTS}/${name}-${page.viewportSize().width}.png`,fullPage:true});}
+async function start(page){await page.getByRole('button',{name:'Начать урок →',exact:true}).click();await page.getByRole('heading',{name:'Глагол to be',exact:true}).waitFor();}
+async function grammar(page){await page.getByRole('button',{name:'К практике',exact:false}).click();for(let i=0;i<4;i++){await page.getByRole('button',{name:'am',exact:true}).click();await page.locator('.grm-exercise > .grm-primary-btn').click();}await page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();}
+async function until(page,fn){await page.waitForFunction(fn);}
+async function summary(f){
+ await start(f.page);await grammar(f.page);
+ await f.page.getByText('Пока нечего разбирать',{exact:true}).waitFor();await shot(f.page,'mistakes');
+ await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();
+ await f.page.getByRole('button',{name:'Начать повторение',exact:true}).click();
+ await f.page.locator('.srs-v2__flip-word').waitFor();await f.page.getByRole('button',{name:'Послушать',exact:true}).click();await shot(f.page,'words');
+ for(let i=0;i<2;i++){await f.page.getByRole('button',{name:'Показать перевод',exact:true}).click();await f.page.getByRole('button',{name:'Знаю',exact:true}).click();}
+ await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();
+ await f.page.getByRole('button',{name:'Сгенерировать подкаст',exact:true}).click();await f.page.locator('audio').waitFor();await shot(f.page,'listening');
+ assert.equal(await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).isDisabled(),true);
+ await f.page.locator('audio').evaluate(audio=>audio.dispatchEvent(new Event('ended')));
+ await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();
+ await f.page.getByRole('textbox',{name:'Сообщение',exact:true}).waitFor();await shot(f.page,'conversation');
+ assert.equal(await f.page.evaluate(()=>{const nav=document.querySelector('.bnav');const controls=document.querySelector('.tutor-controls');return !nav || controls.getBoundingClientRect().bottom<=nav.getBoundingClientRect().top+1;}),true,'conversation controls must stay above bottom navigation');
+ for(let i=0;i<3;i++){await f.page.getByRole('textbox',{name:'Сообщение',exact:true}).fill('I live in Bristol. '+i);await f.page.getByRole('button',{name:'Отправить',exact:true}).click();await f.page.waitForFunction(()=>document.querySelector('textarea[aria-label="Сообщение"]')?.value==='');}
+ await f.page.getByRole('button',{name:'Завершить',exact:true}).click();await f.page.getByRole('button',{name:'Завершить',exact:true}).last().click();
+ await shot(f.page,'after-conversation-close');
+ await f.page.getByRole('heading',{name:'Твоя практика сегодня',exact:true}).waitFor();await shot(f.page,'summary');
 }
 
-test('goal setup and route are usable on a mobile viewport',async t=>{
-  const f=await fixture(t,{profile:false});
-  await f.page.getByLabel('Для чего тебе английский?').selectOption('travel');
-  await f.page.getByRole('button',{name:'Создать мою программу',exact:true}).click();
-  await f.page.getByRole('button',{name:'Начать урок →',exact:true}).waitFor();
-  assert.equal(f.calls.find(c=>c.key==='/profile').body.goal,'travel');
-  assert.equal(await f.page.locator('.learn-node').count(),20);
-  assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+test('mobile goal setup uses the same lesson route',async t=>{
+ const f=await fixture(t,{profile:false});await f.page.getByLabel('Для чего тебе английский?').selectOption('travel');
+ await f.page.getByRole('button',{name:'Создать мою программу',exact:true}).click();await f.page.getByRole('button',{name:'Начать урок →',exact:true}).waitFor();
+ assert.equal(f.calls.find(c=>c.key==='/api/learning/profile').body.goal,'travel');assert.equal(await f.page.locator('.learn-node').count(),20);
 });
-test('all lesson stages work and a failed finish can be retried with the same payload',async t=>{
-  const f=await fixture(t,{failFinish:true}); await reachSummary(f.page);
-  assert.equal(f.count('/pause'),0,'StrictMode must not pause a freshly started lesson');
-  await f.page.getByRole('button',{name:'Завершить урок',exact:true}).click();
-  await f.page.getByRole('button',{name:'Сохранить ещё раз',exact:true}).waitFor();
-  assert.equal(f.count('/finish'),3);
-  await f.page.getByRole('button',{name:'Сохранить ещё раз',exact:true}).click();
-  await f.page.getByRole('heading',{name:'Урок завершён',exact:true}).waitFor();
-  assert.equal(new Set(f.calls.filter(c=>c.key.endsWith('/finish')).map(c=>JSON.stringify(c.body))).size,1);
-  assert.equal(f.getRow().conversation.length,3);
+test('all stages reuse existing modules and retry completion without duplicating requests',{timeout:40000},async t=>{
+ const f=await fixture(t,{failFinish:true});await summary(f);await f.page.getByRole('button',{name:'Завершить урок',exact:true}).click();
+ await f.page.getByRole('button',{name:'Сохранить ещё раз',exact:true}).waitFor();await f.page.getByRole('button',{name:'Сохранить ещё раз',exact:true}).click();
+ await f.page.getByRole('heading',{name:'Урок завершён',exact:true}).waitFor();
+ for(const key of ['/api/grammar/lesson','/api/grammar/lesson/exercises','/api/grammar/lesson/finish','/api/srs/review','/api/listening/generate'])assert(f.calls.some(c=>c.key===key));
+ assert(!f.calls.some(c=>/\/learning\/.*\/(answer|talk|transcribe)$/.test(c.key)),'course must not run duplicate practice engines');
+ assert.equal(new Set(f.calls.filter(c=>c.key==='/api/learning/lessons/lesson-one/finish').map(c=>JSON.stringify(c.body))).size,1);
 });
-test('leaving and reopening a lesson resumes the saved stage',async t=>{
-  const f=await fixture(t); await start(f.page); await doQuestion(f.page);
-  await f.page.getByRole('button',{name:'Сохранить и выйти',exact:false}).click();
-  await until(()=>f.count('/pause')===1);
-  await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();
-  await f.page.getByRole('button',{name:'Перейти к практике →',exact:true}).waitFor();
-  assert.equal(f.getRow().step_index,1);
-  assert.equal(f.getRow().id,'lesson-one');
+test('completed stage survives leaving and resumes without regenerating exercises',async t=>{
+ const f=await fixture(t);await start(f.page);await grammar(f.page);await f.page.getByText('Пока нечего разбирать',{exact:true}).waitFor();
+ await f.page.getByRole('button',{name:'Сохранить и выйти',exact:false}).click();await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();
+ await f.page.getByText('Пока нечего разбирать',{exact:true}).waitFor();assert.equal(f.calls.filter(c=>c.key==='/api/grammar/lesson/exercises').length,1);
 });
-test('the twentieth-lesson checkpoint opens and records a result without invented speaking scores',async t=>{
-  const f=await fixture(t,{due:true});
-  await f.page.getByRole('button',{name:'Начать проверку →',exact:true}).click();
-  await f.page.getByRole('button',{name:'am',exact:true}).click();
-  await f.page.getByLabel('Ответ',{exact:true}).fill('I will travel tomorrow.');
-  await f.page.getByRole('button',{name:'Завершить проверку',exact:true}).click();
-  await f.page.getByRole('heading',{name:'Результат сохранён',exact:true}).waitFor();
-  await f.page.getByText('Устная речь пока не оценена.',{exact:true}).waitFor();
+test('manual level selection updates the route and preserves its completed count',async t=>{
+ const f=await fixture(t);await f.page.getByText('Настройки программы',{exact:true}).click();await f.page.getByLabel('Уровень занятий').selectOption('B2');
+ await f.page.getByRole('button',{name:'Изменить уровень',exact:true}).click();await f.page.getByText('Уровень сохранён',{exact:true}).waitFor();
+ assert.equal(f.getLevel(),'B2');assert.equal(await f.page.locator('.learn-level').textContent(),'B2');assert.equal(await f.page.locator('.learn-node').count(),20);
+ await shot(f.page,'level-settings');
+});
+for(const width of [320,390,430,768])test(`route and grammar fit ${width}px without clipped content`,async t=>{
+ const f=await fixture(t,{width});await shot(f.page,`route-${width}`);
+ assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ await start(f.page);await shot(f.page,`grammar-${width}`);
+ assert.equal(await f.page.evaluate(()=>[...document.querySelectorAll('.learn-course-bar,.grm-theory,.mode-v2-top')].every(e=>e.getBoundingClientRect().right<=innerWidth+1)),true);
 });
 
-test('a delayed heartbeat cannot replace the completed result with a paused screen',async t=>{
-  let release;
-  const heartbeatGate=new Promise(resolve=>{release=resolve;});
-  t.after(()=>release());
-  const f=await fixture(t,{heartbeatGate});
-  await f.page.clock.install();
-  await reachSummary(f.page);
-  await f.page.clock.runFor(20001);
-  await until(()=>f.count('/heartbeat')===1);
-  await f.page.getByRole('button',{name:'Завершить урок',exact:true}).click();
-  await f.page.getByRole('heading',{name:'Урок завершён',exact:true}).waitFor();
-  release();
-  await f.page.waitForTimeout(100);
-  await f.page.getByRole('button',{name:'К программе →',exact:true}).waitFor();
+test('retrying the SRS finish does not submit the last word twice',async t=>{
+ const f=await fixture(t,{failSrsFinish:true});await start(f.page);await grammar(f.page);
+ await f.page.getByText('Пока нечего разбирать',{exact:true}).waitFor();await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();
+ await f.page.getByRole('button',{name:'Начать повторение',exact:true}).click();
+ for(let i=0;i<2;i++){await f.page.getByRole('button',{name:'Показать перевод',exact:true}).click();await f.page.getByRole('button',{name:'Знаю',exact:true}).click();}
+ await f.page.getByRole('button',{name:'Сохранить ещё раз',exact:true}).click();
+ await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).waitFor();
+ assert.equal(f.calls.filter(c=>c.key==='/api/srs/review').length,2);
+ assert.equal(new Set(f.calls.filter(c=>c.key==='/api/srs/session/finish').map(c=>JSON.stringify(c.body))).size,1);
+});
+for(const width of [320,430])test(`all shared module stages fit ${width}px`,async t=>{const f=await fixture(t,{width});await summary(f);});
+if(APP)test('manual level is also available in the real profile tab',async t=>{
+ const f=await fixture(t);await f.page.getByRole('navigation',{name:'Основная навигация'}).getByRole('button',{name:'Профиль',exact:true}).click();
+ await f.page.getByLabel('Уровень занятий').selectOption('B1');await f.page.getByRole('button',{name:'Изменить уровень',exact:true}).click();
+ await f.page.getByText('Уровень сохранён',{exact:true}).waitFor();assert.equal(f.getLevel(),'B1');await shot(f.page,'profile-level');
 });

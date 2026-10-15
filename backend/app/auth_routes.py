@@ -11,7 +11,7 @@ Google/Apple убраны (миграция 0021): иностранный OAuth 
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Header, HTTPException, status
 from fastapi.responses import RedirectResponse
@@ -24,6 +24,34 @@ from .db import db_session
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+
+
+class _LevelIn(BaseModel):
+    level: Literal['A1', 'A2', 'B1', 'B2', 'C1']
+    init_data: Optional[str] = None
+
+
+@router.put('/level')
+async def choose_level(body: _LevelIn, authorization: Optional[str] = Header(None)):
+    """Choose the practice level without changing diagnostic test reports."""
+    _require_db()
+    from .db import Repo
+    from .db.models import User
+    from .learning_models import LearningProfile
+    from .learning import now, refresh_prepared
+    async with db_session() as session:
+        account = await auth_lib.resolve_user(Repo(session), authorization=authorization, init_data=body.init_data)
+        account = await session.get(User, account.id, with_for_update=True, populate_existing=True)
+        if account.is_blocked:
+            raise HTTPException(403, 'account_blocked')
+        account.cefr_level = body.level
+        if settings.LEARNING_ENABLED:
+            profile = await session.get(LearningProfile, account.id, with_for_update=True)
+            if profile:
+                profile.level = body.level
+                profile.updated_at = now()
+                await refresh_prepared(session, profile)
+    return {'ok': True, 'level': body.level}
 
 
 # ─── Schemas ─────────────────────────────────────────────────────────────────

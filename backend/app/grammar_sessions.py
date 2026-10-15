@@ -33,6 +33,8 @@ class Prepared:
     level: str
     role: str
     topic_key: Optional[str] = None
+    learning_lesson_id: Optional[str] = None
+    exercises: list[dict] = field(default_factory=list)
     expires_at: float = field(default_factory=lambda: time.monotonic() + PREPARATION_TTL)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     cancelled: bool = False
@@ -41,9 +43,9 @@ class Prepared:
 PREPARED: dict[str, Prepared] = {}
 
 
-def prepare(*, user_id: Optional[int], level: str, role: str, topic_key: Optional[str] = None) -> str:
+def prepare(*, user_id: Optional[int], level: str, role: str, topic_key: Optional[str] = None, learning_lesson_id: Optional[str] = None, exercises: Optional[list[dict]] = None) -> str:
     key = f"prepared-{uuid4()}"
-    PREPARED[key] = Prepared(user_id=user_id, level=level, role=role, topic_key=topic_key)
+    PREPARED[key] = Prepared(user_id=user_id, level=level, role=role, topic_key=topic_key, learning_lesson_id=learning_lesson_id, exercises=exercises or [])
     return key
 
 
@@ -107,7 +109,10 @@ async def activate(key: str, authorization: Optional[str], init_data: Optional[s
             from .limits import is_section_limit_reached
             if user is None:
                 raise HTTPException(401, "user_not_found")
-            if await is_section_limit_reached(Repo(session), user, section="grammar"):
+            from . import learning_modules as course
+            stage='mistakes' if prepared.role=='weak_points' else 'grammar'
+            guided=await course.require(session,uid,prepared.learning_lesson_id,stage)
+            if not guided and await is_section_limit_reached(Repo(session), user, section="grammar"):
                 raise HTTPException(402, "limit_reached")
             row = await Repo(session).open_session(
                 user_id=uid, mode="grammar", level=prepared.level, role=prepared.role,
@@ -115,7 +120,10 @@ async def activate(key: str, authorization: Optional[str], init_data: Optional[s
             row.grammar_status = "active"
             row.grammar_last_seen_at = now()
             row.grammar_preparation_id = key
+            if guided is not None:
+                row.grammar_result={"_exercises":prepared.exercises,"_learning_lesson_id":prepared.learning_lesson_id}
             sid = str(row.id)
+            course.save(guided,stage,session_id=sid,completed=False)
         presence.mark(uid, mode="grammar", level=prepared.level, role=prepared.role, ttl=ACTIVITY_TTL)
         return sid
 

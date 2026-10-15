@@ -299,7 +299,7 @@ async def _run_chat_session(
       Сервер → JSON {"type":"thinking"} и {"type":"thinking_done"} (индикация)
     """
     logger.warning("[chat] старт текстовой сессии")
-    history: list[dict] = []
+    history: list[dict] = list(getattr(websocket.state,'learning_history',[]))
     chat_session_start = asyncio.get_event_loop().time()
 
     # Запись сессии в БД для админ-вкладки «Сессии».
@@ -316,6 +316,9 @@ async def _run_chat_session(
                     mytracker_instance_id=websocket.query_params.get("mt_iid"),
                 )
                 chat_session_db_id = int(row.id)
+                from . import learning_modules as course
+                await course.conversation_open(db,limits_ctx.user_db_id,
+                    websocket.query_params.get('learning_lesson_id'),row)
         except Exception as exc:
             logger.warning("[chat] open_session failed: %r", exc)
 
@@ -456,6 +459,9 @@ async def _run_chat_session(
                         session_id=chat_session_db_id,
                         used_seconds=duration_sec,
                     )
+                    from . import learning_modules as course
+                    await course.conversation_closed(db,limits_ctx.user_db_id,
+                        websocket.query_params.get('learning_lesson_id'),chat_session_db_id,history,duration_sec)
             except Exception as exc:
                 logger.warning("[chat] close_session failed: %r", exc)
         asyncio.create_task(_bump_streak_after_session(
@@ -489,6 +495,24 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
 
     # Настройки сессии (уровень, роль, длина, исправления) — из query-параметров WS.
     session_settings = SessionSettings.from_query(dict(websocket.query_params))
+    lesson_key=websocket.query_params.get('learning_lesson_id')
+    if lesson_key:
+        if limits_ctx is None:
+            await websocket.close(code=4001,reason='Course authentication required')
+            return
+        from .db import db_session
+        from . import learning_modules as course
+        try:
+            async with db_session() as db:
+                guided=await course.require(db,limits_ctx.user_db_id,lesson_key,'conversation')
+                session_settings.level=guided.level
+                session_settings.role='custom'
+                session_settings.role_custom=('English practice: '+guided.content['spec']['objective'])[:200]
+                websocket.state.learning_history=course.result(guided,'conversation').get('history',[])
+        except Exception:
+            await websocket.close(code=4003,reason='Course stage unavailable')
+            return
+
     # Контекст учащегося (recent_vocab + recent_mistakes за неделю)
     # и onboarding-цель — best-effort. Если БД нет / запрос упал —
     # сессия идёт без подмеса.
@@ -551,7 +575,7 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
     # Каждый чанк = 20мс PCM @ 16kHz (= 50 чанков/сек). 4096 ≈ 80 сек запаса.
     stt_queue: asyncio.Queue[Optional[dict]] = asyncio.Queue(maxsize=4096)
     stt_dropped_audio = 0  # счётчик дропнутых аудио-чанков (диагностика)
-    history: list[dict] = []
+    history: list[dict] = list(getattr(websocket.state,'learning_history',[]))
     # Буфер финалов, пришедших между EOU — соберём их в одну реплику.
     pending_finals: list[str] = []
 
@@ -968,6 +992,9 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                     mytracker_instance_id=websocket.query_params.get("mt_iid"),
                 )
                 session_db_id = int(row.id)
+                from . import learning_modules as course
+                await course.conversation_open(db,limits_ctx.user_db_id,
+                    websocket.query_params.get('learning_lesson_id'),row)
         except Exception as exc:
             logger.warning("[voice] open_session failed: %r", exc)
     try:
@@ -997,6 +1024,9 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                         session_id=session_db_id,
                         used_seconds=duration_sec,
                     )
+                    from . import learning_modules as course
+                    await course.conversation_closed(db,limits_ctx.user_db_id,
+                        websocket.query_params.get('learning_lesson_id'),session_db_id,history,duration_sec)
             except Exception as exc:
                 logger.warning("[voice] close_session failed: %r", exc)
         # Streak: фиксируем сегодняшнюю практику + последнюю роль.

@@ -184,17 +184,20 @@ function pcm16ToFloat32(buffer: ArrayBuffer): Float32Array<ArrayBuffer> {
 
 // ─── Основной компонент ───────────────────────────────────────────────────────
 
+import type { GuidedModule } from "./learningApi";
+
 interface AppProps {
+  course?: GuidedModule;
   onExit?: () => void;
 }
 
-export default function App({ onExit }: AppProps = {}) {
+export default function App({ onExit, course }: AppProps = {}) {
   const [appState, setAppState] = useState<AppState>("initializing");
   const [dialogLog, setDialogLog] = useState<DialogEntry[]>([]);
   const [statusText, setStatusText] = useState<string>("Getting ready…");
   const [errorMsg, setErrorMsg] = useState<string>("");
   // Настройки тьютора (уровень, роль, длина, исправления)
-  const [settings, setSettings] = useState<TutorSettings>(() => loadSettings());
+  const [settings, setSettings] = useState<TutorSettings>(() => ({...loadSettings(),...(course ? {level:course.level} : {})}));
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   // Экран «Мои слова» (юзер добавляет слова, которые сейчас учит).
   const [wordsOpen, setWordsOpen] = useState<boolean>(false);
@@ -536,7 +539,7 @@ export default function App({ onExit }: AppProps = {}) {
   // Затем сразу открываем WS — к первому вводу он уже в OPEN.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const timer=window.setTimeout(() => { void (async () => {
       if (settingsRef.current.mode === "chat") {
         // Чистый чат — микрофон не нужен. Сразу idle и открываем WS.
         setAppState("idle");
@@ -557,9 +560,9 @@ export default function App({ onExit }: AppProps = {}) {
       } catch (err) {
         console.warn("Initial WS open failed:", err);
       }
-    })();
+    })(); },0);
     return () => {
-      cancelled = true;
+      clearTimeout(timer); cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -645,6 +648,7 @@ export default function App({ onExit }: AppProps = {}) {
       const mtIid = getInstallId();
       if (mtIid) queryParts.push(`mt_iid=${encodeURIComponent(mtIid)}`);
       queryParts.push(settingsToQuery(settingsRef.current));
+      if (course) queryParts.push(`learning_lesson_id=${encodeURIComponent(course.lessonId)}`);
       const wsUrl = queryParts.length
         ? `${WS_URL}?${queryParts.join("&")}`
         : WS_URL;
@@ -816,7 +820,7 @@ export default function App({ onExit }: AppProps = {}) {
     } finally {
       openingRef.current = false;
     }
-  }, [addLogEntry, enqueueAudio]);
+  }, [addLogEntry, enqueueAudio,course?.lessonId]);
 
   // ── Начало записи (unmute уже открытого микрофона) ────────────────────────
   // Минимальная длительность записи: короче — считаем случайным тапом, EOU не шлём
@@ -946,11 +950,12 @@ export default function App({ onExit }: AppProps = {}) {
     setLockState(null);
     setLockMessage("");
     // Завершили через «Назад» (без summary) — сразу уходим в меню режимов.
+    if (course) { course.onComplete(); return; }
     if (exitAfterEndRef.current) {
       exitAfterEndRef.current = false;
       onExit?.();
     }
-  }, [stopRecording, maybeTriggerSummary, onExit]);
+  }, [stopRecording, maybeTriggerSummary, onExit,course]);
 
   // Закрыть SessionSummary и почистить UI; после summary возвращаемся
   // в ModeSelector, если родитель его поднял.
@@ -958,8 +963,8 @@ export default function App({ onExit }: AppProps = {}) {
     setSummarySeconds(null);
     setDialogLog([]);
     setLimits(null);
-    onExit?.();
-  }, [onExit]);
+    if (course) course.onComplete(); else onExit?.();
+  }, [onExit,course]);
 
   // ── Применение новых настроек: сохраняем, закрываем текущую сессию и
   // переоткрываем WS с обновлёнными query-параметрами. Тьютор пришлёт
@@ -971,7 +976,7 @@ export default function App({ onExit }: AppProps = {}) {
       // пересоздания WS из-за смены настроек. Сбрасывается в самом helper'е.
       settingsReconnectRef.current = true;
       setSettings(next);
-      saveSettings(next);
+      if (!course) saveSettings(next);
       settingsRef.current = next;
       setSettingsOpen(false);
       setDialogLog([]);
@@ -1028,35 +1033,32 @@ export default function App({ onExit }: AppProps = {}) {
   );
 
   // ── Отправка текстового сообщения в chat-режиме ────────────────────────
+  const chatSendingRef=useRef(false);
   const sendChatMessage = useCallback(async () => {
-    const text = chatDraft.trim();
-    if (!text) return;
-    if (chatThinking) return; // не пускаем второй запрос пока ответ ещё не пришёл
-    // Обеспечиваем, что WS открыт (на случай если бэкенд ронял сессию)
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      try {
-        await openConnection();
-      } catch (err) {
-        console.warn("sendChatMessage: openConnection failed", err);
-        return;
-      }
-    }
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      console.warn("sendChatMessage: WS не в OPEN после openConnection");
-      return;
-    }
-    // Локальный рендер своего сообщения (бэкенд эхо не присылает в chat-режиме)
-    addLogEntry("user", text);
-    setChatDraft("");
-    setChatThinking(true);
+    const text=chatDraft.trim();
+    if (!text || chatThinking || chatSendingRef.current) return;
+    chatSendingRef.current=true; setChatThinking(true);
     try {
-      ws.send(JSON.stringify({ type: "user_text", text }));
-    } catch (err) {
-      console.error("sendChatMessage: ws.send failed", err);
-      setChatThinking(false);
-    }
-  }, [chatDraft, chatThinking, openConnection, addLogEntry]);
+      if (!wsRef.current || wsRef.current.readyState!==WebSocket.OPEN) await openConnection();
+      const ws=wsRef.current;
+      if (!ws) throw new Error('Соединение недоступно');
+      if (ws.readyState===WebSocket.CONNECTING) {
+        await new Promise<void>((resolve,reject) => {
+          const cleanup=() => {clearTimeout(timer); ws.removeEventListener('open',ready); ws.removeEventListener('error',failed); ws.removeEventListener('close',failed);};
+          const ready=() => {cleanup(); resolve();};
+          const failed=() => {cleanup(); reject(new Error('Не удалось подключиться'));};
+          const timer=window.setTimeout(failed,10000);
+          ws.addEventListener('open',ready,{once:true}); ws.addEventListener('error',failed,{once:true}); ws.addEventListener('close',failed,{once:true});
+        });
+      }
+      if (ws.readyState!==WebSocket.OPEN) throw new Error('Соединение закрыто');
+      ws.send(JSON.stringify({type:'user_text',text}));
+      addLogEntry('user',text); setChatDraft('');
+    } catch (error) {
+      console.warn('Chat send failed:',error);
+      setChatThinking(false); setStatusText('Не удалось отправить. Попробуй ещё раз.');
+    } finally {chatSendingRef.current=false;}
+  },[chatDraft,chatThinking,openConnection,addLogEntry]);
 
   // Cleanup при размонтировании: полностью освобождаем микрофон и WS
   useEffect(() => {
@@ -1599,7 +1601,7 @@ export default function App({ onExit }: AppProps = {}) {
           <div className="confirm-card" onClick={(e) => e.stopPropagation()}>
             <p className="confirm-title">Закончить сессию?</p>
             <p className="confirm-hint">
-              История чата будет удалена — её нельзя восстановить.
+              {course ? "Разговор сохранится в уроке. После трёх ответов можно перейти к итогу." : "История чата будет удалена — её нельзя восстановить."}
             </p>
             <div className="confirm-actions">
               <button

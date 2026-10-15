@@ -35,7 +35,10 @@ const API_BASE =
 
 const HEARTBEAT_MS = 20_000;
 
+import type { GuidedModule } from "./learningApi";
+
 interface Props {
+  course?: GuidedModule;
   onExit: () => void;
 }
 
@@ -80,7 +83,8 @@ function formatNextDue(iso: string | null): string {
   }
 }
 
-export function SrsScreen({ onExit: _onExit }: Props) {
+export function SrsScreen({ onExit: _onExit, course }: Props) {
+  const courseQuery = course ? `&learning_lesson_id=${encodeURIComponent(course.lessonId)}` : "";
   const initData = useMemo(() => WebApp.initData || "", []);
 
   const [phase, setPhase] = useState<Phase>("home");
@@ -97,12 +101,20 @@ export function SrsScreen({ onExit: _onExit }: Props) {
   const sessionIdRef = useRef<string | null>(null);
   const sessionStartRef = useRef<number>(0);
   const heartbeatRef = useRef<number | null>(null);
+  const finishRef=useRef<{body: Record<string,unknown>; summary: Summary} | null>(null);
   const latestNextDueRef = useRef<string | null>(null);
 
   useLucide(`${phase}-${idx}-${revealed}`);
 
   const loadStats = useCallback(async () => {
     try {
+      if (course) {
+        const response=await fetch(`${API_BASE}/api/srs/session?init_data=${encodeURIComponent(initData)}${courseQuery}`);
+        if (!response.ok) throw new Error("Не удалось загрузить слова урока");
+        const data=await response.json() as {cards: Card[]};
+        setStats({due_count:data.cards.length,total_count:data.cards.length,limit:20});
+        setPreview(data.cards); return;
+      }
       const r = await fetch(
         `${API_BASE}/api/srs/stats?init_data=${encodeURIComponent(initData)}`,
       );
@@ -127,7 +139,7 @@ export function SrsScreen({ onExit: _onExit }: Props) {
       setErrorText("Не удалось загрузить статистику. Попробуй позже.");
       setPhase("error");
     }
-  }, [initData]);
+  }, [initData,course?.lessonId]);
 
   useEffect(() => {
     if (phase === "home") void loadStats();
@@ -142,7 +154,7 @@ export function SrsScreen({ onExit: _onExit }: Props) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            init_data: initData,
+            init_data: initData, learning_lesson_id: course?.lessonId,
             session_id: sessionIdRef.current,
           }),
         });
@@ -165,7 +177,7 @@ export function SrsScreen({ onExit: _onExit }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          init_data: initData,
+          init_data: initData, learning_lesson_id: course?.lessonId,
           session_id: sessionIdRef.current,
           reviewed: 0,
           correct: 0,
@@ -179,12 +191,12 @@ export function SrsScreen({ onExit: _onExit }: Props) {
   const startReview = useCallback(async () => {
     if (busy) return;
     setBusy(true);
-    setErrorText(null);
+    setErrorText(null); finishRef.current=null;
     try {
       const r1 = await fetch(`${API_BASE}/api/srs/session/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ init_data: initData }),
+        body: JSON.stringify({ init_data: initData, learning_lesson_id: course?.lessonId }),
       });
       if (!r1.ok) throw new Error(`start HTTP ${r1.status}`);
       const d1 = (await r1.json()) as { session_id: string };
@@ -192,12 +204,18 @@ export function SrsScreen({ onExit: _onExit }: Props) {
       sessionStartRef.current = Date.now();
 
       const r2 = await fetch(
-        `${API_BASE}/api/srs/session?init_data=${encodeURIComponent(initData)}&limit=20`,
+        `${API_BASE}/api/srs/session?init_data=${encodeURIComponent(initData)}&limit=20${courseQuery}`,
       );
       if (!r2.ok) throw new Error(`session HTTP ${r2.status}`);
       const d2 = (await r2.json()) as { cards: Card[] };
       const list = Array.isArray(d2.cards) ? d2.cards : [];
       if (list.length === 0) {
+        if (course) {
+          const finish=await fetch(`${API_BASE}/api/srs/session/finish`,{method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({init_data:initData,learning_lesson_id:course.lessonId,session_id:sessionIdRef.current,duration_sec:0})});
+          if (!finish.ok) throw new Error("Не удалось сохранить повторение");
+          course.onComplete(); return;
+        }
         await finishSessionSilent();
         await loadStats();
         setPhase("home");
@@ -217,6 +235,14 @@ export function SrsScreen({ onExit: _onExit }: Props) {
     }
   }, [busy, initData, loadStats, finishSessionSilent]);
 
+  const saveFinishedReview=useCallback(async () => {
+    const pending=finishRef.current;
+    if (!pending) return;
+    const response=await fetch(`${API_BASE}/api/srs/session/finish`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pending.body)});
+    if (!response.ok) throw new Error('Не удалось сохранить результат. Нажми «Сохранить ещё раз».');
+    sessionIdRef.current=null; setSummary(pending.summary); setPhase('summary'); setErrorText(null); finishRef.current=null;
+  },[]);
+
   const answer = useCallback(
     async (correct: boolean) => {
       if (busy) return;
@@ -224,15 +250,18 @@ export function SrsScreen({ onExit: _onExit }: Props) {
       if (!card) return;
       setBusy(true);
       try {
+        setErrorText(null);
+        if (finishRef.current) {await saveFinishedReview(); return;}
         const r = await fetch(`${API_BASE}/api/srs/review`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            init_data: initData,
+            init_data: initData, learning_lesson_id: course?.lessonId,
             word: card.word,
             correct,
           }),
         });
+        if (!r.ok) throw new Error("Не удалось сохранить ответ. Попробуй ещё раз.");
         if (r.ok) {
           const d = (await r.json()) as ReviewResult;
           if (d.next_due_at) {
@@ -242,42 +271,29 @@ export function SrsScreen({ onExit: _onExit }: Props) {
             }
           }
         }
-        if (correct) setCorrectCount((c) => c + 1);
+
 
         const isLast = idx >= cards.length - 1;
         if (isLast) {
           const reviewedTotal = cards.length;
           const correctTotal = correctCount + (correct ? 1 : 0);
           const elapsedSec = Math.max(0, Math.round((Date.now() - sessionStartRef.current) / 1000));
-          try {
-            await fetch(`${API_BASE}/api/srs/session/finish`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                init_data: initData,
-                session_id: sessionIdRef.current,
-                reviewed: reviewedTotal,
-                correct: correctTotal,
-                duration_sec: elapsedSec,
-              }),
-            });
-          } catch { /* silent */ }
-          sessionIdRef.current = null;
-          setSummary({
-            reviewed: reviewedTotal,
-            correct: correctTotal,
-            next_due_at: latestNextDueRef.current,
-          });
-          setPhase("summary");
+          finishRef.current={body:{init_data:initData,learning_lesson_id:course?.lessonId,
+            session_id:sessionIdRef.current,reviewed:reviewedTotal,correct:correctTotal,duration_sec:elapsedSec},
+            summary:{reviewed:reviewedTotal,correct:correctTotal,next_due_at:latestNextDueRef.current}};
+          await saveFinishedReview();
         } else {
+          if (correct) setCorrectCount(c => c+1);
           setIdx((i) => i + 1);
           setRevealed(false);
         }
+      } catch (error) {
+        setErrorText(error instanceof Error ? error.message : "Не удалось сохранить ответ");
       } finally {
         setBusy(false);
       }
     },
-    [busy, cards, idx, correctCount, initData],
+    [busy, cards, idx, correctCount, initData,course?.lessonId,saveFinishedReview],
   );
 
   const onBackToHome = useCallback(async () => {
@@ -307,6 +323,8 @@ export function SrsScreen({ onExit: _onExit }: Props) {
   if (phase === "error") {
     return (
       <div className="srs-v2">
+        {errorText && <p role="alert" className="learn-error">{errorText}</p>}
+        {finishRef.current && errorText && <Button disabled={busy} onClick={() => void answer(true)}>Сохранить ещё раз</Button>}
         <header className="srs-v2__top">
           <span className="srs-v2__brand">
             <span className="srs-v2__brand-icon"><Icon name="layers" size={18} /></span>
@@ -324,6 +342,8 @@ export function SrsScreen({ onExit: _onExit }: Props) {
   if (phase === "summary" && summary) {
     return (
       <div className="srs-v2">
+        {errorText && <p role="alert" className="learn-error">{errorText}</p>}
+        {finishRef.current && errorText && <Button disabled={busy} onClick={() => void answer(true)}>Сохранить ещё раз</Button>}
         <header className="srs-v2__top">
           <span className="srs-v2__brand">
             <span className="srs-v2__brand-icon"><Icon name="layers" size={18} /></span>
@@ -337,18 +357,22 @@ export function SrsScreen({ onExit: _onExit }: Props) {
           </div>
           <p className="srs-v2__note">Следующий повтор: {formatNextDue(summary.next_due_at)}</p>
         </NoteCard>
-        <Button variant="primary" fullWidth icon="arrow-left" onClick={onBackToHome}>
-          К списку слов
+        <Button variant="primary" fullWidth icon="arrow-left" onClick={course ? course.onComplete : onBackToHome}>
+          {course ? "Продолжить урок →" : "К списку слов"}
         </Button>
       </div>
     );
   }
+
+  if (course && phase === "home" && stats?.due_count === 0) return <div className="srs-v2"><p>Все слова урока повторены.</p><Button onClick={() => void startReview()} disabled={busy}>Сохранить и продолжить</Button></div>;
 
   if (phase === "review") {
     const card = cards[idx];
     if (!card) return null;
     return (
       <div className="srs-v2">
+        {errorText && <p role="alert" className="learn-error">{errorText}</p>}
+        {finishRef.current && errorText && <Button disabled={busy} onClick={() => void answer(true)}>Сохранить ещё раз</Button>}
         <header className="srs-v2__top">
           <button
             type="button"

@@ -5,19 +5,22 @@ import json
 from datetime import timedelta
 import os
 import secrets
+import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock,patch
 from uuid import uuid4
 import httpx
 from sqlalchemy import delete,select,update
 from sqlalchemy.engine import make_url
-from app import learning
+from app import learning, learning_modules, grammar, voice
+from starlette.websockets import WebSocketState
 from app import learning_content as content, learning_assessment as assessment
 from app.auth import issue_jwt
 from app.config import settings
 from app.db import Repo,db_session
 from app.db.engine import init_db,db_engine
-from app.db.models import DailyUsage,MytrackerEvent,MytrackerInstall,Session,User,LevelTest
+from app.db.models import DailyUsage,MytrackerEvent,MytrackerInstall,Session,User,LevelTest,UserMistake
 from app.db.models import UserVocabulary
 from app.learning_models import LearningProfile,LearningLesson,LearningCheckpoint,LearningSkill
 from app.main import app
@@ -61,7 +64,8 @@ class CurriculumTests(unittest.TestCase):
 @unittest.skipUnless(SAFE_DB,'TEST_DATABASE_URL must be a local *_test database')
 class LearningTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.patches=[patch.object(settings,'DATABASE_URL',TEST_URL),patch.object(settings,'LEARNING_ENABLED',True),
+        self.media=tempfile.TemporaryDirectory()
+        self.patches=[patch.object(settings,"LEARNING_MEDIA_DIR",self.media.name),patch.object(settings,'DATABASE_URL',TEST_URL),patch.object(settings,'LEARNING_ENABLED',True),
             patch.object(settings,'AUTH_JWT_SECRET',secrets.token_hex(32)),patch.object(settings,'ADMIN_TOKEN',secrets.token_hex(32)),
             patch.object(settings,'FREE_PERIOD',True),patch.object(settings,'VLLM_BASE_URL',None),
             patch.object(settings,'KOKORO_TTS_URL',None),patch.object(settings,'WHISPER_STT_URL',None),
@@ -86,6 +90,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
                 await session.execute(delete(cls).where(col.in_(self.uids)))
         await db_engine().dispose()
         for p in reversed(self.patches): p.stop()
+        self.media.cleanup()
 
     async def post(self,path,body=None,status=200,headers=None):
         response=await self.client.post('/api/learning'+path,headers=headers or self.headers,json=body or {})
@@ -103,26 +108,69 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         data=await self.setup_course()
         return data['next_lesson']['id']
 
+    async def api_post(self,path,body,status=200,headers=None):
+        response=await self.client.post('/api/'+path,headers=headers or self.headers,json=body)
+        self.assertEqual(response.status_code,status,response.text)
+        return response.json()
+
+    async def grammar_round(self,key,*,mistakes=False,wrong=False):
+        row=(await self.client.get(f'/api/learning/lessons/{key}',headers=self.headers)).json()
+        topic=row['content']['spec']['topic_key']
+        items=[grammar.Exercise(id=f'e{i}',type='mcq',category='tense',prompt='I ___ a student.',
+            choices=['am','is','are','be'],correct='am',explanation='I am.') for i in range(4)]
+        with patch.object(grammar,'_generate_exercises',new_callable=AsyncMock,return_value=items):
+            prepared=await self.api_post('grammar/generate' if mistakes else 'grammar/lesson/exercises',
+                {'learning_lesson_id':key,'topic_key':topic,'level':row['content']['spec']['level'],'mode':'weak_points'})
+        active=await self.api_post('grammar/start',{'session_id':prepared['session_id']})
+        answers=[{'exercise_id':item.id,'user_answer':'is' if wrong and i==0 else 'am',
+            'is_correct':True,'category':'tense'} for i,item in enumerate(items)]
+        body={'learning_lesson_id':key,'session_id':active['session_id'],'topic_key':topic,
+            'results':answers,'correct':4,'total':4,'duration_sec':90 if not mistakes else 0}
+        result=await self.api_post('grammar/finish' if mistakes else 'grammar/lesson/finish',body)
+        return body,result
+
+    async def conversation(self,key,turns=3):
+        class Socket:
+            query_params={'mode':'chat','learning_lesson_id':key}
+            state=SimpleNamespace()
+            client_state=WebSocketState.CONNECTED
+            client=('local',1)
+            def __init__(self): self.remaining=turns; self.messages=[]
+            async def send_json(self,data): self.messages.append(data)
+            async def close(self,**kwargs): self.client_state=WebSocketState.DISCONNECTED
+            async def receive(self):
+                if not self.remaining: return {'type':'websocket.disconnect'}
+                self.remaining-=1
+                return {'text':json.dumps({'type':'user_text','text':'I live in London and enjoy music.'})}
+        socket=Socket()
+        with patch.object(voice,'get_llm_provider',return_value=object()), \
+             patch.object(voice,'_llm_complete_with_timeout',new_callable=AsyncMock,return_value='Tell me more.'), \
+             patch.object(voice,'_check_achievements_hook',new_callable=AsyncMock):
+            await voice.run_voice_session(socket,limits_ctx=SimpleNamespace(user_db_id=self.uid,tg_id=0))
+            await asyncio.sleep(0)
+        return socket
+
     async def complete(self,key,finish=True):
-        row=await self.post(f'/lessons/{key}/start')
-        for step in range(5):
-            if step in (0,2,3):
-                if step==3: await self.post(f'/lessons/{key}/listening-text')
-                async with db_session() as session:
-                    model=await session.get(LearningLesson,key)
-                    questions=learning.current_questions(model)
-                for q in questions:
-                    await self.post(f'/lessons/{key}/answer',{'question_id':q['id'],'answer':q['correct']})
-            if step==4:
-                for i in range(3):
-                    body={'turn_id':str(uuid4()),'text':f'I like learning English. Answer {i}.'}
-                    first=await self.post(f'/lessons/{key}/talk',body)
-                    self.assertEqual(await self.post(f'/lessons/{key}/talk',body),first)
-            await self.post(f'/lessons/{key}/advance',{'step_index':step})
-        await self.post(f'/lessons/{key}/heartbeat',{'elapsed_sec':30})
-        await self.post(f'/lessons/{key}/heartbeat',{'elapsed_sec':60})
+        await self.post(f'/lessons/{key}/start')
+        await self.grammar_round(key)
+        await self.post(f'/lessons/{key}/advance',{'step_index':0})
+        await self.post(f'/lessons/{key}/advance',{'step_index':1})
+        await self.api_post('srs/session/start',{'learning_lesson_id':key})
+        cards=(await self.client.get('/api/srs/session',params={'learning_lesson_id':key},headers=self.headers)).json()['cards']
+        for card in cards:
+            await self.api_post('srs/review',{'learning_lesson_id':key,'word':card['word'],'correct':True})
+        async with db_session() as session:
+            sid=learning_modules.result(await session.get(LearningLesson,key),'words')['session_id']
+        await self.api_post('srs/session/finish',{'learning_lesson_id':key,'session_id':sid,'duration_sec':0})
+        await self.post(f'/lessons/{key}/advance',{'step_index':2})
+        with patch('app.listening._call_llm_for_script',new_callable=AsyncMock,return_value='TOPIC: Bristol\nMy name is Alex. I live in Bristol.'), \
+             patch('app.listening._synthesize_full',new_callable=AsyncMock,return_value=b'\0'*48000):
+            await self.api_post('listening/generate',{'learning_lesson_id':key,'duration_min':1,'category':'travel','level':'A1'})
+        await self.post(f'/lessons/{key}/listened')
+        await self.post(f'/lessons/{key}/advance',{'step_index':3})
+        await self.conversation(key)
+        await self.post(f'/lessons/{key}/advance',{'step_index':4})
         if finish: return await self.post(f'/lessons/{key}/finish',{'elapsed_sec':90})
-        return row
 
     async def test_setup_preserves_A1_and_preparation_creates_no_session(self):
         data=await self.setup_course()
@@ -154,7 +202,8 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         async with db_session() as session:
             rows=list((await session.scalars(select(Session).where(Session.user_id==self.uid))).all())
             self.assertEqual(len(rows),1)
-            self.assertEqual(rows[0].used_seconds,20)
+            self.assertEqual(rows[0].used_seconds,0)
+            self.assertEqual((await session.get(LearningLesson,key)).used_seconds,20)
             events=list((await session.scalars(select(MytrackerEvent).where(MytrackerEvent.user_id==self.uid))).all())
             self.assertEqual(sum(e.payload.get('customEventName')=='lesson_started' for e in events),1)
 
@@ -174,11 +223,11 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(r==results[0] for r in results))
         async with db_session() as session:
             self.assertEqual((await session.get(LearningProfile,self.uid)).completed_count,1)
-            self.assertEqual(await session.scalar(select(DailyUsage.used_seconds).where(DailyUsage.user_id==self.uid)),90)
+            self.assertEqual(await session.scalar(select(DailyUsage.used_seconds).where(DailyUsage.user_id==self.uid)),91)
             self.assertIsNone(await session.get(LearningSkill,(self.uid,'speaking')))
             self.assertIsNone(await session.get(LearningSkill,(self.uid,'listening')))
             self.assertEqual(len((await Repo(session).list_user_words(self.uid))),4)
-            self.assertEqual(await Repo(session).user_points(self.uid,month_only=False),1)
+            self.assertEqual(await Repo(session).user_points(self.uid,month_only=False),5)
             word=await session.scalar(select(UserVocabulary).where(UserVocabulary.user_id==self.uid,UserVocabulary.word=='name'))
             self.assertEqual(word.srs_total_attempts,1)
         response=await self.client.get('/api/learning/overview',headers=self.headers)
@@ -186,7 +235,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_finish_rolls_back_then_retry_saves_once(self):
         key=await self.prepared(); await self.complete(key,finish=False)
-        with patch.object(Repo,'add_used_seconds',new_callable=AsyncMock,side_effect=RuntimeError('synthetic rollback')):
+        with patch.object(learning,'evidence',new_callable=AsyncMock,side_effect=RuntimeError('synthetic rollback')):
             with self.assertRaises(RuntimeError): await self.post(f'/lessons/{key}/finish',{'elapsed_sec':90})
         async with db_session() as session:
             self.assertEqual((await session.get(LearningProfile,self.uid)).completed_count,0)
@@ -293,32 +342,21 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         with patch('app.grammar._call_llm',new_callable=AsyncMock,return_value=json.dumps(response)):
             with self.assertRaises(ValueError): await learning.generate_variant(original)
 
-    async def test_server_transcribed_voice_is_scored_and_cannot_be_replayed(self):
+    async def test_existing_tutor_requires_three_replies_and_resumes_saved_history(self):
         key=await self.prepared(); await self.post(f'/lessons/{key}/start')
-        # The earlier stages are exercised in complete(); focus this test on
-        # the trusted transcription -> dialogue -> completion boundary.
         async with db_session() as session:
-            row=await session.get(LearningLesson,key)
-            for q in row.content['warmup']+row.content['practice']+row.content['listening']['questions']:
-                row.answers={**row.answers,q['id']:{'value':q['correct'],'correct':True,'correct_answer':q['correct'],
-                    'explanation':q['explanation'],'topic_key':q.get('topic_key'),'skill':q['skill'],'text_mode':True}}
-            row.step_index=4
-        with patch.object(learning,'transcription',new_callable=AsyncMock,return_value='I live in London.'), \
-             patch.object(learning,'assess_reply',new_callable=AsyncMock,return_value={'reply':'Tell me more.','feedback':'Хорошо.','score':80,'assessed':True}):
-            for _ in range(3):
-                response=await self.client.post(f'/api/learning/lessons/{key}/transcribe',headers=self.headers,files={'file':('voice.webm',b'synthetic','audio/webm')})
-                self.assertEqual(response.status_code,200,response.text)
-                transcript=response.json()
-                body={'turn_id':str(uuid4()),'text':transcript['text'],'voice_token':transcript['voice_token']}
-                result=await self.post(f'/lessons/{key}/talk',body)
-                self.assertTrue(result['turn']['verified_voice'])
-                await self.post(f'/lessons/{key}/talk',{**body,'turn_id':str(uuid4())},status=422)
+            (await session.get(LearningLesson,key)).step_index=4
+        await self.conversation(key,turns=1)
+        await self.post(f'/lessons/{key}/advance',{'step_index':4},status=409)
+        async with db_session() as session:
+            first=learning_modules.result(await session.get(LearningLesson,key),'conversation')
+            self.assertEqual(first['turns'],1)
+            self.assertTrue(first['history'])
+        await self.conversation(key,turns=2)
         await self.post(f'/lessons/{key}/advance',{'step_index':4})
-        await self.post(f'/lessons/{key}/finish',{'elapsed_sec':20})
         async with db_session() as session:
-            skill=await session.get(LearningSkill,(self.uid,'speaking'))
-            self.assertEqual(skill.attempts,3)
-            self.assertEqual(skill.evidence['recent'][0]['score'],80)
+            self.assertEqual(learning_modules.result(await session.get(LearningLesson,key),'conversation')['turns'],3)
+            self.assertIsNone(await session.get(LearningSkill,(self.uid,'speaking')))
 
     async def test_audio_is_private_and_marked_available_only_after_success(self):
         key=await self.prepared()
@@ -334,6 +372,105 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code,200)
         async with db_session() as session:
             self.assertTrue((await session.get(LearningLesson,key)).answers['_audio_available'])
+
+    async def test_lesson_errors_feed_existing_mistake_practice_and_are_server_graded(self):
+        key=await self.prepared(); await self.post(f'/lessons/{key}/start')
+        body,result=await self.grammar_round(key,wrong=True)
+        self.assertEqual(result['score'],75)  # Client claimed 4/4 and is_correct=True.
+        await self.api_post('grammar/lesson/finish',body)
+        async with db_session() as session:
+            errors=list((await session.scalars(select(UserMistake).where(UserMistake.user_id==self.uid))).all())
+            self.assertEqual(len(errors),1)
+            self.assertEqual(errors[0].bad_phrase,'I is a student.')
+            self.assertEqual(errors[0].good_phrase,'I am a student.')
+        await self.post(f'/lessons/{key}/advance',{'step_index':0})
+        await self.post(f'/lessons/{key}/advance',{'step_index':1},status=409)
+        await self.grammar_round(key,mistakes=True)
+        await self.post(f'/lessons/{key}/advance',{'step_index':1})
+
+    async def test_srs_review_survives_reload_and_is_not_applied_twice(self):
+        key=await self.prepared(); await self.post(f'/lessons/{key}/start')
+        await self.grammar_round(key)
+        for index in (0,1): await self.post(f'/lessons/{key}/advance',{'step_index':index})
+        body={'learning_lesson_id':key}
+        start=await self.api_post('srs/session/start',body)
+        self.assertEqual(await self.api_post('srs/session/start',body),start)
+        async def cards():
+            return (await self.client.get('/api/srs/session',params=body,headers=self.headers)).json()['cards']
+        original=await cards(); first=original[0]['word']
+        review={**body,'word':first,'correct':True}
+        response=await self.api_post('srs/review',review)
+        self.assertEqual(await self.api_post('srs/review',review),response)
+        self.assertEqual(len(await cards()),len(original)-1)
+        finish={**body,'session_id':start['session_id'],'duration_sec':1}
+        await self.api_post('srs/session/finish',finish,status=409)
+        for card in await cards(): await self.api_post('srs/review',{**body,'word':card['word'],'correct':True})
+        await self.api_post('srs/session/finish',finish)
+        await self.api_post('srs/session/finish',finish)
+        async with db_session() as session:
+            word=await session.scalar(select(UserVocabulary).where(UserVocabulary.user_id==self.uid,UserVocabulary.word==first))
+            self.assertEqual(word.srs_total_attempts,1)
+            self.assertEqual(learning_modules.result(await session.get(LearningLesson,key),'words')['total'],len(original))
+
+    async def test_podcast_is_reused_after_restart_without_duplicate_usage(self):
+        from app import listening
+        key=await self.prepared(); await self.post(f'/lessons/{key}/start')
+        async with db_session() as session: (await session.get(LearningLesson,key)).step_index=3
+        body={'learning_lesson_id':key,'duration_min':1,'category':'travel','level':'A1'}
+        with patch.object(listening,'_call_llm_for_script',new_callable=AsyncMock,return_value='TOPIC: London\nI live in London.') as llm, \
+             patch.object(listening,'_synthesize_full',new_callable=AsyncMock,return_value=b'\0'*48000):
+            podcast=await self.api_post('listening/generate',body)
+            listening._AUDIO_STORE.clear()
+            self.assertEqual(await self.api_post('listening/generate',body),podcast)
+            self.assertEqual(llm.await_count,1)
+            from pathlib import Path
+            for path in Path(self.media.name).glob('podcast-*.wav'): path.unlink()
+            self.assertEqual(await self.api_post('listening/generate',body),podcast)
+            self.assertEqual(llm.await_count,1)
+        response=await self.client.get(podcast['audio_url'],headers={'Range':'bytes=0-43'})
+        self.assertEqual(response.status_code,206)
+        self.assertTrue(response.content.startswith(b'RIFF'))
+        await self.post(f'/lessons/{key}/advance',{'step_index':3},status=409)
+        await self.post(f'/lessons/{key}/listened')
+        await self.post(f'/lessons/{key}/advance',{'step_index':3})
+        async with db_session() as session:
+            activities=list((await session.scalars(select(Session).where(Session.user_id==self.uid,Session.mode=='listening'))).all())
+            self.assertEqual(len(activities),1)
+            self.assertEqual(await session.scalar(select(DailyUsage.used_seconds).where(DailyUsage.user_id==self.uid)),1)
+
+    async def test_course_modules_reject_foreign_users_and_wrong_stage(self):
+        key=await self.prepared(); row=await self.post(f'/lessons/{key}/start')
+        await self.api_post('grammar/lesson',{'learning_lesson_id':key,'topic_key':row['content']['spec']['topic_key']},status=404,headers=self.other_headers)
+        await self.api_post('grammar/lesson',{'learning_lesson_id':key,'topic_key':'a1_pronouns'},status=409)
+        await self.api_post('srs/session/start',{'learning_lesson_id':key},status=409)
+        await self.api_post('listening/generate',{'learning_lesson_id':key,'duration_min':1,'category':'travel'},status=409)
+
+    async def test_manual_level_preserves_active_work_progress_and_test_history(self):
+        key=await self.prepared(); row=await self.post(f'/lessons/{key}/start')
+        async with db_session() as session:
+            account=await session.get(User,self.uid); account.cefr_tested_at=learning.now()
+            tested_at=account.cefr_tested_at
+        response=await self.client.put('/api/auth/level',headers=self.headers,json={'level':'B2'})
+        self.assertEqual(response.status_code,200,response.text)
+        data=(await self.client.get('/api/learning/overview',headers=self.headers)).json()
+        self.assertEqual(data['profile']['level'],'B2')
+        self.assertEqual(data['profile']['completed_count'],0)
+        self.assertEqual(data['next_lesson']['content'],row['content'])
+        async with db_session() as session:
+            self.assertEqual((await session.get(User,self.uid)).cefr_tested_at,tested_at)
+        response=await self.client.put('/api/auth/level',headers=self.headers,json={'level':'C2'})
+        self.assertEqual(response.status_code,422)
+        response=await self.client.put('/api/auth/level',json={'level':'A1'})
+        self.assertEqual(response.status_code,401)
+
+    async def test_manual_level_rebuilds_unstarted_material(self):
+        data=await self.setup_course(); key=data['next_lesson']['id']
+        response=await self.client.put('/api/auth/level',headers=self.headers,json={'level':'A2'})
+        self.assertEqual(response.status_code,200)
+        updated=(await self.client.get('/api/learning/overview',headers=self.headers)).json()
+        self.assertEqual(updated['next_lesson']['id'],key)
+        self.assertEqual(updated['next_lesson']['content']['spec']['level'],'A2')
+        self.assertTrue(updated['next_lesson']['content']['spec']['topic_key'].startswith('a2_'))
 
     async def test_twenty_real_completed_lessons_checkpoint_and_next_cycle(self):
         data=await self.setup_course()

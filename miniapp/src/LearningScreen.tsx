@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { LearningMap } from './LearningProgress';
 import { learningGet, learningPost, learningSetup, learningUrl, type LearningOverview, type LearningLesson,
-  type LearningQuestion, type Checkpoint, type Turn } from './learningApi';
+  type LearningQuestion, type Checkpoint } from './learningApi';
+import { GrammarScreen } from './GrammarScreen';
+import { SrsScreen } from './SrsScreen';
+import { ListeningScreen } from './ListeningScreen';
+import Tutor from './App';
+import { LevelPicker } from './LevelPicker';
+import type { Level } from './tutorSettings';
 import './Learning.css';
 
-const steps = ['Вспоминаем','Разбираем правило','Практикуемся','Слушаем','Общаемся','Подводим итог'];
+const steps = ['Грамматика','Работа над ошибками','Слова','Аудирование','Разговор','Итог'];
+const moduleKeys = ['grammar','mistakes','words','listening','conversation'];
 const message = (error: unknown) => error instanceof Error ? error.message : 'Не удалось сохранить. Попробуй ещё раз.';
 
 function AudioStory({path,script,textMode,onText}: {path: string; script: string; textMode: boolean; onText: () => void}) {
@@ -84,10 +91,9 @@ function Choices({question,busy,onAnswer}: {question: LearningQuestion; busy: bo
 
 function LessonRunner({initial,onExit,onDone}: {initial: LearningLesson; onExit: () => void; onDone: () => void}) {
   const [lesson,setLesson]=useState(initial), [busy,setBusy]=useState(false), [error,setError]=useState('');
-  const [feedback,setFeedback]=useState<LearningQuestion | null>(null), [draft,setDraft]=useState(''), [voiceToken,setVoiceToken]=useState('');
   const clock=useRef({base:initial.used_seconds,started:Date.now(),running:initial.status==='active'});
   const current=useRef(lesson); current.current=lesson;
-  const alive=useRef(true), pending=useRef(false), finishBody=useRef<Record<string,unknown> | null>(null), turnId=useRef('');
+  const alive=useRef(true), pending=useRef(false), finishBody=useRef<Record<string,unknown> | null>(null);
   const pauseTimer=useRef<number>();
   const elapsed=() => clock.current.base+(clock.current.running ? Math.max(0,Math.round((Date.now()-clock.current.started)/1000)) : 0);
   const path=`/lessons/${lesson.id}`;
@@ -122,19 +128,18 @@ function LessonRunner({initial,onExit,onDone}: {initial: LearningLesson; onExit:
   };
   const update=(data: LearningLesson) => {if(alive.current) setLesson(data);};
   const advance=() => act(async () => {
-    const data=await learningPost<LearningLesson>(path+'/advance',{step_index:lesson.step_index}); update(data); setFeedback(null);
-  });
-  const answer=(value: string,q: LearningQuestion) => act(async () => {
-    const data=await learningPost<{lesson: LearningLesson}>(path+'/answer',{question_id:q.id,answer:value}); update(data.lesson);
-    if(alive.current) {
-      const all=[...data.lesson.content.warmup,...data.lesson.content.practice,...data.lesson.content.listening.questions];
-      setFeedback(all.find(question => question.id===q.id) || null);
+    if (lesson.step_index===3) await learningPost(path+'/listened');
+    // The tutor saves its session on socket close. Acknowledge its durable result.
+    if (lesson.step_index===4) {
+      for (let i=0;i<8;i++) {
+        const saved=await learningGet<LearningLesson>(path);
+        if (saved.modules?.conversation?.completed) break;
+        if (i===7) throw new Error('Для завершения разговора нужны три ответа. Продолжи разговор и заверши сессию.');
+        await new Promise(resolve => setTimeout(resolve,200));
+      }
     }
-  });
-  const send=() => act(async () => {
-    if(!turnId.current) turnId.current=crypto.randomUUID();
-    const data=await learningPost<{lesson: LearningLesson; turn: Turn}>(path+'/talk',{turn_id:turnId.current,text:draft,voice_token:voiceToken || null});
-    update(data.lesson); if(alive.current) {setDraft(''); setVoiceToken(''); turnId.current='';}
+    update(await learningPost<LearningLesson>(path+'/advance',{step_index:lesson.step_index}));
+    window.scrollTo({top:0});
   });
   const finish=() => act(async () => {
     finishBody.current ||= {elapsed_sec:elapsed()};
@@ -142,49 +147,44 @@ function LessonRunner({initial,onExit,onDone}: {initial: LearningLesson; onExit:
     clock.current.running=false; update(data);
   });
   const step=lesson.step_index;
-  const questions=step===0 ? lesson.content.warmup : step===2 ? lesson.content.practice : step===3 ? lesson.content.listening.questions : [];
-  const next=questions.find(q => !q.answer), shown=feedback || next;
-  const allQuestions=[...lesson.content.warmup,...lesson.content.practice,...lesson.content.listening.questions];
-  const correct=allQuestions.filter(q => q.answer?.correct).length;
-  return <div className="learn-screen learn-runner">
-    <header className="learn-header"><button className="learn-link" onClick={onExit}>← Сохранить и выйти</button><span>{lesson.content.spec.level} · урок {lesson.content.spec.ordinal}</span></header>
-    <div className="learn-stepper" aria-label="Этапы урока">{steps.map((label,i) => <span key={label} data-active={i===step} data-done={i<step}>{i<step ? '✓' : i+1}<small>{label}</small></span>)}</div>
-    <h1>{lesson.content.spec.title}</h1><p className="learn-objective">Научишься {lesson.content.spec.objective}.</p>
-    {error && <p className="learn-error" role="alert">{error}</p>}
-    {lesson.status==='paused' ? <section className="learn-panel"><h2>Урок сохранён</h2><p>Продолжим с этого этапа.</p>
+  const course={goal:lesson.content.spec.goal,lessonId:lesson.id,level:lesson.content.spec.level as Level,topicKey:lesson.content.spec.topic_key,onComplete:() => void advance()};
+  const finished=lesson.status==='completed';
+  const stageResult=lesson.modules?.[moduleKeys[step]];
+  return <div className="learn-course">
+    <div className="learn-course-bar">
+      <button className="learn-link" onClick={onExit}>← Сохранить и выйти</button>
+      <span>{lesson.content.spec.level} · урок {lesson.content.spec.ordinal}</span>
+      <progress value={finished ? 6 : step} max={6} aria-label="Прогресс урока" />
+      <p><strong>{steps[step]}</strong><span>{step+1} / 6</span></p>
+    </div>
+    {error && <div className="learn-course-notice learn-error" role="alert">{error}</div>}
+    {lesson.status==='paused' ? <section className="learn-panel learn-course-notice"><h2>Урок сохранён</h2><p>Продолжим с этого этапа.</p>
       <button className="learn-primary" disabled={busy} onClick={() => void act(async () => {
-        const data=await learningPost<LearningLesson>(path+'/start',{request_id:crypto.randomUUID()}); clock.current={base:data.used_seconds,started:Date.now(),running:true}; update(data);
-      })}>Продолжить</button></section> : <section className="learn-panel">
-      <span className="learn-eyebrow">{steps[step]}</span>
-      {step===1 && <><div className="learn-theory">{lesson.content.theory.split('\n\n').map((paragraph,i) => <p key={i}>{paragraph.replace(/\*\*/g,'')}</p>)}</div>
-        <h3>Полезные слова</h3><div className="learn-word-list">{lesson.content.words.map(word => <span key={word.word}><b>{word.word}</b> — {word.translation}</span>)}</div>
-        <button className="learn-primary" disabled={busy} onClick={() => void advance()}>Перейти к практике →</button></>}
-      {step===3 && <AudioStory path={path+'/audio'} script={lesson.content.listening.script} textMode={lesson.listening_text_mode}
-        onText={() => void act(async () => update(await learningPost<LearningLesson>(path+'/listening-text')))} />}
-      {[0,2,3].includes(step) && <>
-        {shown && <><p className="learn-muted">Задание {questions.findIndex(q => q.id===shown.id)+1} из {questions.length}</p>
-          <Choices question={shown} busy={busy} onAnswer={value => void answer(value,shown)} /></>}
-        {feedback ? <button className="learn-primary" disabled={busy} onClick={() => next ? setFeedback(null) : void advance()}>Дальше →</button>
-          : !next && <button className="learn-primary" disabled={busy} onClick={() => void advance()}>Продолжить →</button>}
+        const data=await learningPost<LearningLesson>(path+'/start',{request_id:crypto.randomUUID()});
+        clock.current={base:data.used_seconds,started:Date.now(),running:true}; update(data);
+      })}>Продолжить</button></section>
+    : <div className="learn-module" aria-busy={busy}>
+      {step<5 && stageResult?.completed ? <section className="learn-panel learn-course-notice"><h2>{steps[step]} — готово</h2>
+        <p>Результат сохранён. Можно перейти к следующей части урока.</p>
+        <button className="learn-primary" disabled={busy} onClick={() => void advance()}>Продолжить урок →</button></section> : <>
+        {step===0 && <GrammarScreen onExit={onExit} course={{...course,track:'learn'}} />}
+        {step===1 && <GrammarScreen onExit={onExit} course={{...course,track:'test'}} />}
+        {step===2 && <SrsScreen onExit={onExit} course={course} />}
+        {step===3 && <ListeningScreen onExit={onExit} course={{...course,podcast:stageResult?.podcast,completed:stageResult?.completed}} />}
+        {step===4 && <Tutor onExit={onExit} course={course} />}
       </>}
-      {step===4 && <><p>Твоя задача: {lesson.content.conversation.objective}. Дай хотя бы три ответа; можно продолжить до восьми.</p>
-        <div className="learn-dialog" aria-live="polite"><div className="learn-tutor-message">{lesson.content.conversation.opening}</div>
-          {lesson.conversation.map(turn => <div key={turn.id}><div className="learn-user-message">{turn.text}<small>{turn.verified_voice ? 'Из голосовой записи' : 'Текстовый ответ'}</small></div>
-            <div className="learn-tutor-message">{turn.reply}</div><p className="learn-muted">{turn.feedback}</p></div>)}
-        </div>
-        {lesson.conversation.length<8 && <><VoiceInput path={path+'/transcribe'} disabled={busy} onResult={(text,token) => {setDraft(text); setVoiceToken(token); turnId.current='';}} />
-          <label className="learn-input-label">Твой ответ по-английски<textarea value={draft} maxLength={1200} disabled={busy} onChange={e => {setDraft(e.target.value); setVoiceToken(''); turnId.current='';}} placeholder="Напиши или запиши ответ…" /></label>
-          <button className="learn-primary" disabled={busy || draft.trim().length<2} onClick={() => void send()}>{busy ? 'Преподаватель отвечает…' : 'Отправить ответ'}</button></>}
-        {lesson.conversation.length>=3 && <button className="learn-secondary" disabled={busy} onClick={() => void advance()}>Перейти к итогу →</button>}
-      </>}
-      {step===5 && <><h2>{lesson.status==='completed' ? 'Урок завершён' : 'Твоя практика сегодня'}</h2>
-        <div className="learn-result-score">{correct} <small>из {allQuestions.length} заданий верно</small></div>
-        <p>Ты практиковал: {lesson.content.spec.objective}.</p>
-        <p>{lesson.conversation.some(t => t.verified_voice && t.assessed) ? 'Устные ответы получили обратную связь преподавателя.' : 'Для оценки устной речи нужна голосовая практика с проверкой преподавателя.'}</p>
-        {lesson.status==='completed' ? <><p className="learn-success" role="status">Результат сохранён. {lesson.result?.checkpoint_due ? 'Открылась проверка уровня.' : 'Следующий урок готов.'}</p>
-          <button className="learn-primary" onClick={onDone}>К программе →</button></> : <button className="learn-primary" disabled={busy} onClick={() => void finish()}>{busy ? 'Сохраняем результат…' : error ? 'Сохранить ещё раз' : 'Завершить урок'}</button>}
-      </>}
-    </section>}
+      {step===5 && <section className="learn-panel learn-course-notice">
+        <span className="learn-eyebrow">Урок {lesson.content.spec.ordinal} · {lesson.content.spec.level}</span>
+        <h1>{finished ? 'Урок завершён' : 'Твоя практика сегодня'}</h1>
+        <p>{lesson.content.spec.title}: {lesson.content.spec.objective}.</p>
+        {lesson.content.engine==='modules' ? <ul className="learn-completed-stages">{steps.slice(0,5).map((label,i) => <li key={label}>
+          <span>✓ {label}</span><span>{lesson.modules?.[moduleKeys[i]]?.skipped ? 'Нет ошибок для повторения' : 'Готово'}</span>
+        </li>)}</ul> : <p>Занятие из предыдущей версии программы. Результат сохранён.</p>}
+        {lesson.result && <p className="learn-success" role="status">Прогресс сохранён. {lesson.result.checkpoint_due ? 'Открылась проверка уровня.' : 'Следующий урок уже ждёт.'}</p>}
+        <button className="learn-primary" disabled={busy} onClick={() => finished ? onDone() : void finish()}>
+          {busy ? 'Сохраняем…' : finished ? 'К программе →' : error ? 'Сохранить ещё раз' : 'Завершить урок'}</button>
+      </section>}
+    </div>}
   </div>;
 }
 
@@ -260,7 +260,8 @@ export function LearningScreen({onExit,onPlacement}: {onExit: () => void; onPlac
     {data && !data.enabled && <p>Программа пока недоступна в этом сервисе.</p>}
     {data?.enabled && !data.profile && <section className="learn-panel">
       <span className="learn-eyebrow">Первый шаг</span><h2>{data.placement_level ? `Начинаем с ${data.placement_level}` : 'Определим точку старта'}</h2>
-      <p>В каждом уроке — повторение, объяснение, практика, аудирование и разговор. После 20 занятий проверим изменения.</p>
+      <p>В каждом уроке — правило с практикой, работа над ошибками, слова с озвучкой, подкаст и разговор. После 20 занятий проверим изменения.</p>
+      <LevelPicker value={data.placement_level || ''} onSaved={load} />
       {!data.placement_level ? <button className="learn-primary" onClick={onPlacement}>Пройти тест уровня →</button> : <>
         <label className="learn-input-label">Для чего тебе английский?<select value={goal} onChange={e => setGoal(e.target.value)}>{Object.entries(data.goals || {}).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>
         <button className="learn-primary" disabled={busy} onClick={() => void act(async () => {await learningSetup(goal); await load();})}>{busy ? 'Сохраняем…' : 'Создать мою программу'}</button></>}
@@ -271,7 +272,7 @@ export function LearningScreen({onExit,onPlacement}: {onExit: () => void; onPlac
       <button className="learn-primary" disabled={busy} onClick={() => void begin()}>{busy ? 'Открываем…' : data.profile.checkpoint_due ? 'Начать проверку' : data.next_lesson?.status==='active' || data.next_lesson?.status==='paused' ? 'Продолжить урок' : 'Начать урок'} →</button>
     </section><LearningMap data={data} onLesson={id => void act(async () => {
       const value=await learningPost<LearningLesson>(`/lessons/${id}/start`,{request_id:crypto.randomUUID()}); if(alive.current) setLesson(value);
-    })} /><details className="learn-settings"><summary>Цель обучения</summary><select value={goal} onChange={e => setGoal(e.target.value)}>{Object.entries(data.goals || {}).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select>
+    })} /><details className="learn-settings"><summary>Настройки программы</summary><LevelPicker value={data.profile.level} onSaved={load} /><label className="learn-input-label">Цель обучения<select value={goal} onChange={e => setGoal(e.target.value)}>{Object.entries(data.goals || {}).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>
       <button className="learn-secondary" disabled={busy} onClick={() => void act(async () => {await learningSetup(goal); await load();})}>Сохранить цель</button></details></>}
   </div>;
 }

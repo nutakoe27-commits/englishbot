@@ -26,6 +26,8 @@ import {
   startVkFlow,
   type VkVia,
 } from "./auth";
+import { LevelPicker } from "./LevelPicker";
+import "./Learning.css";
 import { ThemeToggle } from "./ThemeToggle";
 import { VK_VIA_LABEL, VkViaRow } from "./ProviderIcons";
 import { _oauthErrorMessage } from "./LoginScreen";
@@ -361,6 +363,10 @@ export function AccountSheet({ onClose, onLoggedOut, onOpenSubscribe, onOpenTuto
                   )}
                 </div>
               )}
+
+              <div className="acc-link-block">
+                <LevelPicker value={me?.cefr_level || ''} onSaved={async () => {setMe(await fetchMe());}} />
+              </div>
 
               {/* B2B: кабинет школы для учителя/админа школы. */}
               {me?.org && (me.org.role === "teacher" || me.org.role === "admin") && (
