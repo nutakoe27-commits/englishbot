@@ -15,11 +15,12 @@ import { SerifH } from "./ds-react/typography";
 
 interface Props {
   initial: TutorSettings;
+  lesson?: { title: string; level: string };
   onCancel: () => void;
   onSave: (next: TutorSettings) => void;
 }
 
-export function SettingsSheet({ initial, onCancel, onSave }: Props) {
+export function SettingsSheet({ initial, lesson, onCancel, onSave }: Props) {
   const [draft, setDraft] = useState<TutorSettings>(initial);
 
   // ESC закрывает
@@ -40,10 +41,10 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
     draft.mode === initial.mode;
 
   const canSave =
-    draft.role !== "custom" || draft.roleCustom.trim().length > 0;
+    !!lesson || draft.role !== "custom" || draft.roleCustom.trim().length > 0;
 
   return (
-    <ModalScreen fullscreen>
+    <ModalScreen fullscreen className="sub-screen--settings">
       <div className="settings-popover" role="dialog" aria-modal="true" aria-label="Настройки разговора">
         <header className="settings-popover__header">
           <SerifH as="h2" size={24}>Настройки</SerifH>
@@ -51,14 +52,22 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
         </header>
 
         <div className="settings-popover__content">
+          {lesson ? (
+            <section className="sheet-group settings-lesson">
+              <h3 className="sheet-group__title">Разговор в уроке · {lesson.level}</h3>
+              <p>{lesson.title}</p>
+              <p className="sheet-note">Тема и уровень взяты из этого урока. Уровень следующих занятий можно изменить в профиле.</p>
+            </section>
+          ) : <>
           {/* 1. Уровень */}
           <section className="sheet-group">
             <h3 className="sheet-group__title">Твой уровень</h3>
-            <div className="segmented">
+            <div className="segmented segmented--levels" role="group" aria-label="Уровень английского">
               {LEVEL_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
                   type="button"
+                  aria-pressed={draft.level === opt.value}
                   className={`segmented__item ${
                     draft.level === opt.value ? "is-active" : ""
                   }`}
@@ -82,6 +91,7 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
                   className={`role-chip ${
                     draft.role === role.value ? "is-active" : ""
                   }`}
+                  aria-pressed={draft.role === role.value}
                   onClick={() => setDraft((d) => ({ ...d, role: role.value }))}
                 >
                   <span className="role-chip__emoji" aria-hidden>
@@ -105,6 +115,7 @@ export function SettingsSheet({ initial, onCancel, onSave }: Props) {
               />
             )}
           </section>
+          </>}
 
           {/* 3. Длина ответов */}
           <section className="sheet-group">

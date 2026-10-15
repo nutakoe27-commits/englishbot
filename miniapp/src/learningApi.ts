@@ -8,7 +8,7 @@ export interface LearningQuestion { id: string; prompt: string; choices: string[
 export interface LessonSpec { goal?: string; ordinal: number; cycle: number; position: number; level: string; topic_key: string; title: string; objective: string; kind: string; estimated_minutes: number }
 export interface Turn { id: string; text: string; reply: string; feedback: string; score: number | null; assessed: boolean; verified_voice: boolean }
 export interface LessonResult { correct: number; total: number; objective: string; words: {word: string; translation: string}[]; speaking_assessed: boolean; checkpoint_due: boolean }
-export interface GuidedModule { goal?: string; lessonId: string; level: Level; topicKey: string; onComplete: () => void }
+export interface GuidedModule { goal?: string; lessonId: string; level: Level; topicKey: string; conversation?: {title: string; objective: string; prompts: string[]}; onComplete: () => void }
 export interface ModuleResult { completed?: boolean; skipped?: boolean; correct?: number; total?: number; turns?: number; history?: {role: string; content: string}[]; podcast?: {session_id: number; transcript: string; audio_url: string; used_words: string[]} }
 export interface LearningLesson { modules?: Record<string,ModuleResult>; id: string; status: string; step_index: number; used_seconds: number; activity_token?: string | null; conversation: Turn[]; result: LessonResult | null; listening_text_mode: boolean;
   content: { engine?: string; spec: LessonSpec; warmup: LearningQuestion[]; theory: string; practice: LearningQuestion[]; listening: {script: string; questions: LearningQuestion[]};

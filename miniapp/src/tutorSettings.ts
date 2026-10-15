@@ -65,6 +65,18 @@ export const ROLE_PRESETS: { value: RoleKey; label: string; emoji: string }[] = 
 
 const STORAGE_KEY = "englishbot.tutorSettings.v1";
 
+// Подготовка к разговору в том же модуле, который используется в уроках.
+export const ROLE_SCENARIOS: Record<RoleKey, {title: string; objective: string}> = {
+  language_partner: {title: "Повседневная жизнь", objective: "Расскажи о себе, своём дне и планах. Дальше можно перейти к твоим интересам."},
+  friend: {title: "Разговор с другом", objective: "Обсуди свой день, планы или то, что тебя сейчас волнует."},
+  barista: {title: "Заказываем в кафе", objective: "Закажи напиток и уточни размер, добавки и цену."},
+  interviewer: {title: "Собеседование", objective: "Расскажи о себе, своём опыте и работе, которую хочешь найти."},
+  travel_agent: {title: "Планируем путешествие", objective: "Выбери направление и обсуди даты, бюджет и пожелания к поездке."},
+  doctor: {title: "На приёме у врача", objective: "Опиши самочувствие и ответь на вопросы о симптомах."},
+  shopkeeper: {title: "В магазине", objective: "Объясни, что ищешь, уточни характеристики и стоимость покупки."},
+  custom: {title: "Твоя ситуация", objective: "Потренируй разговор с собеседником, которого ты выбрал в настройках."},
+};
+
 export function loadSettings(): TutorSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);

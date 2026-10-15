@@ -147,7 +147,9 @@ function LessonRunner({initial,onExit,onDone}: {initial: LearningLesson; onExit:
     clock.current.running=false; update(data);
   });
   const step=lesson.step_index;
-  const course={goal:lesson.content.spec.goal,lessonId:lesson.id,level:lesson.content.spec.level as Level,topicKey:lesson.content.spec.topic_key,onComplete:() => void advance()};
+  const course={goal:lesson.content.spec.goal,lessonId:lesson.id,level:lesson.content.spec.level as Level,topicKey:lesson.content.spec.topic_key,
+    conversation:{title:lesson.content.spec.title,objective:lesson.content.conversation.objective || lesson.content.spec.objective,prompts:lesson.content.conversation.prompts || []},
+    onComplete:() => void advance()};
   const finished=lesson.status==='completed';
   const stageResult=lesson.modules?.[moduleKeys[step]];
   return <div className="learn-course">

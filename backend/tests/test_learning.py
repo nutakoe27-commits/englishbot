@@ -129,9 +129,9 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         result=await self.api_post('grammar/finish' if mistakes else 'grammar/lesson/finish',body)
         return body,result
 
-    async def conversation(self,key,turns=3):
+    async def conversation(self,key,turns=3,query=None,reply='Tell me more.'):
         class Socket:
-            query_params={'mode':'chat','learning_lesson_id':key}
+            query_params={'mode':'chat','learning_lesson_id':key,**(query or {})}
             state=SimpleNamespace()
             client_state=WebSocketState.CONNECTED
             client=('local',1)
@@ -144,10 +144,11 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
                 return {'text':json.dumps({'type':'user_text','text':'I live in London and enjoy music.'})}
         socket=Socket()
         with patch.object(voice,'get_llm_provider',return_value=object()), \
-             patch.object(voice,'_llm_complete_with_timeout',new_callable=AsyncMock,return_value='Tell me more.'), \
+             patch.object(voice,'_llm_complete_with_timeout',new_callable=AsyncMock,return_value=reply) as completion, \
              patch.object(voice,'_check_achievements_hook',new_callable=AsyncMock):
             await voice.run_voice_session(socket,limits_ctx=SimpleNamespace(user_db_id=self.uid,tg_id=0))
             await asyncio.sleep(0)
+            socket.prompts=[call.kwargs['system_prompt'] for call in completion.call_args_list]
         return socket
 
     async def complete(self,key,finish=True):
@@ -352,11 +353,66 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
             first=learning_modules.result(await session.get(LearningLesson,key),'conversation')
             self.assertEqual(first['turns'],1)
             self.assertTrue(first['history'])
-        await self.conversation(key,turns=2)
+        resumed=await self.conversation(key,turns=2)
+        self.assertEqual(next(m['text'] for m in resumed.messages if m.get('role')=='tutor'),'Tell me more.')
         await self.post(f'/lessons/{key}/advance',{'step_index':4})
         async with db_session() as session:
             self.assertEqual(learning_modules.result(await session.get(LearningLesson,key),'conversation')['turns'],3)
             self.assertIsNone(await session.get(LearningSkill,(self.uid,'speaking')))
+
+    async def test_conversation_uses_frozen_lesson_topic_level_questions_and_words(self):
+        key=await self.prepared(); await self.post(f'/lessons/{key}/start')
+        async with db_session() as session:
+            row=await session.get(LearningLesson,key)
+            row.step_index=4
+            material=copy.deepcopy(row.content)
+        socket=await self.conversation(key,turns=1,query={
+            'level':'C1','role':'custom','role_custom':'pirate',
+            'lesson_context':'client must not supply lesson material',
+        })
+        first=next(m for m in socket.messages if m.get('role')=='tutor')
+        self.assertEqual(first['text'],material['conversation']['opening'])
+        prompt=socket.prompts[0]
+        self.assertIn('A1',prompt)
+        self.assertIn(material['spec']['title'],prompt)
+        self.assertIn(material['conversation']['objective'],prompt)
+        for question in material['conversation']['prompts']: self.assertIn(question,prompt)
+        for item in material['words']: self.assertIn(item['word'],prompt)
+        self.assertNotIn('pirate',prompt)
+        self.assertNotIn('client must not supply',prompt)
+        self.assertNotIn('advanced',prompt)
+
+    async def test_voice_greeting_is_the_same_lesson_opening_and_is_sent_to_tts(self):
+        key=await self.prepared(); await self.post(f'/lessons/{key}/start')
+        async with db_session() as session:
+            row=await session.get(LearningLesson,key)
+            row.step_index=4
+            opening=row.content['conversation']['opening']
+        tts=object()
+        with patch.object(voice,'get_stt_provider',return_value=object()), \
+             patch.object(voice,'get_tts_provider',return_value=tts), \
+             patch.object(voice,'_send_tts_to_ws',new_callable=AsyncMock) as speak:
+            socket=await self.conversation(key,turns=0,query={'mode':'voice'})
+        self.assertEqual(next(m['text'] for m in socket.messages if m.get('role')=='tutor'),opening)
+        speak.assert_awaited_once_with(socket,tts,opening)
+
+    async def test_resuming_after_correction_repeats_only_question_and_preserves_history(self):
+        key=await self.prepared(); await self.post(f'/lessons/{key}/start')
+        async with db_session() as session:
+            row=await session.get(LearningLesson,key)
+            row.step_index=4
+        reply='Correction: I live in London.\n\nWhat do you like about your city?'
+        original=await self.conversation(key,turns=1,reply=reply)
+        corrected=[m for m in original.messages if m.get('role')=='tutor'][-1]
+        self.assertEqual(corrected['correction'],'I live in London.')
+        resumed=await self.conversation(key,turns=0)
+        first=next(m for m in resumed.messages if m.get('role')=='tutor')
+        self.assertEqual(first['text'],'What do you like about your city?')
+        self.assertIsNone(first.get('correction'))
+        async with db_session() as session:
+            history=learning_modules.result(await session.get(LearningLesson,key),'conversation')['history']
+            self.assertEqual(len(history),3)
+            self.assertEqual(history[-1]['text'],'What do you like about your city?')
 
     async def test_audio_is_private_and_marked_available_only_after_success(self):
         key=await self.prepared()

@@ -737,7 +737,7 @@ button {
 .segmented {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 1fr;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 6px;
   padding: 0;                                /* убрал внутренний padding — items сами с border */
   border-radius: 0;
@@ -745,6 +745,7 @@ button {
   border: 0;
 }
 .segmented__item {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -775,6 +776,7 @@ button {
   letter-spacing: -0.1px;
 }
 .segmented__hint {
+  overflow-wrap: anywhere;
   font-size: 10.5px;
   color: var(--text-faint);
   line-height: 1.2;
@@ -783,10 +785,146 @@ button {
   color: var(--accent-deep);
 }
 
+/* Пять уровней с подписями не помещаются в одну мобильную строку. */
+.sub-screen--settings .sub-screen__inner {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+}
+.sub-screen--settings .settings-popover {
+  min-height: 0;
+}
+.settings-popover__header,
+.settings-popover__footer {
+  flex-shrink: 0;
+}
+.settings-popover .settings-popover__content {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.settings-popover .settings-popover__footer .btn {
+  min-height: 44px !important;
+}
+.settings-popover .segmented--levels {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+}
+.settings-popover .segmented__item {
+  min-height: 48px;
+}
+.settings-popover .role-chip {
+  min-width: 0;
+  padding: 8px;
+  gap: 6px;
+}
+.settings-popover .role-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.settings-popover .role-chip__emoji {
+  flex-shrink: 0;
+  font-size: 18px;
+}
+.settings-popover .role-chip__label {
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: normal;
+}
+.settings-lesson > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tutor-app.tutor-app--with-topic {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+}
+.conversation-topic {
+  position: relative;
+  z-index: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--border-accent);
+  border-radius: 14px;
+  background: var(--accent-tint);
+  overflow-wrap: anywhere;
+}
+.conversation-topic__eyebrow {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.conversation-topic h2 {
+  margin: 3px 0 0;
+  font-size: 16px;
+  line-height: 1.3;
+}
+.conversation-topic p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.conversation-intro {
+  margin: auto 0;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.conversation-intro h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.conversation-intro p {
+  margin: 0 0 16px;
+}
+.conversation-intro ul {
+  margin: 0 0 16px;
+  padding-left: 20px;
+}
+.conversation-intro li + li {
+  margin-top: 6px;
+}
+.conversation-intro .conversation-intro__hint {
+  margin-bottom: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.conversation-start p {
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.tutor-controls.conversation-start {
+  grid-template-rows: auto auto;
+}
+.conversation-start .btn {
+  width: 100%;
+  min-height: 48px;
+}
+@media (max-height: 640px) {
+  .tutor-app.tutor-app--with-topic {
+    gap: 8px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  .tutor-app.tutor-app--with-topic .mode-v2-top {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .tutor-app--with-topic .conversation-topic {
+    padding: 6px 12px;
+  }
+  .tutor-app--with-topic .conversation-topic p {
+    display: none;
+  }
+}
+
 /* ─── Роль — сетка карточек-чипов ─── */
 .role-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 6px;
 }
 .role-chip {

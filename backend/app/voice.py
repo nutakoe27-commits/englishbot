@@ -342,7 +342,7 @@ async def _run_chat_session(
     )
 
     # Приветствие — только текстом, без TTS.
-    greeting = build_greeting(session_settings)
+    greeting = build_greeting(session_settings, history)
     try:
         if websocket.client_state == WebSocketState.CONNECTED:
             await websocket.send_json({
@@ -350,7 +350,8 @@ async def _run_chat_session(
                 "role": "tutor",
                 "text": greeting,
             })
-            history.append({"role": "assistant", "text": greeting})
+            if not history or history[-1] != {"role": "assistant", "text": greeting}:
+                history.append({"role": "assistant", "text": greeting})
     except Exception as exc:
         logger.warning("[chat] не удалось отправить приветствие: %s", exc)
 
@@ -506,8 +507,16 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
             async with db_session() as db:
                 guided=await course.require(db,limits_ctx.user_db_id,lesson_key,'conversation')
                 session_settings.level=guided.level
-                session_settings.role='custom'
-                session_settings.role_custom=('English practice: '+guided.content['spec']['objective'])[:200]
+                session_settings.role='language_partner'
+                session_settings.role_custom=''
+                material=guided.content
+                session_settings.lesson_context={
+                    'title':material['spec']['title'],
+                    'objective':material['conversation']['objective'],
+                    'prompts':material['conversation']['prompts'],
+                    'opening':material['conversation']['opening'],
+                    'words':[item['word'] for item in material['words']],
+                }
                 websocket.state.learning_history=course.result(guided,'conversation').get('history',[])
         except Exception:
             await websocket.close(code=4003,reason='Course stage unavailable')
@@ -588,7 +597,7 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
     # ─── Приветственное сообщение репетитора ───────────────────────
     # Сразу после подключения приглашаем пользователя заговорить — чтобы было понятно,
     # что бот готов, и сессия не выглядела «зависшей» при молчании.
-    greeting = build_greeting(session_settings)
+    greeting = build_greeting(session_settings, history)
     try:
         if websocket.client_state == WebSocketState.CONNECTED:
             await websocket.send_json({
@@ -599,7 +608,8 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
             # Озвучиваем приветствие в фоне — не блокируем STT-пайплайн
             asyncio.create_task(_send_tts_to_ws(websocket, tts, greeting))
             # Добавляем приветствие в историю, чтобы LLM видел контекст
-            history.append({"role": "assistant", "text": greeting})
+            if not history or history[-1] != {"role": "assistant", "text": greeting}:
+                history.append({"role": "assistant", "text": greeting})
     except Exception as exc:
         logger.warning("Не удалось отправить приветствие: %s", exc)
 

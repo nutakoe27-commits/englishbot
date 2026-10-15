@@ -11,10 +11,12 @@ import { createPortal } from "react-dom";
 export function ModalScreen({
   children,
   fullscreen = false,
+  className = "",
 }: {
   children: React.ReactNode;
   /** true — popover на весь viewport без card-ограничений (max-width / border / radius). */
   fullscreen?: boolean;
+  className?: string;
 }) {
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -23,7 +25,7 @@ export function ModalScreen({
   }, []);
 
   return createPortal(
-    <div className={`sub-screen ${fullscreen ? "sub-screen--fullscreen" : ""}`}>
+    <div className={`sub-screen ${fullscreen ? "sub-screen--fullscreen" : ""} ${className}`}>
       <div className="sub-screen__inner" style={fullscreen ? undefined : { padding: 0 }}>{children}</div>
     </div>,
     document.body,

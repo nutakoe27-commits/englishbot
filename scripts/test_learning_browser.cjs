@@ -7,25 +7,28 @@ const BASE=process.env.LEARNING_UI_URL || 'http://localhost:5173';
 const SHOTS=process.env.LEARNING_SCREENSHOT_DIR;
 const APP=!!process.env.LEARNING_APP_ENTRY;
 let browser;
-before(async()=>{browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium'});if(SHOTS)await fs.mkdir(SHOTS,{recursive:true});});
+before(async()=>{browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});if(SHOTS)await fs.mkdir(SHOTS,{recursive:true});});
 after(async()=>{await browser?.close();});
 const copy=x=>JSON.parse(JSON.stringify(x));
 function lesson(){return {id:'lesson-one',status:'prepared',step_index:0,used_seconds:0,activity_token:'active-one',modules:{},conversation:[],result:null,listening_text_mode:false,
  content:{engine:'modules',spec:{ordinal:1,cycle:1,position:1,level:'A1',topic_key:'a1_to_be',title:'Знакомимся',objective:'представиться и узнать о собеседнике',kind:'new',estimated_minutes:18},
- warmup:[],theory:'',practice:[],listening:{script:'',questions:[]},conversation:{},words:[{word:'name',translation:'имя'},{word:'city',translation:'город'}]}};}
-async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFinish=false,width=390,step=0,listeningGate=null,failListening=false,cachedPodcast=false,entryMode='learning'}={}){
- const context=await browser.newContext({viewport:{width,height:844}});t.after(async()=>{if(SHOTS && context.pages()[0])await shot(context.pages()[0],'last-'+t.name.replace(/[^a-z0-9]+/gi,'-'));await context.close();});
+ warmup:[],theory:'',practice:[],listening:{script:'',questions:[]},conversation:{objective:'представиться и узнать о собеседнике',opening:'Hello! What is your name?',prompts:['Hello! What is your name?','Where are you from?','What do you like doing?']},words:[{word:'name',translation:'имя'},{word:'city',translation:'город'}]}};}
+async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFinish=false,width=390,height=844,step=0,listeningGate=null,failListening=false,cachedPodcast=false,entryMode='learning'}={}){
+ const context=await browser.newContext({viewport:{width,height},permissions:['microphone']});t.after(async()=>{if(SHOTS && context.pages()[0])await shot(context.pages()[0],'last-'+t.name.replace(/[^a-z0-9]+/gi,'-'));await context.close();});
  if(process.env.LEARNING_LUCIDE_PATH)await context.addInitScript({path:process.env.LEARNING_LUCIDE_PATH});
  await context.addInitScript(()=>{localStorage.setItem('englishbot_jwt','local-browser-test');localStorage.setItem('englishbot.tutorSettings.v1',JSON.stringify({level:'A1',mode:'chat'}));});
  context.setDefaultTimeout(7000);
- const row=lesson(),calls=[],errors=[];row.step_index=step;
+ const row=lesson(),calls=[],errors=[],connections=[];row.step_index=step;
  if(cachedPodcast)row.modules.listening={completed:false,podcast:{session_id:103,transcript:'My name is Alex. I live in Bristol.',audio_url:'/api/listening/audio/test.wav',used_words:['name']}};
  let level='A1',completed=0,turns=0;
  const overview=()=>({enabled:true,placement_level:level,goals:{general:'Общий английский',travel:'Путешествия',work:'Работа'},profile:profile?{goal:'general',goal_label:'Общий английский',level,completed_count:completed,cycle:1,cycle_completed:completed,until_checkpoint:20-completed,checkpoint_due:false}:null,next_lesson:profile?row:null,
   route:Array.from({length:20},(_,i)=>({...row.content.spec,ordinal:i+1,position:i+1,status:i<completed?'completed':i===completed?row.status:'locked',id:i===completed?row.id:null})),
   skills:['grammar','vocabulary','listening','speaking'].map((key,i)=>({key,label:['Грамматика','Лексика','Понимание речи','Разговор'][i],attempts:0,accuracy:null})),history:[]});
  await context.routeWebSocket('**/ws/voice**',ws=>{
-  assert.equal(new URL(ws.url()).searchParams.get('learning_lesson_id'),row.id);
+  const params=Object.fromEntries(new URL(ws.url()).searchParams);connections.push(params);
+  if(entryMode==='learning')assert.equal(params.learning_lesson_id,row.id);
+  else assert.equal(params.learning_lesson_id,undefined);
+  ws.send(JSON.stringify({type:'text',role:'tutor',text:entryMode==='learning' ? row.content.conversation.opening : params.role==='barista' ? 'Hey, what can I get you?' : 'Hi! How is your day?'}));
   ws.onMessage(raw=>{const data=JSON.parse(String(raw));if(data.type==='user_text'){turns++;if(process.env.LEARNING_DEBUG)console.log('WS USER TURN',turns);ws.send(JSON.stringify({type:'text',role:'tutor',text:'Tell me more about your city.'}));}});
   ws.onClose(()=>{row.modules.conversation={completed:turns>=3,turns};});
  });
@@ -87,10 +90,10 @@ async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFi
   return json({});
  });
  const page=await context.newPage();if(process.env.LEARNING_DEBUG)page.on('console',msg=>console.log(msg.type(),msg.text()));page.on('pageerror',e=>errors.push(e.message));t.after(()=>assert.deepEqual(errors,[]));
- await page.goto(BASE+(APP ? `/?mode=${entryMode}` : '/tests/learning.html'));await page.getByRole('heading',{name:entryMode==='listening' ? 'Слушание' : 'Твой английский, шаг за шагом',exact:true}).waitFor();
- return {page,calls,row,getLevel:()=>level};
+ await page.goto(BASE+(APP ? `/?mode=${entryMode}` : '/tests/learning.html'));await page.getByRole('heading',{name:entryMode==='listening' ? 'Слушание' : entryMode==='speaking' ? 'Разговор' : 'Твой английский, шаг за шагом',exact:true}).waitFor();
+ return {page,calls,row,connections,getLevel:()=>level};
 }
-async function shot(page,name){if(SHOTS)await page.screenshot({path:`${SHOTS}/${name}-${page.viewportSize().width}.png`,fullPage:true});}
+async function shot(page,name){if(SHOTS){await page.evaluate(()=>Promise.all(document.getAnimations().filter(a=>a.effect?.getTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{}))));await page.screenshot({path:`${SHOTS}/${name}-${page.viewportSize().width}.png`,fullPage:true});}}
 async function start(page){await page.getByRole('button',{name:'Начать урок →',exact:true}).click();await page.getByRole('heading',{name:'Глагол to be',exact:true}).waitFor();}
 async function grammar(page){await page.getByRole('button',{name:'К практике',exact:false}).click();for(let i=0;i<4;i++){await page.getByRole('button',{name:'am',exact:true}).click();await page.locator('.grm-exercise > .grm-primary-btn').click();}await page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();}
 async function until(page,fn){await page.waitForFunction(fn);}
@@ -109,6 +112,9 @@ async function summary(f){
  assert.equal(await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).isDisabled(),true);
  await f.page.locator('audio').evaluate(audio=>audio.dispatchEvent(new Event('ended')));
  await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();
+ await f.page.getByRole('heading',{name:'Знакомимся',exact:true}).waitFor();await shot(f.page,'conversation-intro');
+ assert.equal(f.connections.length,0);
+ await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
  await f.page.getByRole('textbox',{name:'Сообщение',exact:true}).waitFor();await shot(f.page,'conversation');
  assert.equal(await f.page.evaluate(()=>{const nav=document.querySelector('.bnav');const controls=document.querySelector('.tutor-controls');return !nav || controls.getBoundingClientRect().bottom<=nav.getBoundingClientRect().top+1;}),true,'conversation controls must stay above bottom navigation');
  for(let i=0;i<3;i++){await f.page.getByRole('textbox',{name:'Сообщение',exact:true}).fill('I live in Bristol. '+i);await f.page.getByRole('button',{name:'Отправить',exact:true}).click();await f.page.waitForFunction(()=>document.querySelector('textarea[aria-label="Сообщение"]')?.value==='');}
@@ -215,4 +221,113 @@ if(APP)test('standalone listening still offers settings and waits for manual gen
  assert.equal(request.learning_lesson_id,undefined);assert.equal(request.level,'C1');assert.equal(request.speed,1.25);
  assert.equal(request.duration_min,5);assert.equal(request.category,'science');
  await f.page.getByRole('button',{name:'✦ Новый подкаст',exact:true}).waitFor();
+});
+
+
+if(APP)for(const width of [320,390,430,768])test(`conversation settings fit all five CEFR levels at ${width}px`,async t=>{
+ const f=await fixture(t,{entryMode:'speaking',width});
+ await f.page.getByRole('heading',{name:'Повседневная жизнь',exact:true}).waitFor();
+ assert.equal(f.connections.length,0);
+ await f.page.getByRole('button',{name:'Настройки',exact:true}).click();
+ const modal=f.page.getByRole('dialog',{name:'Настройки разговора'});
+ const levels=modal.getByRole('group',{name:'Уровень английского'});
+ assert.equal(await levels.getByRole('button').count(),5);
+ assert.equal(await modal.locator('.role-grid').evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length),2);
+ assert.equal(await modal.locator('.role-chip__label').evaluateAll(labels=>labels.every(el=>el.scrollWidth<=el.clientWidth+1)),true,'role names must fit without broken words');
+ assert.equal(await f.page.evaluate(()=>{
+  const modal=document.querySelector('.settings-popover');
+  const rect=modal.getBoundingClientRect();
+  return [...modal.querySelectorAll('.segmented__item,.role-chip')].every(el=>{
+   const r=el.getBoundingClientRect();return r.left>=rect.left-1 && r.right<=rect.right+1 && el.scrollWidth<=el.clientWidth+1;
+  }) && document.documentElement.scrollWidth<=innerWidth;
+ }),true,'settings cards and their text must stay inside the modal');
+ await shot(f.page,'conversation-settings');
+ await levels.getByRole('button',{name:'C1 Продвинутый',exact:true}).click();
+ assert.equal(await levels.getByRole('button',{name:'C1 Продвинутый',exact:true}).getAttribute('aria-pressed'),'true');
+ await modal.getByRole('button',{name:'Применить',exact:true}).click();
+ assert.equal(f.connections.length,0,'editing settings before start must not connect');
+ assert.match(await f.page.getByRole('complementary',{name:'Тема разговора'}).textContent(),/C1/);
+ await f.page.getByRole('button',{name:'Настройки',exact:true}).click();
+ await modal.getByRole('group',{name:'Уровень английского'}).getByRole('button',{name:'A1 Начальный',exact:true}).click();
+ await modal.getByRole('button',{name:'Бариста',exact:false}).click();
+ await modal.getByRole('button',{name:'Применить',exact:true}).click();
+ await f.page.getByRole('heading',{name:'Заказываем в кафе',exact:true}).waitFor();
+ assert.equal(f.connections.length,0);
+ await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
+ await f.page.getByRole('textbox',{name:'Сообщение',exact:true}).waitFor();
+ await f.page.waitForFunction(()=>document.querySelector('.msg--tutor'));
+ assert.equal(f.connections.length,1);assert.equal(f.connections[0].level,'A1');assert.equal(f.connections[0].role,'barista');
+ await shot(f.page,'standalone-conversation');
+});
+if(APP)test('settings keep their footer reachable on a short screen and cancel discards draft',async t=>{
+ const f=await fixture(t,{entryMode:'speaking',width:320,height:568});
+ await f.page.getByRole('button',{name:'Настройки',exact:true}).click();
+ const modal=f.page.getByRole('dialog',{name:'Настройки разговора'});
+ await modal.getByRole('button',{name:'B2 Выше среднего',exact:true}).click();
+ const footer=await modal.locator('.settings-popover__footer').boundingBox();
+ assert(footer.y>=0 && footer.y+footer.height<=568,'footer must remain visible while settings scroll');
+ await modal.locator('.settings-popover__content').evaluate(el=>el.scrollTop=el.scrollHeight);
+ await shot(f.page,'conversation-settings-short');
+ await f.page.keyboard.press('Escape');await modal.waitFor({state:'detached'});
+ await f.page.getByRole('button',{name:'Настройки',exact:true}).click();
+ assert.equal(await modal.getByRole('button',{name:'A1 Начальный',exact:true}).getAttribute('aria-pressed'),'true');
+ assert.equal(f.connections.length,0);
+});
+for(const width of [320,390,430,768])test(`lesson conversation explains its topic before connecting at ${width}px`,async t=>{
+ const f=await fixture(t,{step:4,width});
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.getByRole('heading',{name:'Знакомимся',exact:true}).waitFor();
+ await f.page.getByText('представиться и узнать о собеседнике',{exact:true}).waitFor();
+ await f.page.getByText('Where are you from?',{exact:true}).waitFor();
+ assert.equal(f.connections.length,0);assert.equal(await f.page.getByRole('textbox',{name:'Сообщение',exact:true}).count(),0);
+ await f.page.getByRole('button',{name:'Настройки',exact:true}).click();
+ const modal=f.page.getByRole('dialog',{name:'Настройки разговора'});
+ await modal.getByText('Разговор в уроке · A1',{exact:true}).waitFor();
+ assert.equal(await modal.getByRole('group',{name:'Уровень английского'}).count(),0);
+ assert.equal(await modal.locator('.role-grid').count(),0);
+ await modal.getByRole('button',{name:'Подробно',exact:false}).click();
+ await modal.getByRole('button',{name:'Применить',exact:true}).click();
+ assert.equal(f.connections.length,0);
+ await shot(f.page,'lesson-conversation-intro');
+ await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
+ await f.page.locator('.msg--tutor').filter({hasText:'Hello! What is your name?'}).waitFor();
+ assert.equal(f.connections.length,1);assert.equal(f.connections[0].learning_lesson_id,f.row.id);assert.equal(f.connections[0].length,'long');
+ await f.page.getByRole('heading',{name:'Знакомимся',exact:true}).waitFor();
+ assert.equal(await f.page.evaluate(()=>{
+  const controls=document.querySelector('.tutor-controls').getBoundingClientRect();
+  const nav=document.querySelector('.bnav')?.getBoundingClientRect();
+  return controls.right<=innerWidth+1 && controls.bottom<=(nav?.top ?? innerHeight)+1 && document.documentElement.scrollWidth<=innerWidth;
+ }),true,'topic and composer must fit above navigation');
+ await shot(f.page,'lesson-conversation-active');
+});
+if(APP)test('voice mode waits for Start before requesting the microphone',async t=>{
+ const f=await fixture(t,{entryMode:'speaking'});
+ await f.page.evaluate(()=>{
+  window.micRequests=0;const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+  navigator.mediaDevices.getUserMedia=(...args)=>{window.micRequests++;return original(...args);};
+ });
+ await f.page.getByRole('button',{name:'Настройки',exact:true}).click();
+ const modal=f.page.getByRole('dialog',{name:'Настройки разговора'});
+ await modal.getByRole('button',{name:'Голос',exact:false}).click();
+ await modal.getByRole('button',{name:'Применить',exact:true}).click();
+ assert.equal(await f.page.evaluate(()=>window.micRequests),0);assert.equal(f.connections.length,0);
+ await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
+ await f.page.locator('.msg--tutor').waitFor();
+ assert.equal(await f.page.evaluate(()=>window.micRequests),1);assert.equal(f.connections.length,1);assert.equal(f.connections[0].mode,'voice');
+ await shot(f.page,'conversation-voice');
+});
+
+test('lesson conversation keeps a readable chat area on a short mobile viewport',async t=>{
+ const f=await fixture(t,{step:4,width:320,height:568});
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
+ await f.page.locator('.msg--tutor').waitFor();
+ const log=await f.page.locator('.tutor-log').boundingBox();
+ assert(log.height>=80,'short screens need room for the actual dialogue');
+ assert.equal(await f.page.evaluate(()=>{
+  const controls=document.querySelector('.tutor-controls').getBoundingClientRect();
+  const nav=document.querySelector('.bnav')?.getBoundingClientRect();
+  return controls.bottom<=(nav?.top ?? innerHeight)+1;
+ }),true);
+ await shot(f.page,'lesson-conversation-short');
 });

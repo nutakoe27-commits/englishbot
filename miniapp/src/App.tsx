@@ -32,6 +32,7 @@ import {
   loadSettings,
   saveSettings,
   settingsToQuery,
+  ROLE_SCENARIOS,
   type TutorSettings,
 } from "./tutorSettings";
 import { IconButton as DSIconButton } from "./ds-react/IconButton";
@@ -192,7 +193,8 @@ interface AppProps {
 }
 
 export default function App({ onExit, course }: AppProps = {}) {
-  const [appState, setAppState] = useState<AppState>("initializing");
+  const [appState, setAppState] = useState<AppState>("idle");
+  const [conversationStarted, setConversationStarted] = useState(false);
   const [dialogLog, setDialogLog] = useState<DialogEntry[]>([]);
   const [statusText, setStatusText] = useState<string>("Getting ready…");
   const [errorMsg, setErrorMsg] = useState<string>("");
@@ -535,9 +537,10 @@ export default function App({ onExit, course }: AppProps = {}) {
     }
   }, []);
 
-  // При монтировании компонента: в voice-режиме запрашиваем микрофон, в chat — пропускаем.
-  // Затем сразу открываем WS — к первому вводу он уже в OPEN.
+  // До явного старта можно прочитать задачу и выбрать режим,
+  // не открывая сессию и микрофон.
   useEffect(() => {
+    if (!conversationStarted) return;
     let cancelled = false;
     const timer=window.setTimeout(() => { void (async () => {
       if (settingsRef.current.mode === "chat") {
@@ -565,7 +568,7 @@ export default function App({ onExit, course }: AppProps = {}) {
       clearTimeout(timer); cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [conversationStarted]);
 
   // ── Открытие WebSocket ──────────────────────────────────────────────────
   // Идемпотентная, устойчивая к параллельным вызовам. Гарантии:
@@ -974,7 +977,7 @@ export default function App({ onExit, course }: AppProps = {}) {
       const prevMode = settingsRef.current.mode;
       // Помечаем флаг — чтобы maybeTriggerSummary не открыл оверлей в момент
       // пересоздания WS из-за смены настроек. Сбрасывается в самом helper'е.
-      settingsReconnectRef.current = true;
+      settingsReconnectRef.current = conversationStarted;
       setSettings(next);
       if (!course) saveSettings(next);
       settingsRef.current = next;
@@ -985,6 +988,7 @@ export default function App({ onExit, course }: AppProps = {}) {
       setChatThinking(false);
       setChatDraft("");
       setErrorMsg("");
+      if (!conversationStarted) return;
       if (isRecordingRef.current) {
         stopRecording();
       }
@@ -1029,7 +1033,7 @@ export default function App({ onExit, course }: AppProps = {}) {
         await openConnection();
       })();
     },
-    [openConnection, initMicrophone, stopRecording],
+    [openConnection, initMicrophone, stopRecording, conversationStarted, course],
   );
 
   // ── Отправка текстового сообщения в chat-режиме ────────────────────────
@@ -1212,7 +1216,10 @@ export default function App({ onExit, course }: AppProps = {}) {
   // Режим текстового чата
   const isChatMode = settings.mode === "chat";
 
-  useLucide(`${appState}-${settingsOpen}-${progressOpen}-${wordsOpen}-${subscribeOpen}-${isChatMode}`);
+  useLucide(`${appState}-${settingsOpen}-${progressOpen}-${wordsOpen}-${subscribeOpen}-${isChatMode}-${conversationStarted}`);
+  const scenario = course?.conversation || ROLE_SCENARIOS[settings.role];
+  const conversationTitle = !course && settings.role === "custom" && settings.roleCustom.trim()
+    ? settings.roleCustom.trim() : scenario.title;
 
   // Таймер дневного лимита (free-тариф) — показываем над вводом/кнопкой.
   const showTimer =
@@ -1229,7 +1236,7 @@ export default function App({ onExit, course }: AppProps = {}) {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="tutor-app">
+    <div className="tutor-app tutor-app--with-topic">
       {/* Декоративный фон — статичные градиентные пятна */}
       <div className="bg-orb bg-orb--one" aria-hidden />
       <div className="bg-orb bg-orb--two" aria-hidden />
@@ -1266,9 +1273,25 @@ export default function App({ onExit, course }: AppProps = {}) {
         </div>
       </header>
 
+      <aside className="conversation-topic" aria-label="Тема разговора">
+        <span className="conversation-topic__eyebrow">{course ? "Практика в уроке" : "Тема разговора"} · {settings.level}</span>
+        <h2>{conversationTitle}</h2>
+        {conversationStarted && <p>{scenario.objective}</p>}
+      </aside>
+
       {/* Лог диалога — всегда одинакового размера */}
       <section className="tutor-log" ref={logRef} aria-live="polite">
-        {dialogLog.length === 0 ? (
+        {!conversationStarted ? (
+          <div className="conversation-intro">
+            <h3>Твоя задача</h3>
+            <p>{scenario.objective}</p>
+            {course?.conversation?.prompts.length ? <>
+              <h3>О чём поговорим</h3>
+              <ul lang="en">{course.conversation.prompts.map((prompt, i) => <li key={i}>{prompt}</li>)}</ul>
+            </> : <p className="conversation-intro__hint">Собеседника, уровень и режим можно выбрать в настройках.</p>}
+            {course && <p className="conversation-intro__hint">Ответь минимум три раза, затем нажми «Завершить», чтобы перейти к итогу урока.</p>}
+          </div>
+        ) : dialogLog.length === 0 ? (
           <div className="tutor-log__empty">
             <div className="tutor-log__empty-icon" aria-hidden>
               💬
@@ -1339,7 +1362,12 @@ export default function App({ onExit, course }: AppProps = {}) {
       </section>
 
       {/* Стабильный футер — разный для voice / chat режимов */}
-      {isChatMode ? (
+      {!conversationStarted ? (
+        <footer className="tutor-controls conversation-start">
+          <p>{isChatMode ? "Текстовый чат · без микрофона" : "Голосовой разговор · понадобится микрофон"}</p>
+          <button type="button" className="btn btn--primary" onClick={() => setConversationStarted(true)}>Начать разговор</button>
+        </footer>
+      ) : isChatMode ? (
         <footer className="tutor-controls tutor-controls--chat">
           {timerNode}
           {/* Индикатор «tutor is typing…» фиксированной высоты */}
@@ -1511,6 +1539,7 @@ export default function App({ onExit, course }: AppProps = {}) {
       {settingsOpen && (
         <SettingsSheet
           initial={settings}
+          lesson={course ? {title:conversationTitle, level:course.level} : undefined}
           onCancel={() => setSettingsOpen(false)}
           onSave={handleSettingsSave}
         />
