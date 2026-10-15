@@ -339,8 +339,8 @@ async def _synthesize_full(text: str, speed: float) -> bytes:
 class _GenerateIn(BaseModel):
     learning_lesson_id: Optional[str] = None
     init_data: Optional[str] = None
-    duration_min: int = Field(..., ge=1, le=MAX_DURATION_MIN)
-    category: str
+    duration_min: Optional[int] = Field(default=None, ge=1, le=MAX_DURATION_MIN)
+    category: Optional[str] = None
     use_vocab: bool = False
     speed: float = 1.0
     level: str = "B1"
@@ -366,17 +366,24 @@ async def generate_podcast(
     authorization: Optional[str] = Header(None),
 ) -> _GenerateOut:
     # ── Валидация входа ─────────────────────────────────────────────────
-    if body.category not in ALLOWED_CATEGORIES:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_category")
-    if body.speed not in ALLOWED_SPEEDS:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_speed")
-    if body.level not in ALLOWED_LEVELS:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_level")
+    if body.learning_lesson_id:
+        if not settings.DATABASE_URL:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "db_not_configured")
+    else:
+        if body.duration_min is None or body.category is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "podcast_settings_required")
+        if body.category not in ALLOWED_CATEGORIES:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_category")
+        if body.speed not in ALLOWED_SPEEDS:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_speed")
+        if body.level not in ALLOWED_LEVELS:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_level")
 
     # ── Подгружаем user-слова если включён тумблер ──────────────────────
     lesson_objective = None
     restore_podcast = None
     restore_speed = body.speed
+    lesson_words: list[str] = []
     user_id: Optional[int] = None
     vocab_words: list[str] = []
     avoid_topics: list[str] = []
@@ -393,6 +400,14 @@ async def generate_podcast(
             from . import learning_modules as course
             guided=await course.require(session,user_id,body.learning_lesson_id,'listening')
             if guided is not None:
+                # Lesson audio is a teaching step; standalone listening preferences
+                # cannot change its level, duration, vocabulary or delivery speed.
+                body.level=guided.level
+                body.duration_min={'A1':1,'A2':1,'B1':2,'B2':3,'C1':3}[guided.level]
+                body.speed=0.75 if guided.level in {'A1','A2'} else 1.0
+                body.category={'travel':'travel','work':'business'}.get(guided.content['spec'].get('goal'),'culture')
+                body.use_vocab=True
+                lesson_words=[word['word'] for word in guided.content['words']]
                 previous=course.result(guided,'listening').get('podcast')
                 if previous:
                     from pathlib import Path
@@ -403,7 +418,6 @@ async def generate_podcast(
                         return _GenerateOut(**previous)
                     restore_podcast=previous
                     restore_speed=course.result(guided,'listening').get('speed',1.0)
-                body.level=guided.level
                 lesson_objective=guided.content['spec']['objective']
             # Посекционный дневной лимит (free: 1 подкаст/день). Проверяем ДО
             # дорогой LLM/TTS-генерации. Подписчики/FREE_PERIOD — безлимит.
@@ -412,6 +426,8 @@ async def generate_podcast(
                 raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "limit_reached")
             if body.use_vocab:
                 vocab_words = await repo.get_user_words_for_prompt(user.id, limit=10)
+                if lesson_words:
+                    vocab_words=list(dict.fromkeys([*lesson_words,*vocab_words]))[:10]
             # Что юзер уже слушал — чтобы не выдать это повторно.
             # Таблицы может не быть (до миграции 0034) — не роняем генерацию.
             try:

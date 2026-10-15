@@ -6,7 +6,7 @@ import { useRef } from "react";
 
 interface Props {
   audioUrl: string;
-  onRegenerate: () => void;
+  onRegenerate?: () => void;
   onEnded?: () => void;
   onError?: () => void;
 }
@@ -28,9 +28,9 @@ export function PodcastPlayer({ audioUrl, onRegenerate, onEnded, onError }: Prop
         <button type="button" className="lst-secondary-btn" onClick={handleReplay}>
           ↻ С начала
         </button>
-        <button type="button" className="lst-secondary-btn" onClick={onRegenerate}>
+        {onRegenerate && <button type="button" className="lst-secondary-btn" onClick={onRegenerate}>
           ✦ Новый подкаст
-        </button>
+        </button>}
       </div>
     </div>
   );

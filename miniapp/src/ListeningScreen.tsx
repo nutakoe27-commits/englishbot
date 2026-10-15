@@ -1,4 +1,5 @@
-// ListeningScreen.tsx — режим «слушание»: пользователь конфигурирует подкаст,
+// ListeningScreen.tsx — режим «слушание»: в уроке подкаст готовится автоматически,
+// в самостоятельном режиме пользователь конфигурирует подкаст;
 // бэкенд генерирует текст через LLM и аудио через Kokoro, фронт играет нативный <audio>.
 //
 // Фазы:
@@ -24,6 +25,7 @@ import { Icon } from "./ds-react/Icon";
 import { useLucide } from "./lucide";
 import {
   CATEGORY_OPTIONS,
+  DEFAULT_LISTENING,
   loadListeningSettings,
   saveListeningSettings,
   type ListeningSettings,
@@ -54,8 +56,8 @@ interface PodcastResult {
 }
 
 export function ListeningScreen({ onExit, course }: Props) {
-  const [settings, setSettings] = useState<ListeningSettings>(() => ({...loadListeningSettings(),...(course ? {level:course.level,durationMin:1,useVocab:true,category:course.goal==='travel' ? 'travel' as const : course.goal==='work' ? 'business' as const : 'culture' as const} : {})}));
-  const [phase, setPhase] = useState<Phase>(course?.podcast ? "player" : "config");
+  const [settings, setSettings] = useState<ListeningSettings>(() => course ? {...DEFAULT_LISTENING,level:course.level} : loadListeningSettings());
+  const [phase, setPhase] = useState<Phase>(course?.podcast ? "player" : course ? "loading" : "config");
   const [result, setResult] = useState<PodcastResult | null>(() => course?.podcast ? {...course.podcast,audio_url:course.podcast.audio_url.startsWith("http") ? course.podcast.audio_url : API_BASE+course.podcast.audio_url} : null);
   const [error, setError] = useState<string>("");
   const [userName, setUserName] = useState<string>("there");
@@ -82,6 +84,7 @@ export function ListeningScreen({ onExit, course }: Props) {
   }, [settings]);
 
   const startGeneration = async () => {
+    if (abortRef.current && !abortRef.current.signal.aborted) return;
     setError("");
     setResult(null);
     setPhase("loading");
@@ -93,8 +96,11 @@ export function ListeningScreen({ onExit, course }: Props) {
       const res = await fetch(`${API_BASE}/api/listening/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          init_data: WebApp.initData || "", learning_lesson_id:course?.lessonId,
+        body: JSON.stringify(course ? {
+          init_data: WebApp.initData || "",
+          learning_lesson_id: course.lessonId,
+        } : {
+          init_data: WebApp.initData || "",
           duration_min: settings.durationMin,
           category: settings.category,
           use_vocab: settings.useVocab,
@@ -103,10 +109,11 @@ export function ListeningScreen({ onExit, course }: Props) {
         }),
         signal: controller.signal,
       });
+      if (controller.signal.aborted || abortRef.current !== controller) return;
       if (res.status === 402) {
         // Дневной лимит подкастов исчерпан — показываем пейволл.
         setPaywall(true);
-        setPhase("config");
+        setPhase(course ? "error" : "config");
         return;
       }
       if (!res.ok) {
@@ -114,6 +121,7 @@ export function ListeningScreen({ onExit, course }: Props) {
         throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
       }
       const data: PodcastResult = await res.json();
+      if (controller.signal.aborted || abortRef.current !== controller) return;
       // Если бэк прислал относительный путь — собираем абсолютный.
       const audioUrl = data.audio_url.startsWith("http")
         ? data.audio_url
@@ -121,21 +129,26 @@ export function ListeningScreen({ onExit, course }: Props) {
       setResult({ ...data, audio_url: audioUrl });
       setPhase("player");
     } catch (e: unknown) {
-      if (controller.signal.aborted) {
-        setPhase("config");
-        return;
-      }
-      setError(e instanceof Error ? e.message : String(e));
+      if (controller.signal.aborted || abortRef.current !== controller) return;
+      setError(course ? "Аудио пока не удалось подготовить. Попробуй ещё раз — прогресс урока сохранён." : e instanceof Error ? e.message : String(e));
       setPhase("error");
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
   };
 
-  useEffect(() => () => abortRef.current?.abort(),[]);
+  useEffect(() => {
+    // Defer until after StrictMode's discarded mount to avoid duplicate generation.
+    const timer = course && !course.podcast
+      ? window.setTimeout(() => void startGeneration(), 0)
+      : undefined;
+    return () => { clearTimeout(timer); abortRef.current?.abort(); };
+  }, [course?.lessonId]);
 
   const cancelGeneration = () => {
     abortRef.current?.abort();
+    if (course) onExit();
+    else setPhase("config");
   };
 
   const backToConfig = () => {
@@ -168,7 +181,7 @@ export function ListeningScreen({ onExit, course }: Props) {
       </header>
 
       <main className="lst-main">
-        {phase === "config" && (
+        {!course && phase === "config" && (
           <>
             <ListeningSettingsPanel value={settings} onChange={setSettings} />
             <button type="button" className="lst-primary-btn" onClick={startGeneration}>
@@ -182,12 +195,14 @@ export function ListeningScreen({ onExit, course }: Props) {
             <div className="lst-spinner" aria-hidden />
             <p className="lst-loading__title">Готовлю подкаст…</p>
             <p className="lst-loading__hint">
-              {settings.durationMin <= 3
+              {course
+                ? `Подбираем аудио под уровень ${course.level} и тему этого урока. Обычно это занимает до минуты.`
+                : settings.durationMin <= 3
                 ? "Это займёт около 15 секунд."
                 : "Это займёт до минуты — длинные подкасты дольше синтезируются."}
             </p>
             <button type="button" className="lst-secondary-btn" onClick={cancelGeneration}>
-              Отмена
+              {course ? "К программе" : "Отмена"}
             </button>
           </div>
         )}
@@ -195,13 +210,14 @@ export function ListeningScreen({ onExit, course }: Props) {
         {phase === "player" && result && (
           <div className="lst-player-wrap">
             <div className="lst-meta">
-              <span className="lst-meta__pill">{settings.durationMin} мин</span>
-              <span className="lst-meta__pill">{settings.level}</span>
-              <span className="lst-meta__pill">
-                {CATEGORY_OPTIONS.find((c) => c.value === settings.category)?.label
-                  ?? settings.category}
-              </span>
-              <span className="lst-meta__pill">{settings.speed}×</span>
+              <span className="lst-meta__pill">{course?.level || settings.level}</span>
+              {course ? <span className="lst-meta__pill">Подкаст к уроку</span> : <>
+                <span className="lst-meta__pill">{settings.durationMin} мин</span>
+                <span className="lst-meta__pill">
+                  {CATEGORY_OPTIONS.find((c) => c.value === settings.category)?.label ?? settings.category}
+                </span>
+                <span className="lst-meta__pill">{settings.speed}×</span>
+              </>}
               {result.used_words.length > 0 && (
                 <span
                   className="lst-meta__pill"
@@ -211,7 +227,7 @@ export function ListeningScreen({ onExit, course }: Props) {
                 </span>
               )}
             </div>
-            <PodcastPlayer audioUrl={result.audio_url} onRegenerate={backToConfig} onEnded={() => setListened(true)} onError={() => setError("Не удалось загрузить звук. Можно восстановить подкаст.")} />
+            <PodcastPlayer audioUrl={result.audio_url} onRegenerate={course ? undefined : backToConfig} onEnded={() => setListened(true)} onError={() => setError("Не удалось загрузить звук. Можно восстановить подкаст.")} />
             {error && <div role="alert" className="lst-error"><p>{error}</p><button type="button" className="lst-secondary-btn" onClick={() => void startGeneration()}>Восстановить подкаст</button></div>}
             {course && <><p className="learn-muted">Прослушай подкаст до конца. Можно открыть перевод любого слова в тексте ниже.</p><button type="button" className="lst-primary-btn" disabled={!listened} onClick={course.onComplete}>Продолжить урок →</button></>}
             <Transcript apiBase={API_BASE} text={result.transcript} />
@@ -223,8 +239,8 @@ export function ListeningScreen({ onExit, course }: Props) {
             <p className="lst-error__title">Не получилось сгенерировать</p>
             <p className="lst-error__hint">{error || "Попробуй ещё раз через минуту."}</p>
             <div className="lst-error__actions">
-              <button type="button" className="lst-secondary-btn" onClick={backToConfig}>
-                Назад
+              <button type="button" className="lst-secondary-btn" onClick={course ? onExit : backToConfig}>
+                {course ? "К программе" : "Назад"}
               </button>
               <button type="button" className="lst-primary-btn" onClick={startGeneration}>
                 Повторить

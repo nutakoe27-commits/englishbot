@@ -445,6 +445,52 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         await self.api_post('srs/session/start',{'learning_lesson_id':key},status=409)
         await self.api_post('listening/generate',{'learning_lesson_id':key,'duration_min':1,'category':'travel'},status=409)
 
+    async def test_course_podcast_needs_only_lesson_id_and_uses_its_level_and_vocabulary(self):
+        from app import listening
+        key=await self.prepared(); await self.post(f'/lessons/{key}/start')
+        async with db_session() as session: (await session.get(LearningLesson,key)).step_index=3
+        with patch.object(listening,'_build_listening_prompt',wraps=listening._build_listening_prompt) as prompt, \
+             patch.object(listening,'_call_llm_for_script',new_callable=AsyncMock,return_value='TOPIC: Introductions\nMy name is Alex.') as llm, \
+             patch.object(listening,'_synthesize_full',new_callable=AsyncMock,return_value=b'\0'*48000) as tts:
+            await self.api_post('listening/generate',{'learning_lesson_id':key})
+        self.assertEqual(prompt.call_args.kwargs['level'],'A1')
+        self.assertEqual(prompt.call_args.kwargs['duration_min'],1)
+        self.assertEqual(prompt.call_args.kwargs['category'],'culture')
+        self.assertIn('name',prompt.call_args.kwargs['vocab_words'])
+        self.assertIn('представиться',llm.call_args.args[0])
+        self.assertEqual(tts.call_args.kwargs['speed'],0.75)
+
+    async def test_course_audio_parameters_cannot_be_changed_by_standalone_settings(self):
+        from app import listening
+        key=await self.prepared(); await self.post(f'/lessons/{key}/start')
+        async with db_session() as session:
+            lesson=await session.get(LearningLesson,key)
+            lesson.step_index=3; lesson.level='B2'
+            lesson.content={**lesson.content,'spec':{**lesson.content['spec'],'level':'B2','goal':'work'}}
+        with patch.object(listening,'_build_listening_prompt',wraps=listening._build_listening_prompt) as prompt, \
+             patch.object(listening,'_call_llm_for_script',new_callable=AsyncMock,return_value='TOPIC: Work\nI enjoy my work.'), \
+             patch.object(listening,'_synthesize_full',new_callable=AsyncMock,return_value=b'\0'*48000) as tts:
+            await self.api_post('listening/generate',{'learning_lesson_id':key,'level':'A1',
+                'duration_min':20,'category':'news','speed':1.25,'use_vocab':False})
+        self.assertEqual(prompt.call_args.kwargs['level'],'B2')
+        self.assertEqual(prompt.call_args.kwargs['duration_min'],3)
+        self.assertEqual(prompt.call_args.kwargs['category'],'business')
+        self.assertTrue(prompt.call_args.kwargs['vocab_words'])
+        self.assertEqual(tts.call_args.kwargs['speed'],1.0)
+
+    async def test_standalone_podcast_keeps_user_settings_and_requires_configuration(self):
+        from app import listening
+        await self.api_post('listening/generate',{},status=422)
+        with patch.object(listening,'_build_listening_prompt',wraps=listening._build_listening_prompt) as prompt, \
+             patch.object(listening,'_call_llm_for_script',new_callable=AsyncMock,return_value='TOPIC: Science\nScience is interesting.'), \
+             patch.object(listening,'_synthesize_full',new_callable=AsyncMock,return_value=b'\0'*48000) as tts:
+            await self.api_post('listening/generate',{'level':'C1','duration_min':5,'category':'science','speed':1.25,'use_vocab':False})
+        self.assertEqual(prompt.call_args.kwargs['level'],'C1')
+        self.assertEqual(prompt.call_args.kwargs['duration_min'],5)
+        self.assertEqual(prompt.call_args.kwargs['category'],'science')
+        self.assertEqual(prompt.call_args.kwargs['vocab_words'],[])
+        self.assertEqual(tts.call_args.kwargs['speed'],1.25)
+
     async def test_manual_level_preserves_active_work_progress_and_test_history(self):
         key=await self.prepared(); row=await self.post(f'/lessons/{key}/start')
         async with db_session() as session:

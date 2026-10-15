@@ -13,12 +13,14 @@ const copy=x=>JSON.parse(JSON.stringify(x));
 function lesson(){return {id:'lesson-one',status:'prepared',step_index:0,used_seconds:0,activity_token:'active-one',modules:{},conversation:[],result:null,listening_text_mode:false,
  content:{engine:'modules',spec:{ordinal:1,cycle:1,position:1,level:'A1',topic_key:'a1_to_be',title:'Знакомимся',objective:'представиться и узнать о собеседнике',kind:'new',estimated_minutes:18},
  warmup:[],theory:'',practice:[],listening:{script:'',questions:[]},conversation:{},words:[{word:'name',translation:'имя'},{word:'city',translation:'город'}]}};}
-async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFinish=false,width=390}={}){
+async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFinish=false,width=390,step=0,listeningGate=null,failListening=false,cachedPodcast=false,entryMode='learning'}={}){
  const context=await browser.newContext({viewport:{width,height:844}});t.after(async()=>{if(SHOTS && context.pages()[0])await shot(context.pages()[0],'last-'+t.name.replace(/[^a-z0-9]+/gi,'-'));await context.close();});
  if(process.env.LEARNING_LUCIDE_PATH)await context.addInitScript({path:process.env.LEARNING_LUCIDE_PATH});
  await context.addInitScript(()=>{localStorage.setItem('englishbot_jwt','local-browser-test');localStorage.setItem('englishbot.tutorSettings.v1',JSON.stringify({level:'A1',mode:'chat'}));});
  context.setDefaultTimeout(7000);
- const row=lesson(),calls=[],errors=[];let level='A1',completed=0,turns=0;
+ const row=lesson(),calls=[],errors=[];row.step_index=step;
+ if(cachedPodcast)row.modules.listening={completed:false,podcast:{session_id:103,transcript:'My name is Alex. I live in Bristol.',audio_url:'/api/listening/audio/test.wav',used_words:['name']}};
+ let level='A1',completed=0,turns=0;
  const overview=()=>({enabled:true,placement_level:level,goals:{general:'Общий английский',travel:'Путешествия',work:'Работа'},profile:profile?{goal:'general',goal_label:'Общий английский',level,completed_count:completed,cycle:1,cycle_completed:completed,until_checkpoint:20-completed,checkpoint_due:false}:null,next_lesson:profile?row:null,
   route:Array.from({length:20},(_,i)=>({...row.content.spec,ordinal:i+1,position:i+1,status:i<completed?'completed':i===completed?row.status:'locked',id:i===completed?row.id:null})),
   skills:['grammar','vocabulary','listening','speaking'].map((key,i)=>({key,label:['Грамматика','Лексика','Понимание речи','Разговор'][i],attempts:0,accuracy:null})),history:[]});
@@ -60,6 +62,8 @@ async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFi
   if(key==='/api/srs/session/finish'){if(failSrsFinish&&calls.filter(c=>c.key===key).length===1)return json({detail:'temporary_failure'},503);row.modules.words.completed=true;return json({ok:true});}
   if(key==='/api/srs/heartbeat')return json({ok:true});
   if(key==='/api/listening/generate'){
+   if(listeningGate)await listeningGate;
+   if(failListening&&calls.filter(c=>c.key===key).length===1)return json({detail:'synthetic_audio_unavailable'},503);
    const podcast={session_id:103,transcript:'My name is Alex. I live in Bristol.',audio_url:'/api/listening/audio/test.wav',used_words:['name']};
    row.modules.listening={completed:false,podcast};return json(podcast);
   }
@@ -83,7 +87,7 @@ async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFi
   return json({});
  });
  const page=await context.newPage();if(process.env.LEARNING_DEBUG)page.on('console',msg=>console.log(msg.type(),msg.text()));page.on('pageerror',e=>errors.push(e.message));t.after(()=>assert.deepEqual(errors,[]));
- await page.goto(BASE+(APP ? '/?mode=learning' : '/tests/learning.html'));await page.getByRole('heading',{name:'Твой английский, шаг за шагом'}).waitFor();
+ await page.goto(BASE+(APP ? `/?mode=${entryMode}` : '/tests/learning.html'));await page.getByRole('heading',{name:entryMode==='listening' ? 'Слушание' : 'Твой английский, шаг за шагом',exact:true}).waitFor();
  return {page,calls,row,getLevel:()=>level};
 }
 async function shot(page,name){if(SHOTS)await page.screenshot({path:`${SHOTS}/${name}-${page.viewportSize().width}.png`,fullPage:true});}
@@ -98,7 +102,10 @@ async function summary(f){
  await f.page.locator('.srs-v2__flip-word').waitFor();await f.page.getByRole('button',{name:'Послушать',exact:true}).click();await shot(f.page,'words');
  for(let i=0;i<2;i++){await f.page.getByRole('button',{name:'Показать перевод',exact:true}).click();await f.page.getByRole('button',{name:'Знаю',exact:true}).click();}
  await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();
- await f.page.getByRole('button',{name:'Сгенерировать подкаст',exact:true}).click();await f.page.locator('audio').waitFor();await shot(f.page,'listening');
+ await f.page.locator('audio').waitFor();
+ assert.equal(await f.page.locator('.lst-config').count(),0);
+ assert.equal(await f.page.getByRole('button',{name:'Сгенерировать подкаст',exact:true}).count(),0);
+ assert.equal(await f.page.getByRole('button',{name:'✦ Новый подкаст',exact:true}).count(),0);await shot(f.page,'listening');
  assert.equal(await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).isDisabled(),true);
  await f.page.locator('audio').evaluate(audio=>audio.dispatchEvent(new Event('ended')));
  await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();
@@ -156,4 +163,56 @@ if(APP)test('manual level is also available in the real profile tab',async t=>{
  const f=await fixture(t);await f.page.getByRole('navigation',{name:'Основная навигация'}).getByRole('button',{name:'Профиль',exact:true}).click();
  await f.page.getByLabel('Уровень занятий').selectOption('B1');await f.page.getByRole('button',{name:'Изменить уровень',exact:true}).click();
  await f.page.getByText('Уровень сохранён',{exact:true}).waitFor();assert.equal(f.getLevel(),'B1');await shot(f.page,'profile-level');
+});
+
+test('lesson listening starts automatically, ignores standalone preferences and creates one request in StrictMode',async t=>{
+ let release;const gate=new Promise(resolve=>{release=resolve;});t.after(()=>release());
+ const f=await fixture(t,{step:3,listeningGate:gate});
+ await f.page.evaluate(()=>localStorage.setItem('englishbot.listeningSettings.v1',JSON.stringify({level:'C1',speed:1.25,durationMin:20,category:'news',useVocab:false})));
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.getByText('Готовлю подкаст…',{exact:true}).waitFor();await shot(f.page,'listening-loading');
+ assert.equal(await f.page.locator('.lst-config').count(),0);
+ await f.page.waitForFunction(()=>document.querySelector('.lst-loading'));
+ release();await f.page.locator('audio').waitFor();
+ const requests=f.calls.filter(c=>c.key==='/api/listening/generate');
+ assert.equal(requests.length,1);assert.equal(requests[0].body.learning_lesson_id,'lesson-one');
+ for(const key of ['category','duration_min','speed','level','use_vocab'])assert.equal(key in requests[0].body,false);
+});
+test('failed automatic podcast generation retries on the same lesson without revealing settings',async t=>{
+ const f=await fixture(t,{step:3,failListening:true});
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.getByText('Не получилось сгенерировать',{exact:true}).waitFor();await shot(f.page,'listening-error');
+ assert.equal(await f.page.locator('.lst-config').count(),0);
+ await f.page.getByRole('button',{name:'Повторить',exact:true}).click();await f.page.locator('audio').waitFor();
+ assert.equal(f.calls.filter(c=>c.key==='/api/listening/generate').length,2);
+ assert.equal(f.row.step_index,3);
+});
+test('reopening lesson listening uses the saved podcast without regenerating',async t=>{
+ const f=await fixture(t,{step:3,cachedPodcast:true});
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();await f.page.locator('audio').waitFor();
+ await f.page.getByRole('button',{name:'Сохранить и выйти',exact:false}).click();
+ await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();await f.page.locator('audio').waitFor();
+ assert.equal(f.calls.filter(c=>c.key==='/api/listening/generate').length,0);
+});
+test('leaving while lesson audio is preparing keeps the stage and allows another attempt',async t=>{
+ let release;const gate=new Promise(resolve=>{release=resolve;});t.after(()=>release());
+ const f=await fixture(t,{step:3,listeningGate:gate});
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.getByText('Готовлю подкаст…',{exact:true}).waitFor();
+ await f.page.getByRole('button',{name:'К программе',exact:true}).click();
+ await f.page.getByRole('heading',{name:'Твой английский, шаг за шагом',exact:true}).waitFor();
+ release();await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();await f.page.locator('audio').waitFor();
+ assert.equal(f.row.step_index,3);
+});
+
+if(APP)test('standalone listening still offers settings and waits for manual generation',async t=>{
+ const f=await fixture(t,{entryMode:'listening'});
+ await f.page.evaluate(()=>localStorage.setItem('englishbot.listeningSettings.v1',JSON.stringify({level:'C1',speed:1.25,durationMin:5,category:'science',useVocab:false})));
+ await f.page.reload();await f.page.locator('.lst-config').waitFor();
+ assert.equal(f.calls.filter(c=>c.key==='/api/listening/generate').length,0);
+ await f.page.getByRole('button',{name:'Сгенерировать подкаст',exact:true}).click();await f.page.locator('audio').waitFor();
+ const request=f.calls.find(c=>c.key==='/api/listening/generate').body;
+ assert.equal(request.learning_lesson_id,undefined);assert.equal(request.level,'C1');assert.equal(request.speed,1.25);
+ assert.equal(request.duration_min,5);assert.equal(request.category,'science');
+ await f.page.getByRole('button',{name:'✦ Новый подкаст',exact:true}).waitFor();
 });
