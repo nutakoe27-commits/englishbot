@@ -28,6 +28,7 @@ import { IconButton } from "./ds-react/IconButton";
 import { NoteCard } from "./ds-react/NoteCard";
 import { SerifH } from "./ds-react/typography";
 import { useLucide } from "./lucide";
+import { learningGet, type LearningAccess } from "./learningApi";
 
 const OFFER_URL = "/oferta.html";
 
@@ -42,6 +43,7 @@ interface Props {
 export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initialPromoCode }: Props) {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [me, setMe] = useState<MeInfo | null>(null);
+  const [programAccess,setProgramAccess] = useState<LearningAccess | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string>("");
@@ -67,9 +69,10 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
     ymHit(window.location.origin + "/subscribe", "Подписка — тарифы");
     if (!initialReturnPaymentId) ymReachGoal("subscribe_opened");
     void (async () => {
-      const [p, m] = await Promise.all([listPlans(), fetchMe()]);
+      const [p, m, access] = await Promise.all([listPlans(), fetchMe(),learningGet<LearningAccess>('/access').catch(() => null)]);
       if (!alive) return;
       setPlans(p); setMe(m); setLoading(false);
+      setProgramAccess(access);
       if (m?.email) setEmailInput(m.email);
     })();
     return () => { alive = false; };
@@ -384,6 +387,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
               <div className="sub-includes">
                 <div className="sub-includes__title">Что входит в полный доступ</div>
                 <ul className="sub-includes__list">
+                  {programAccess && <li>📚 Полные уроки по программе — <b>без суточного лимита</b>: грамматика, работа над ошибками, слова, подкаст и разговор. Проверка уровня после каждых 20 уроков.</li>}
                   <li>🎙 Разговор с AI-репетитором — <b>без лимита по времени</b> (на бесплатном — 5 минут в день)</li>
                   <li>🎧 Подкасты под твой уровень — сколько угодно (на бесплатном — 1 в день)</li>
                   <li>📝 Грамматика: 50 уроков A1–C1 и разбор твоих ошибок (на бесплатном — 1 урок в день)</li>

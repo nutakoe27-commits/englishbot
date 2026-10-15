@@ -25,6 +25,7 @@ from . import learning_content as content
 from . import learning_assessment as assessment
 from . import mytracker, presence
 from . import learning_modules as modules
+from .learning_access import access as learning_access
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/learning',tags=['Learning'])
@@ -216,7 +217,14 @@ async def overview(init_data:str='',authorization:Optional[str]=Header(None)):
             if account.cefr_level in content.LEVELS and account.cefr_level!=p.level:
                 p.level=account.cefr_level; p.updated_at=now(); await refresh_prepared(session,p)
             await prepare_next(session,p)
-        return await overview_data(session,account.id,account.cefr_level)
+        return {**await overview_data(session,account.id,account.cefr_level),
+            'access':await learning_access(Repo(session),account)}
+
+@router.get('/access')
+async def get_access(init_data:str='',authorization:Optional[str]=Header(None)):
+    async with db_session() as session:
+        account=await user(session,authorization,init_data)
+        return await learning_access(Repo(session),account)
 
 @router.get('/lessons/{key}')
 async def get_lesson(key:str,init_data:str='',authorization:Optional[str]=Header(None)):
@@ -236,11 +244,10 @@ async def start(key:str,body:Input,authorization:Optional[str]=Header(None)):
             row.content={**row.content,'engine':'modules'}
             row.answers={'_legacy':row.answers}; row.step_index=0
         if row.status=='prepared':
-            if not settings.FREE_PERIOD and not await Repo(session).has_full_access(account):
-                quota=await Repo(session).get_kv_int('free_lessons_per_day',1)
-                if quota>0 and await Repo(session).count_sessions_today(account.id,'lesson')>=quota:
-                    raise HTTPException(402,'lesson_limit_reached')
-            activity=await Repo(session).open_session(user_id=account.id,mode='lesson',level=row.level,role=row.topic_key)
+            access=await learning_access(Repo(session),account)
+            if access['remaining_today'] == 0:
+                raise HTTPException(402,'lesson_limit_reached')
+            activity=await Repo(session).open_session(user_id=account.id,mode='lesson',level=row.level,role=row.topic_key,learning_lesson_id=row.id)
             row.session_id=activity.id
             iid=mytracker.current_instance_id.get()
             row.instance_id=iid if mytracker.valid_instance_id(iid) else None

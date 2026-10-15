@@ -1,10 +1,12 @@
 """SQL parser tests and opt-in repair checks on a dedicated local test DB."""
 import asyncio
 import importlib.util
+import json
 import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -70,11 +72,11 @@ class MigrationIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await connection.scalar(text('SELECT mode FROM sessions WHERE user_id=:uid'),{'uid':self.uid}),'lesson')
             self.assertEqual(await connection.scalar(text('SELECT provider FROM user_identities WHERE user_id=:uid'),{'uid':self.uid}),'google')
             self.assertEqual(await connection.scalar(text("SELECT value FROM settings_kv WHERE `key`='free_seconds_per_day'")),'777')
-            self.assertEqual(await connection.scalar(text('SELECT COUNT(*) FROM schema_version')),43)
+            self.assertEqual(await connection.scalar(text('SELECT COUNT(*) FROM schema_version')),44)
 
     async def test_read_only_check_and_repair_real_history_gaps(self):
         async with self.engine.begin() as connection:
-            await connection.execute(text('DELETE FROM schema_version WHERE version IN (8,10,13,15,17,18,21,23,24,35,43)'))
+            await connection.execute(text('DELETE FROM schema_version WHERE version IN (8,10,13,15,17,18,21,23,24,35,43,44)'))
         await migrations.run(ROOT/'db/migrations',self.url.database,self.url.username,False,ROOT/'backend')
         async with self.engine.connect() as connection:
             self.assertEqual(await connection.scalar(text('SELECT COUNT(*) FROM schema_version')),32)
@@ -93,5 +95,22 @@ class MigrationIntegrationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError,'does not match'):
             await migrations.run(ROOT/'db/migrations','wrong_database',self.url.username,True,ROOT/'backend')
         await self.preserved()
+
+    async def test_course_bindings_are_backfilled_and_migration_can_be_replayed(self):
+        key=str(uuid4())
+        async with self.engine.begin() as connection:
+            grammar=(await connection.execute(text("INSERT INTO sessions(user_id,mode,used_seconds) VALUES(:uid,'grammar',60)"),{'uid':self.uid})).lastrowid
+            listening=(await connection.execute(text("INSERT INTO sessions(user_id,mode,used_seconds) VALUES(:uid,'listening',60)"),{'uid':self.uid})).lastrowid
+            answers=json.dumps({'_modules':{'grammar':{'session_id':str(grammar)},'mistakes':{'session_id':'prepared-unknown'},'listening':{'podcast':{'session_id':listening}}}})
+            await connection.execute(text("INSERT INTO learning_lessons(id,user_id,ordinal,level,topic_key,content,answers,conversation,created_at) VALUES(:key,:uid,1,'A1','a1_to_be','{}',:answers,'[]',NOW())"),{'key':key,'uid':self.uid,'answers':answers})
+            await connection.execute(text('DELETE FROM schema_version WHERE version=44'))
+            await connection.execute(text('ALTER TABLE sessions DROP COLUMN learning_lesson_id'))
+        await migrations.run(ROOT/'db/migrations',self.url.database,self.url.username,True,ROOT/'backend')
+        async with self.engine.connect() as connection:
+            values=(await connection.execute(text('SELECT learning_lesson_id FROM sessions WHERE id IN (:grammar,:listening)'),{'grammar':grammar,'listening':listening})).scalars().all()
+            self.assertEqual(values,[key,key])
+        async with self.engine.begin() as connection:
+            await connection.execute(text('DELETE FROM schema_version WHERE version=44'))
+        await migrations.run(ROOT/'db/migrations',self.url.database,self.url.username,True,ROOT/'backend')
 
 if __name__=='__main__': unittest.main()

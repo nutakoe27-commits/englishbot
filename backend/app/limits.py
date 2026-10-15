@@ -3,7 +3,8 @@
 Логика:
 - Подписчики (active subscription_until > now) — без лимитов.
 - Бесплатные — лимит N секунд в день (free_seconds_per_day из settings_kv,
-  по умолчанию 600 = 10 мин). Сброс в 00:00 МСК (см. Repo.msk_today).
+  по умолчанию 300 = 5 мин). Сброс в 00:00 МСК.
+- Разговор в уроке имеет собственный бюджет на урок и день.
 - Учёт ведётся в daily_usage. heartbeat() прибавляет очередную порцию
   и возвращает остаток. Когда остаток <= 0 — клиента нужно отключить.
 
@@ -40,6 +41,8 @@ class LimitsSnapshot:
     # это триал, чтобы показать «полный доступ ещё N дней».
     trial_active: bool = False
     trial_until: Optional[str] = None
+    scope: str = 'standalone'
+    resets_at: Optional[str] = None
 
     @property
     def remaining_seconds(self) -> int:
@@ -57,6 +60,8 @@ class LimitsSnapshot:
             "remaining_seconds": self.remaining_seconds,
             "trial_active": self.trial_active,
             "trial_until": self.trial_until,
+            "scope": self.scope,
+            "resets_at": self.resets_at,
         }
 
 
@@ -82,6 +87,8 @@ class LimitsContext:
         repo_factory,  # () -> async-context-manager c Repo
         trial_active: bool = False,
         trial_until: Optional[str] = None,
+        lesson_id: Optional[str] = None,
+        resets_at: Optional[str] = None,
     ) -> None:
         self.user_db_id = user_db_id
         self.tg_id = tg_id
@@ -93,6 +100,9 @@ class LimitsContext:
         self.bonus_seconds_today = bonus_seconds_today
         self.is_blocked = is_blocked
         self._repo_factory = repo_factory
+        self.lesson_id = lesson_id
+        self.resets_at = resets_at
+        self.activity_id = None
 
     @property
     def remaining_seconds(self) -> int:
@@ -112,14 +122,49 @@ class LimitsContext:
             bonus_seconds_today=self.bonus_seconds_today,
             trial_active=self.trial_active,
             trial_until=self.trial_until,
+            scope='lesson' if self.lesson_id else 'standalone',
+            resets_at=self.resets_at,
         )
 
-    async def heartbeat(self, seconds: int) -> int:
+    async def heartbeat(self, seconds: int, *, finishing: bool = False) -> int:
         """Списать N секунд. Возвращает обновлённое used_seconds_today.
 
         repo_factory — это db_session (выдаёт AsyncSession), поэтому внутри
         оборачиваем в Repo(session).
         """
+        if self.lesson_id:
+            from fastapi import HTTPException
+            from . import learning_modules as course
+            from .learning_access import conversation_budget
+            from .db.models import User, Session
+            from .learning_models import LearningLesson
+            async with self._repo_factory() as session:
+                if finishing:
+                    # A new socket may already own the stage. The old socket
+                    # must still pay its final seconds without replacing progress.
+                    account = await session.get(User,self.user_db_id,with_for_update=True,populate_existing=True)
+                    row = await session.get(LearningLesson,self.lesson_id,with_for_update=True,populate_existing=True)
+                    activity = await session.get(Session,self.activity_id,with_for_update=True)
+                    if (row is None or row.user_id != self.user_db_id or activity is None
+                        or activity.user_id != self.user_db_id or activity.learning_lesson_id != self.lesson_id):
+                        raise HTTPException(409, 'conversation_unavailable')
+                    seconds = max(0, seconds - (activity.used_seconds or 0))
+                else:
+                    row = await course.require(session, self.user_db_id, self.lesson_id, 'conversation', finishing=True)
+                    if str(course.result(row, 'conversation').get('session_id')) != str(self.activity_id):
+                        raise HTTPException(409, 'conversation_replaced')
+                    account = await session.get(User, self.user_db_id)
+                    activity = await session.get(Session,self.activity_id,with_for_update=True)
+                    if activity is None or activity.user_id != self.user_db_id or activity.learning_lesson_id != self.lesson_id:
+                        raise HTTPException(409, 'conversation_unavailable')
+                full, cap, used, reset = await conversation_budget(Repo(session), account, row, seconds)
+                if seconds:
+                    activity.used_seconds = (activity.used_seconds or 0) + seconds
+                    await Repo(session).add_used_seconds(user_id=self.user_db_id, seconds=seconds)
+                self.trial_active = Repo.in_free_trial(account)
+            self.has_subscription, self.free_seconds_per_day = full, cap
+            self.used_seconds_today, self.resets_at = used, reset
+            return used
         if self.has_subscription:
             # Подписчикам всё равно записываем для аналитики, но без проверок.
             # Говорение пишем и в used_seconds (аналитика), и в speaking_seconds.
@@ -150,8 +195,13 @@ class LimitsContext:
             log.warning("[limits] heartbeat ошибка: %s", exc)
         return self.used_seconds_today
 
+    async def finish(self, duration_seconds: int) -> None:
+        # A disconnect before the five-second watchdog tick still consumes time.
+        if self.lesson_id and self.activity_id is not None:
+            await self.heartbeat(duration_seconds, finishing=True)
 
-async def context_for_user(repo: Repo, repo_factory, user) -> LimitsContext:
+
+async def context_for_user(repo: Repo, repo_factory, user, *, lesson_id: Optional[str] = None) -> LimitsContext:
     """Собрать LimitsContext для уже резолвнутого User (веб/JWT-путь)."""
     # Welcome-триал (0033): первые FREE_TRIAL_DAYS дней — те же права, что
     # у подписчика. Флаг держим отдельно, чтобы клиент показал «полный
@@ -166,6 +216,13 @@ async def context_for_user(repo: Repo, repo_factory, user) -> LimitsContext:
     )
     used = await repo.get_speaking_seconds_today(user.id)
     bonus = await repo.get_bonus_seconds_today(user.id)
+    reset = None
+    if lesson_id:
+        from .learning_modules import require
+        from .learning_access import conversation_budget
+        lesson = await require(repo.s, user.id, lesson_id, 'conversation')
+        has_sub, free_seconds, used, reset = await conversation_budget(repo, user, lesson)
+        bonus = 0
     return LimitsContext(
         user_db_id=user.id,
         tg_id=int(user.tg_id) if user.tg_id is not None else 0,
@@ -177,6 +234,8 @@ async def context_for_user(repo: Repo, repo_factory, user) -> LimitsContext:
         bonus_seconds_today=bonus,
         is_blocked=user.is_blocked,
         repo_factory=repo_factory,
+        lesson_id=lesson_id,
+        resets_at=reset,
     )
 
 
@@ -189,6 +248,7 @@ async def build_limits_context(
     first_name: Optional[str],
     last_name: Optional[str],
     language_code: Optional[str],
+    lesson_id: Optional[str] = None,
 ) -> LimitsContext:
     """Upsert Telegram-юзера и собрать LimitsContext (Mini App / initData-путь)."""
     user = await repo.upsert_user(
@@ -198,7 +258,7 @@ async def build_limits_context(
         last_name=last_name,
         language_code=language_code,
     )
-    return await context_for_user(repo, repo_factory, user)
+    return await context_for_user(repo, repo_factory, user, lesson_id=lesson_id)
 
 
 # ─── Посекционные лимиты (listening / grammar) ───────────────────────────
@@ -229,5 +289,5 @@ async def is_section_limit_reached(repo: Repo, user, *, section: str) -> bool:
     quota = await repo.get_kv_int(kv_key, default)
     if quota <= 0:
         return False
-    used = await repo.count_sessions_today(user.id, mode)
+    used = await repo.count_sessions_today(user.id, mode, standalone_only=True)
     return used >= quota

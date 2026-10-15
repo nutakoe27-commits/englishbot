@@ -13,23 +13,26 @@ const copy=x=>JSON.parse(JSON.stringify(x));
 function lesson(){return {id:'lesson-one',status:'prepared',step_index:0,used_seconds:0,activity_token:'active-one',modules:{},conversation:[],result:null,listening_text_mode:false,
  content:{engine:'modules',spec:{ordinal:1,cycle:1,position:1,level:'A1',topic_key:'a1_to_be',title:'Знакомимся',objective:'представиться и узнать о собеседнике',kind:'new',estimated_minutes:18},
  warmup:[],theory:'',practice:[],listening:{script:'',questions:[]},conversation:{objective:'представиться и узнать о собеседнике',opening:'Hello! What is your name?',prompts:['Hello! What is your name?','Where are you from?','What do you like doing?']},words:[{word:'name',translation:'имя'},{word:'city',translation:'город'}]}};}
-async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFinish=false,width=390,height=844,step=0,listeningGate=null,failListening=false,cachedPodcast=false,entryMode='learning'}={}){
+async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFinish=false,width=390,height=844,step=0,listeningGate=null,failListening=false,cachedPodcast=false,entryMode='learning',accessKind='paid',lessonStatus='prepared',limitDuringStart=false,limitAfterTurns=null,savedTurns=0}={}){
  const context=await browser.newContext({viewport:{width,height},permissions:['microphone']});t.after(async()=>{if(SHOTS && context.pages()[0])await shot(context.pages()[0],'last-'+t.name.replace(/[^a-z0-9]+/gi,'-'));await context.close();});
  if(process.env.LEARNING_LUCIDE_PATH)await context.addInitScript({path:process.env.LEARNING_LUCIDE_PATH});
  await context.addInitScript(()=>{localStorage.setItem('englishbot_jwt','local-browser-test');localStorage.setItem('englishbot.tutorSettings.v1',JSON.stringify({level:'A1',mode:'chat'}));});
  context.setDefaultTimeout(7000);
- const row=lesson(),calls=[],errors=[],connections=[];row.step_index=step;
+ const row=lesson(),calls=[],errors=[],connections=[];row.step_index=step;row.status=lessonStatus;
+ if(savedTurns)row.modules.conversation={completed:false,turns:savedTurns};
  if(cachedPodcast)row.modules.listening={completed:false,podcast:{session_id:103,transcript:'My name is Alex. I live in Bristol.',audio_url:'/api/listening/audio/test.wav',used_words:['name']}};
- let level='A1',completed=0,turns=0;
- const overview=()=>({enabled:true,placement_level:level,goals:{general:'Общий английский',travel:'Путешествия',work:'Работа'},profile:profile?{goal:'general',goal_label:'Общий английский',level,completed_count:completed,cycle:1,cycle_completed:completed,until_checkpoint:20-completed,checkpoint_due:false}:null,next_lesson:profile?row:null,
+ let level='A1',completed=0,turns=savedTurns,started=accessKind==='exhausted'||lessonStatus!=='prepared'?1:0;
+ const access=()=>{const full=['paid','trial','promotion'].includes(accessKind);const reset=new Date((Math.floor((Date.now()+3*3600000)/86400000)+1)*86400000-3*3600000).toISOString();return {full_access:full,trial_active:accessKind==='trial',trial_until:accessKind==='trial'?new Date(Date.now()+12*3600000).toISOString():null,daily_limit:full?null:1,used_today:started,remaining_today:full?null:Math.max(0,1-started),resets_at:reset,conversation_seconds:full?null:300};};
+ const overview=()=>({enabled:true,access:access(),placement_level:level,goals:{general:'Общий английский',travel:'Путешествия',work:'Работа'},profile:profile?{goal:'general',goal_label:'Общий английский',level,completed_count:completed,cycle:1,cycle_completed:completed,until_checkpoint:20-completed,checkpoint_due:false}:null,next_lesson:profile?row:null,
   route:Array.from({length:20},(_,i)=>({...row.content.spec,ordinal:i+1,position:i+1,status:i<completed?'completed':i===completed?row.status:'locked',id:i===completed?row.id:null})),
   skills:['grammar','vocabulary','listening','speaking'].map((key,i)=>({key,label:['Грамматика','Лексика','Понимание речи','Разговор'][i],attempts:0,accuracy:null})),history:[]});
  await context.routeWebSocket('**/ws/voice**',ws=>{
   const params=Object.fromEntries(new URL(ws.url()).searchParams);connections.push(params);
   if(entryMode==='learning')assert.equal(params.learning_lesson_id,row.id);
   else assert.equal(params.learning_lesson_id,undefined);
+  ws.send(JSON.stringify({type:'limits',scope:entryMode==='learning'?'lesson':'standalone',has_subscription:access().full_access,free_seconds_per_day:300,used_seconds_today:0,remaining_seconds:access().full_access?-1:300,resets_at:access().resets_at}));
   ws.send(JSON.stringify({type:'text',role:'tutor',text:entryMode==='learning' ? row.content.conversation.opening : params.role==='barista' ? 'Hey, what can I get you?' : 'Hi! How is your day?'}));
-  ws.onMessage(raw=>{const data=JSON.parse(String(raw));if(data.type==='user_text'){turns++;if(process.env.LEARNING_DEBUG)console.log('WS USER TURN',turns);ws.send(JSON.stringify({type:'text',role:'tutor',text:'Tell me more about your city.'}));}});
+  ws.onMessage(raw=>{const data=JSON.parse(String(raw));if(data.type==='user_text'){turns++;if(process.env.LEARNING_DEBUG)console.log('WS USER TURN',turns);ws.send(JSON.stringify({type:'text',role:'tutor',text:'Tell me more about your city.'}));if(limitAfterTurns!==null && turns>=limitAfterTurns){row.modules.conversation={completed:turns>=3,turns};ws.send(JSON.stringify({type:'limit_reached',scope:'lesson',remaining_seconds:0,free_seconds_per_day:300,used_seconds_today:300,resets_at:access().resets_at}));ws.close({code:4004,reason:'Daily limit reached'});}}});
   ws.onClose(()=>{row.modules.conversation={completed:turns>=3,turns};});
  });
  await context.route('**/*',async route=>{
@@ -46,6 +49,8 @@ async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFi
   if(key==='/api/auth/me')return json({id:123,first_name:'Test',tg_id:null,email:'test@example.invalid',identities:[{provider:'native'}],tutorial_done:true,has_subscription:true,cefr_level:level});
   if(key==='/api/auth/level'){level=body.level;if(row.status==='prepared')row.content.spec.level=level;return json({ok:true,level});}
   if(key==='/api/learning/overview')return json(overview());
+  if(key==='/api/learning/access')return json(access());
+  if(key==='/api/payments/plans')return json({plans:[{key:'monthly',days:30,amount_rub:999,title:'Месяц занятий',recurring:false}]});
   if(key==='/api/learning/profile'){profile=true;return json({ok:true});}
   if(key==='/api/grammar/lesson')return json({topic_key:'a1_to_be',title_ru:'Глагол to be',theory:'Используем **am** с I.\n\nI am a student. — Я студент.',exercises:[],session_id:''});
   if(key==='/api/grammar/lesson/exercises'||key==='/api/grammar/generate'){
@@ -72,7 +77,7 @@ async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFi
   }
   if(key==='/api/learning/lessons/lesson-one/listened'){row.modules.listening.completed=true;return json(row);}
   if(key==='/api/learning/lessons/lesson-one')return json(row);
-  if(key.endsWith('/start')){row.status='active';return json(row);}
+  if(key.endsWith('/start')){if(limitDuringStart){started=1;return json({detail:'lesson_limit_reached'},402);}if(row.status==='prepared')started++;row.status='active';return json(row);}
   if(key.endsWith('/pause')){if(row.status!=='completed')row.status='paused';return json({ok:true});}
   if(key.endsWith('/heartbeat'))return json({active:row.status==='active',used_seconds:0});
   if(key.endsWith('/advance')){
@@ -91,7 +96,7 @@ async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFi
  });
  const page=await context.newPage();if(process.env.LEARNING_DEBUG)page.on('console',msg=>console.log(msg.type(),msg.text()));page.on('pageerror',e=>errors.push(e.message));t.after(()=>assert.deepEqual(errors,[]));
  await page.goto(BASE+(APP ? `/?mode=${entryMode}` : '/tests/learning.html'));await page.getByRole('heading',{name:entryMode==='listening' ? 'Слушание' : entryMode==='speaking' ? 'Разговор' : 'Твой английский, шаг за шагом',exact:true}).waitFor();
- return {page,calls,row,connections,getLevel:()=>level};
+ return {page,calls,row,connections,getLevel:()=>level,activateSubscription:()=>{accessKind='paid';},newDay:()=>{accessKind='free';started=0;}};
 }
 async function shot(page,name){if(SHOTS){await page.evaluate(()=>Promise.all(document.getAnimations().filter(a=>a.effect?.getTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{}))));await page.screenshot({path:`${SHOTS}/${name}-${page.viewportSize().width}.png`,fullPage:true});}}
 async function start(page){await page.getByRole('button',{name:'Начать урок →',exact:true}).click();await page.getByRole('heading',{name:'Глагол to be',exact:true}).waitFor();}
@@ -330,4 +335,80 @@ test('lesson conversation keeps a readable chat area on a short mobile viewport'
   return controls.bottom<=(nav?.top ?? innerHeight)+1;
  }),true);
  await shot(f.page,'lesson-conversation-short');
+});
+
+
+for(const width of [320,390,430,768])test(`free course access and paywall fit ${width}px and never start a blocked lesson`,async t=>{
+ const f=await fixture(t,{accessKind:'exhausted',width});
+ const access=f.page.getByRole('region',{name:'Доступ к программе'});
+ await access.getByText('Новые уроки на сегодня закончились',{exact:true}).waitFor();
+ await access.getByText(/00:00 МСК/).waitFor();await shot(f.page,'access-exhausted');
+ assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ await f.page.getByRole('button',{name:'Открыть подписку →',exact:true}).click();
+ await f.page.getByRole('heading',{name:'Подписка',exact:true}).waitFor();
+ await f.page.getByText('Месяц занятий',{exact:true}).waitFor();await f.page.getByText(/Полные уроки по программе/).waitFor();await shot(f.page,'access-subscribe');
+ assert.equal(f.calls.filter(c=>c.key==='/api/learning/lessons/lesson-one/start').length,0);
+ await f.page.getByRole('button',{name:'Закрыть',exact:true}).click();
+ await access.getByText('Новые уроки на сегодня закончились',{exact:true}).waitFor();
+});
+test('a paused free lesson can resume after its daily start quota was spent',async t=>{
+ const f=await fixture(t,{accessKind:'exhausted',lessonStatus:'paused',step:4});
+ await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();
+ await f.page.getByRole('heading',{name:'Знакомимся',exact:true}).waitFor();
+ assert.equal(f.calls.filter(c=>c.key==='/api/learning/lessons/lesson-one/start').length,1);
+ assert.equal(await f.page.getByRole('heading',{name:'Подписка',exact:true}).count(),0);
+});
+test('a stale quota response opens subscriptions and refreshes the access card',async t=>{
+ const f=await fixture(t,{accessKind:'free',limitDuringStart:true});
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.getByRole('heading',{name:'Подписка',exact:true}).waitFor();
+ assert.equal(f.calls.filter(c=>c.key==='/api/learning/lessons/lesson-one/start').length,1);
+ await f.page.getByRole('button',{name:'Закрыть',exact:true}).click();
+ await f.page.getByText('Новые уроки на сегодня закончились',{exact:true}).waitFor();
+});
+test('closing subscription after payment refreshes access without losing course progress',async t=>{
+ const f=await fixture(t,{accessKind:'exhausted'});
+ await f.page.getByRole('button',{name:'Открыть подписку →',exact:true}).click();
+ await f.page.getByRole('heading',{name:'Подписка',exact:true}).waitFor();
+ f.activateSubscription();await f.page.getByRole('button',{name:'Закрыть',exact:true}).click();
+ await f.page.getByText('Полный доступ',{exact:true}).waitFor();
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.getByRole('heading',{name:'Глагол to be',exact:true}).waitFor();
+ assert.equal(f.row.content.spec.ordinal,1);
+});
+test('the trial card shows the actual server expiry and full access',async t=>{
+ const f=await fixture(t,{accessKind:'trial'});
+ await f.page.getByText('Пробный полный доступ',{exact:true}).waitFor();
+ await f.page.getByText(/Пробный доступ закончится через/).waitFor();
+ assert.equal(await f.page.getByRole('button',{name:'Выбрать подписку',exact:true}).count(),0);
+ await shot(f.page,'access-trial');
+});
+test('course access refreshes when returning after the daily reset',async t=>{
+ const f=await fixture(t,{accessKind:'exhausted'});f.newDay();
+ await f.page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+ await f.page.getByText('Твой бесплатный урок на сегодня',{exact:true}).waitFor();
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).waitFor();
+});
+for(const answers of [1,3])test(`lesson time limit saves ${answers} replies and offers the correct next step`,async t=>{
+ const f=await fixture(t,{accessKind:'free',step:4,limitAfterTurns:answers,width:320});
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
+ await f.page.getByLabel('Осталось времени разговора в уроке',{exact:true}).waitFor();
+ for(let i=0;i<answers;i++){
+  await f.page.getByRole('textbox',{name:'Сообщение',exact:true}).fill('My name is Alex. '+i);
+  await f.page.getByRole('button',{name:'Отправить',exact:true}).click();
+  if(i<answers-1)await f.page.waitForFunction(()=>document.querySelector('textarea[aria-label="Сообщение"]')?.value==='');
+ }
+ const popup=f.page.getByRole('dialog',{name:'Время разговора в уроке'});await popup.waitFor();
+ await shot(f.page,'course-budget-'+answers);
+ assert.equal(await popup.getByRole('button',{name:'К итогу урока',exact:true}).count(),answers>=3?1:0);
+ if(answers>=3){await popup.getByRole('button',{name:'К итогу урока',exact:true}).click();await f.page.getByRole('heading',{name:'Твоя практика сегодня',exact:true}).waitFor();}
+ else {
+  await popup.getByRole('button',{name:'Выбрать подписку',exact:true}).click();
+  await f.page.getByRole('heading',{name:'Подписка',exact:true}).waitFor();
+  await f.page.getByText('Месяц занятий',{exact:true}).waitFor();
+  await f.page.getByRole('button',{name:'Закрыть',exact:true}).click();await popup.waitFor();
+  await popup.getByRole('button',{name:'К программе',exact:true}).click();
+  await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).waitFor();
+ }
 });

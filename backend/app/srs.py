@@ -197,6 +197,7 @@ async def start_session(
                 return _StartOut(session_id=str(previous['session_id']))
             row = await repo.open_session(
                 user_id=user_id, mode="srs", level=None, role=None,
+                learning_lesson_id=body.learning_lesson_id,
             )
             session_id_str = str(row.id)
             course.save(guided,'words',session_id=session_id_str,completed=False,reviews={})

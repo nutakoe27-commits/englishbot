@@ -23,7 +23,8 @@ from app.db.engine import init_db,db_engine
 from app.db.models import DailyUsage,MytrackerEvent,MytrackerInstall,Session,User,LevelTest,UserMistake
 from app.db.models import UserVocabulary
 from app.learning_models import LearningProfile,LearningLesson,LearningCheckpoint,LearningSkill
-from app.main import app
+from app.main import app, ws_voice
+from app.limits import context_for_user, is_section_limit_reached
 
 TEST_URL=os.environ.get('TEST_DATABASE_URL','')
 SAFE_DB=bool(TEST_URL and make_url(TEST_URL).host in {'localhost','127.0.0.1'} and (make_url(TEST_URL).database or '').endswith('_test'))
@@ -129,7 +130,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         result=await self.api_post('grammar/finish' if mistakes else 'grammar/lesson/finish',body)
         return body,result
 
-    async def conversation(self,key,turns=3,query=None,reply='Tell me more.'):
+    async def conversation(self,key,turns=3,query=None,reply='Tell me more.',preflight=False):
         class Socket:
             query_params={'mode':'chat','learning_lesson_id':key,**(query or {})}
             state=SimpleNamespace()
@@ -137,6 +138,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
             client=('local',1)
             def __init__(self): self.remaining=turns; self.messages=[]
             async def send_json(self,data): self.messages.append(data)
+            async def accept(self): self.client_state=WebSocketState.CONNECTED
             async def close(self,**kwargs): self.client_state=WebSocketState.DISCONNECTED
             async def receive(self):
                 if not self.remaining: return {'type':'websocket.disconnect'}
@@ -146,7 +148,10 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(voice,'get_llm_provider',return_value=object()), \
              patch.object(voice,'_llm_complete_with_timeout',new_callable=AsyncMock,return_value=reply) as completion, \
              patch.object(voice,'_check_achievements_hook',new_callable=AsyncMock):
-            await voice.run_voice_session(socket,limits_ctx=SimpleNamespace(user_db_id=self.uid,tg_id=0))
+            if preflight:
+                await ws_voice(socket,token=issue_jwt(self.uid))
+            else:
+                await voice.run_voice_session(socket,limits_ctx=SimpleNamespace(user_db_id=self.uid,tg_id=0))
             await asyncio.sleep(0)
             socket.prompts=[call.kwargs['system_prompt'] for call in completion.call_args_list]
         return socket
@@ -288,6 +293,141 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         data=(await self.client.get('/api/learning/overview',headers=self.headers)).json()
         with patch.object(settings,'FREE_PERIOD',False),patch.object(settings,'FREE_TRIAL_DAYS',0):
             await self.post(f"/lessons/{data['next_lesson']['id']}/start",status=402)
+
+    async def budget_context(self,key,uid=None):
+        uid=uid or self.uid
+        async with db_session() as session:
+            account=await session.get(User,uid)
+            ctx=await context_for_user(Repo(session),db_session,account,lesson_id=key)
+            activity=await Repo(session).open_session(user_id=uid,mode='chat',level='A1',role='language_partner',learning_lesson_id=key)
+            await learning_modules.conversation_open(session,uid,key,activity)
+            ctx.activity_id=activity.id
+        return ctx
+
+    async def conversation_stage(self):
+        key=await self.prepared();await self.post(f'/lessons/{key}/start')
+        async with db_session() as session:
+            (await session.get(LearningLesson,key)).step_index=4
+        return key
+
+    async def test_free_lesson_has_its_own_persisted_conversation_budget_and_reconnect_cannot_reset_it(self):
+        with patch.object(settings,'FREE_PERIOD',False),patch.object(settings,'FREE_TRIAL_DAYS',0):
+            key=await self.conversation_stage()
+            async with db_session() as session:
+                await Repo(session).add_speaking_seconds(user_id=self.uid,seconds=300)
+            first=await self.budget_context(key)
+            self.assertEqual(first.snapshot().scope,'lesson')
+            self.assertEqual(first.remaining_seconds,300)
+            await first.heartbeat(20)
+            second=await self.budget_context(key)
+            self.assertEqual(second.remaining_seconds,280)
+            with self.assertRaisesRegex(Exception,'conversation_replaced'): await first.heartbeat(5)
+            await second.heartbeat(10)
+            await second.finish(13)
+            self.assertEqual(second.remaining_seconds,267)
+            async with db_session() as session:
+                self.assertEqual(await Repo(session).get_speaking_seconds_today(self.uid),300)
+            resumed=await self.budget_context(key)
+            self.assertEqual(resumed.remaining_seconds,267)
+            await resumed.heartbeat(267)
+            self.assertTrue(resumed.is_exceeded())
+            self.assertEqual(resumed.snapshot().resets_at[-6:],'+03:00')
+            with patch('app.learning_access.budget_day',return_value=('2099-01-01','2099-01-02T00:00:00+03:00')):
+                refreshed=await self.budget_context(key)
+                self.assertEqual(refreshed.remaining_seconds,300)
+
+    async def test_websocket_preflight_allows_course_after_standalone_time_is_exhausted_and_rejects_foreign_course(self):
+        with patch.object(settings,'FREE_PERIOD',False),patch.object(settings,'FREE_TRIAL_DAYS',0):
+            key=await self.conversation_stage()
+            async with db_session() as session:
+                await Repo(session).add_speaking_seconds(user_id=self.uid,seconds=300)
+            socket=await self.conversation(key,turns=1,preflight=True)
+            self.assertTrue(any(m.get('scope')=='lesson' and m.get('remaining_seconds')==300 for m in socket.messages))
+            self.assertTrue(any(m.get('role')=='tutor' for m in socket.messages))
+            self.uid,self.other_uid=self.other_uid,self.uid
+            foreign=await self.conversation(key,turns=0,preflight=True)
+            self.uid,self.other_uid=self.other_uid,self.uid
+            self.assertFalse(any(m.get('role')=='tutor' for m in foreign.messages))
+
+    async def test_course_modules_do_not_consume_standalone_quotas(self):
+        key=await self.conversation_stage()
+        with patch.object(settings,'FREE_PERIOD',False),patch.object(settings,'FREE_TRIAL_DAYS',0):
+            async with db_session() as session:
+                repo=Repo(session);account=await session.get(User,self.uid)
+                for mode,section in [('grammar','grammar'),('listening','listening')]:
+                    await repo.open_session(user_id=self.uid,mode=mode,level='A1',role='test',learning_lesson_id=key)
+                    self.assertFalse(await is_section_limit_reached(repo,account,section=section))
+                    await repo.open_session(user_id=self.uid,mode=mode,level='A1',role='test')
+                    self.assertTrue(await is_section_limit_reached(repo,account,section=section))
+
+    async def test_fast_reconnect_still_charges_old_sessions_final_seconds(self):
+        with patch.object(settings,'FREE_PERIOD',False),patch.object(settings,'FREE_TRIAL_DAYS',0):
+            key=await self.conversation_stage()
+            first=await self.budget_context(key)
+            second=await self.budget_context(key)
+            await first.finish(3)
+            await first.finish(3)
+            await second.heartbeat(1)
+            self.assertEqual(second.remaining_seconds,296)
+            async with db_session() as session:
+                self.assertEqual(learning_modules.result(await session.get(LearningLesson,key),'conversation')['session_id'],str(second.activity_id))
+
+    async def test_actual_course_modules_are_tagged_and_leave_standalone_practice_available(self):
+        key=await self.prepared();await self.complete(key)
+        with patch.object(settings,'FREE_PERIOD',False),patch.object(settings,'FREE_TRIAL_DAYS',0):
+            async with db_session() as session:
+                activities=(await session.scalars(select(Session).where(Session.user_id==self.uid))).all()
+                self.assertEqual({activity.mode for activity in activities},{'lesson','grammar','srs','listening','chat'})
+                self.assertTrue(all(activity.learning_lesson_id==key for activity in activities))
+                account=await session.get(User,self.uid)
+                self.assertFalse(await is_section_limit_reached(Repo(session),account,section='grammar'))
+                self.assertFalse(await is_section_limit_reached(Repo(session),account,section='listening'))
+
+    async def test_paid_course_budget_becomes_free_only_after_subscription_expires(self):
+        with patch.object(settings,'FREE_PERIOD',False),patch.object(settings,'FREE_TRIAL_DAYS',0):
+            async with db_session() as session:
+                (await session.get(User,self.uid)).subscription_until=learning.now()+timedelta(days=1)
+            key=await self.conversation_stage();ctx=await self.budget_context(key)
+            await ctx.heartbeat(600)
+            self.assertEqual(ctx.remaining_seconds,-1)
+            async with db_session() as session:
+                (await session.get(User,self.uid)).subscription_until=learning.now()-timedelta(seconds=1)
+            await ctx.heartbeat(5)
+            self.assertEqual(ctx.remaining_seconds,295)
+            self.assertFalse(ctx.has_subscription)
+
+    async def test_access_resumes_used_lesson_and_payment_unlocks_new_lessons_until_expiry(self):
+        with patch.object(settings,'FREE_PERIOD',False),patch.object(settings,'FREE_TRIAL_DAYS',0):
+            key=await self.prepared();started=await self.post(f'/lessons/{key}/start')
+            await self.post(f'/lessons/{key}/pause',{'elapsed_sec':0,'activity_token':started['activity_token']});await self.post(f'/lessons/{key}/start')
+            before=(await self.client.get('/api/learning/access',headers=self.headers)).json()
+            self.assertEqual(before['remaining_today'],0)
+            self.assertEqual(before['conversation_seconds'],300)
+            async with db_session() as session:
+                payment=await Repo(session).create_pending_payment(user_id=self.uid,plan='monthly',amount_rub=999,days_granted=30,provider_payment_id='course-test-'+uuid4().hex)
+                pid=payment.id
+            pending=(await self.client.get('/api/learning/access',headers=self.headers)).json()
+            self.assertFalse(pending['full_access'])
+            async with db_session() as session:
+                self.assertTrue(await Repo(session).credit_subscription_for_payment(pid))
+                until=(await session.get(User,self.uid)).subscription_until
+            paid=(await self.client.get('/api/learning/access',headers=self.headers)).json()
+            self.assertTrue(paid['full_access']);self.assertIsNone(paid['remaining_today']);self.assertIsNone(paid['conversation_seconds'])
+            async with db_session() as session:
+                await Repo(session).credit_subscription_for_payment(pid)
+                self.assertEqual((await session.get(User,self.uid)).subscription_until,until)
+                (await session.get(User,self.uid)).subscription_until=learning.now()-timedelta(seconds=1)
+            expired=(await self.client.get('/api/learning/access',headers=self.headers)).json()
+            self.assertFalse(expired['full_access']);self.assertEqual(expired['remaining_today'],0)
+
+    async def test_trial_and_promotion_remove_lesson_quotas(self):
+        await self.prepared()
+        with patch.object(settings,'FREE_PERIOD',False),patch.object(settings,'FREE_TRIAL_DAYS',1):
+            trial=(await self.client.get('/api/learning/access',headers=self.headers)).json()
+            self.assertTrue(trial['trial_active']);self.assertTrue(trial['full_access']);self.assertIsNone(trial['daily_limit'])
+        with patch.object(settings,'FREE_PERIOD',True),patch.object(settings,'FREE_TRIAL_DAYS',0):
+            promotion=(await self.client.get('/api/learning/access',headers=self.headers)).json()
+            self.assertTrue(promotion['full_access']);self.assertIsNone(promotion['remaining_today'])
 
     async def test_concurrent_overview_and_setup_do_not_duplicate_prepared_lessons(self):
         responses=await asyncio.gather(*(self.client.put('/api/learning/profile',headers=self.headers,json={'goal':'travel'}) for _ in range(4)))

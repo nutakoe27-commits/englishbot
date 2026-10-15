@@ -520,6 +520,7 @@ async def generate_podcast(
                     mode="listening",
                     level=body.level,
                     role=body.category,
+                    learning_lesson_id=body.learning_lesson_id,
                 )
                 await repo.close_session(
                     session_id=row.id,

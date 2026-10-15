@@ -1153,7 +1153,7 @@ async def ws_voice(websocket: WebSocket, init_data: str = "", token: str = ""):
                     if user is None:
                         await websocket.close(code=4001, reason="Unauthorized")
                         return None
-                    return await context_for_user(repo, db_session, user)
+                    return await context_for_user(repo, db_session, user, lesson_id=websocket.query_params.get('learning_lesson_id'))
                 return await build_limits_context(
                     repo=repo,
                     repo_factory=db_session,
@@ -1162,6 +1162,7 @@ async def ws_voice(websocket: WebSocket, init_data: str = "", token: str = ""):
                     first_name=user_info.get("first_name"),
                     last_name=user_info.get("last_name"),
                     language_code=user_info.get("language_code"),
+                    lesson_id=websocket.query_params.get('learning_lesson_id'),
                 )
 
         try:
@@ -1177,12 +1178,19 @@ async def ws_voice(websocket: WebSocket, init_data: str = "", token: str = ""):
                 getattr(limits_ctx, "remaining_seconds", None),
             )
         except asyncio.TimeoutError:
+            if websocket.query_params.get('learning_lesson_id'):
+                await websocket.close(code=1011, reason='Course access check unavailable')
+                return
             logger.error(
                 "[WS] preflight БД превысил 5 сек — продолжаем без лимитов для user_id=%s",
                 user_info.get("id"),
             )
             limits_ctx = None
         except Exception as exc:
+            if websocket.query_params.get('learning_lesson_id'):
+                await websocket.close(code=4009 if isinstance(exc, HTTPException) else 1011,
+                    reason='Course access unavailable')
+                return
             logger.error("Ошибка БД на connect: %s", exc, exc_info=True)
             limits_ctx = None  # fallback: лучше работать без лимитов, чем падать
 

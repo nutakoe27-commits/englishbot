@@ -8,14 +8,15 @@ export interface LearningQuestion { id: string; prompt: string; choices: string[
 export interface LessonSpec { goal?: string; ordinal: number; cycle: number; position: number; level: string; topic_key: string; title: string; objective: string; kind: string; estimated_minutes: number }
 export interface Turn { id: string; text: string; reply: string; feedback: string; score: number | null; assessed: boolean; verified_voice: boolean }
 export interface LessonResult { correct: number; total: number; objective: string; words: {word: string; translation: string}[]; speaking_assessed: boolean; checkpoint_due: boolean }
-export interface GuidedModule { goal?: string; lessonId: string; level: Level; topicKey: string; conversation?: {title: string; objective: string; prompts: string[]}; onComplete: () => void }
+export interface GuidedModule { goal?: string; lessonId: string; level: Level; topicKey: string; conversation?: {title: string; objective: string; prompts: string[]; turns?: number}; onComplete: () => void }
+export interface LearningAccess { full_access: boolean; trial_active: boolean; trial_until: string | null; daily_limit: number | null; used_today: number; remaining_today: number | null; resets_at: string; conversation_seconds: number | null }
 export interface ModuleResult { completed?: boolean; skipped?: boolean; correct?: number; total?: number; turns?: number; history?: {role: string; content: string}[]; podcast?: {session_id: number; transcript: string; audio_url: string; used_words: string[]} }
 export interface LearningLesson { modules?: Record<string,ModuleResult>; id: string; status: string; step_index: number; used_seconds: number; activity_token?: string | null; conversation: Turn[]; result: LessonResult | null; listening_text_mode: boolean;
   content: { engine?: string; spec: LessonSpec; warmup: LearningQuestion[]; theory: string; practice: LearningQuestion[]; listening: {script: string; questions: LearningQuestion[]};
     conversation: {objective: string; prompts: string[]; opening: string}; words: {word: string; translation: string}[] } }
 export interface SkillMetric { key: string; label: string; attempts: number; accuracy: number | null }
 export interface CheckpointResult { cefr: string; level_before: string; after_lessons: number; skills: Record<string,{correct?: number; total?: number; score?: number}>; speaking_feedback?: string }
-export interface LearningOverview { enabled: boolean; placement_level?: string | null; goals?: Record<string,string>; profile?: {goal: string; goal_label: string; level: string; completed_count: number; cycle: number; cycle_completed: number; until_checkpoint: number; checkpoint_due: boolean} | null;
+export interface LearningOverview { enabled: boolean; access?: LearningAccess; placement_level?: string | null; goals?: Record<string,string>; profile?: {goal: string; goal_label: string; level: string; completed_count: number; cycle: number; cycle_completed: number; until_checkpoint: number; checkpoint_due: boolean} | null;
   next_lesson?: LearningLesson | null; route?: (LessonSpec & {status: string; id: string | null})[]; skills?: SkillMetric[];
   competencies?: {key: string; label: string; accuracy: number | null; status: string; attempts: number}[];
   history?: {id: string; after_count: number; date: string; result: CheckpointResult}[] }
@@ -45,9 +46,12 @@ export async function learningPost<T>(path: string, body: Record<string,unknown>
       conversation_required: 'Для завершения разговора нужны три ответа.',
       module_incomplete: 'Сначала заверши текущий этап. Для разговора нужны три ответа и завершение сессии.',
     };
-    if (messages[detail]) throw new Error(messages[detail]);
+    if (messages[detail]) throw new LearningError(detail, messages[detail]);
     throw error;
   }
+}
+export class LearningError extends Error {
+  constructor(public detail: string, message: string) { super(message); }
 }
 export async function learningSetup(goal: string) {
   const response = await fetch(LEARNING_API + '/profile', {method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({goal,init_data:WebApp.initData || ''})});

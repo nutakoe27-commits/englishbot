@@ -1519,7 +1519,7 @@ class Repo:
         await self.s.execute(stmt)
         return await self.get_speaking_seconds_today(user_id)
 
-    async def count_sessions_today(self, user_id: int, mode: str) -> int:
+    async def count_sessions_today(self, user_id: int, mode: str, *, standalone_only: bool = False) -> int:
         """Сколько сессий данного режима юзер начал сегодня (по МСК).
 
         Используется для посекционных дневных лимитов (listening/grammar).
@@ -1534,6 +1534,8 @@ class Repo:
             SessionRow.mode == mode,
             SessionRow.started_at >= utc_boundary,
         )
+        if standalone_only:
+            statement = statement.where(SessionRow.learning_lesson_id.is_(None))
         if mode == "grammar":
             statement = statement.where(or_(
                 SessionRow.grammar_status.is_(None),
@@ -1976,6 +1978,7 @@ class Repo:
         level: Optional[str],
         role: Optional[str],
         mytracker_instance_id: Optional[str] = None,
+        learning_lesson_id: Optional[str] = None,
     ) -> SessionRow:
         row = SessionRow(
             user_id=user_id,
@@ -1983,6 +1986,7 @@ class Repo:
             mode=mode,
             level=level,
             role=role,
+            learning_lesson_id=learning_lesson_id,
             grammar_status="active" if mode == "grammar" else None,
             grammar_last_seen_at=utcnow() if mode == "grammar" else None,
         )

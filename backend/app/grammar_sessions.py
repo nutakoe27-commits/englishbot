@@ -116,6 +116,7 @@ async def activate(key: str, authorization: Optional[str], init_data: Optional[s
                 raise HTTPException(402, "limit_reached")
             row = await Repo(session).open_session(
                 user_id=uid, mode="grammar", level=prepared.level, role=prepared.role,
+                learning_lesson_id=prepared.learning_lesson_id,
             )
             row.grammar_status = "active"
             row.grammar_last_seen_at = now()

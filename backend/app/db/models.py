@@ -161,6 +161,7 @@ class Session(Base):
     grammar_last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     grammar_result: Mapped[Optional[dict]] = mapped_column(JSON)
     grammar_preparation_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
+    learning_lesson_id: Mapped[Optional[str]] = mapped_column(String(36), index=True)
     used_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     mode: Mapped[str] = mapped_column(
         SAEnum("voice", "chat", "listening", "grammar", "srs", "lesson", name="session_mode"),

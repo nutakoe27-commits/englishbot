@@ -2,9 +2,8 @@
  * App.tsx — голосовой AI-репетитор английского языка.
  *
  * Архитектура:
- *   1. При монтировании компонента сразу запрашиваем микрофон (getUserMedia).
- *      Это фиксирует permission-prompt в момент, когда пользователь только что
- *      осознанно открыл Mini App — лучше UX, чем ждать первого нажатия на кнопку.
+ *   1. Показываем тему и задачу, после «Начать разговор» открываем сессию
+ *      и запрашиваем микрофон в голосовом режиме.
  *   2. Push-to-talk: удерживай кнопку → запись идёт, отпусти → ждём ответ
  *   3. Аудио захватывается через AudioWorklet (PCM 16kHz 16bit)
  *   4. PCM-фреймы отправляются по WebSocket на backend (Whisper STT)
@@ -16,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import WebApp from "@twa-dev/sdk";
 import "./App.css";
 import { SettingsSheet } from "./SettingsSheet";
+import { useBackGuard } from "./backGuard";
 import { LockScreen } from "./LockScreen";
 import { SubscribeScreen } from "./SubscribeScreen";
 import { TranslatePopover } from "./TranslatePopover";
@@ -151,6 +151,8 @@ interface LimitsInfo {
   /** Приветственные дни полного доступа (миграция 0033). */
   trial_active?: boolean;
   trial_until?: string | null;
+  scope?: 'standalone' | 'lesson';
+  resets_at?: string | null;
 }
 
 /** Приветственный доступ закончился на днях — значит человек не «не получил»,
@@ -215,6 +217,7 @@ export default function App({ onExit, course }: AppProps = {}) {
   const [lockState, setLockState] = useState<LockKind | null>(null);
   const [lockMessage, setLockMessage] = useState<string>("");
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(false);
+  useBackGuard(subscribeOpen, useCallback(() => setSubscribeOpen(false), []));
   // На вебе оплата идёт через ЮKassa (SubscribeScreen). В Mini App внутри
   // Telegram остаётся Telegram Payments — там callback не пробрасываем.
   // Тап по слову в реплике тьютора → popover с переводом
@@ -730,6 +733,8 @@ export default function App({ onExit, course }: AppProps = {}) {
             } else if (msg.type === "limits") {
               // Сервер прислал текущее состояние лимитов — сохраняем
               setLimits({
+                scope: msg.scope === 'lesson' ? 'lesson' : 'standalone',
+                resets_at: typeof msg.resets_at === 'string' ? msg.resets_at : null,
                 remaining_seconds:
                   typeof msg.remaining_seconds === "number"
                     ? msg.remaining_seconds
@@ -750,6 +755,8 @@ export default function App({ onExit, course }: AppProps = {}) {
             } else if (msg.type === "limit_reached") {
               // Расходован весь дневной лимит — сервер сейчас закроет сокет (4004)
               setLimits({
+                scope: msg.scope === 'lesson' ? 'lesson' : 'standalone',
+                resets_at: typeof msg.resets_at === 'string' ? msg.resets_at : null,
                 remaining_seconds: 0,
                 has_subscription: false,
                 free_seconds_per_day:
@@ -1220,6 +1227,8 @@ export default function App({ onExit, course }: AppProps = {}) {
   const scenario = course?.conversation || ROLE_SCENARIOS[settings.role];
   const conversationTitle = !course && settings.role === "custom" && settings.roleCustom.trim()
     ? settings.roleCustom.trim() : scenario.title;
+  const lessonBudgetReached = !!course && lockState === 'limit_reached' && limits?.scope === 'lesson';
+  const courseTurns = (course?.conversation?.turns || 0) + dialogLog.filter(entry => entry.role === 'user').length;
 
   // Таймер дневного лимита (free-тариф) — показываем над вводом/кнопкой.
   const showTimer =
@@ -1228,9 +1237,9 @@ export default function App({ onExit, course }: AppProps = {}) {
     <div
       className="limit-timer"
       data-warning={limits!.remaining_seconds <= 60 ? "true" : "false"}
-      aria-label="Осталось времени на сегодня (бесплатный тариф)"
+      aria-label={limits?.scope === 'lesson' ? 'Осталось времени разговора в уроке' : 'Осталось времени на сегодня (бесплатный тариф)'}
     >
-      ⏱ Осталось сегодня: {formatMmSs(limits!.remaining_seconds)}
+      ⏱ {limits?.scope === 'lesson' ? 'В этом уроке' : 'Осталось сегодня'}: {formatMmSs(limits!.remaining_seconds)}
     </div>
   ) : null;
 
@@ -1290,6 +1299,7 @@ export default function App({ onExit, course }: AppProps = {}) {
               <ul lang="en">{course.conversation.prompts.map((prompt, i) => <li key={i}>{prompt}</li>)}</ul>
             </> : <p className="conversation-intro__hint">Собеседника, уровень и режим можно выбрать в настройках.</p>}
             {course && <p className="conversation-intro__hint">Ответь минимум три раза, затем нажми «Завершить», чтобы перейти к итогу урока.</p>}
+            {course && <p className="conversation-intro__hint">Время этого разговора учитывается отдельно от самостоятельной практики.</p>}
           </div>
         ) : dialogLog.length === 0 ? (
           <div className="tutor-log__empty">
@@ -1545,7 +1555,7 @@ export default function App({ onExit, course }: AppProps = {}) {
         />
       )}
 
-      {lockState !== null && (
+      {lockState !== null && !lessonBudgetReached && (
         <LockScreen
           kind={lockState}
           message={lockMessage}
@@ -1555,12 +1565,26 @@ export default function App({ onExit, course }: AppProps = {}) {
         />
       )}
 
+      {lessonBudgetReached && !subscribeOpen && <ModalScreen>
+        <section className="learn-panel learn-conversation-limit" role="dialog" aria-modal="true" aria-label="Время разговора в уроке">
+          <h2>Время разговора на сегодня закончилось</h2>
+          <p>Ответы и прогресс урока сохранены. Время самостоятельной практики не потрачено.</p>
+          {courseTurns >= 3 ? <>
+            <p>Ты уже ответил минимум три раза — можно перейти к итогу урока.</p>
+            <button className="learn-primary" onClick={() => course?.onComplete()}>К итогу урока</button>
+          </> : <p>Продолжить этот разговор можно после 00:00 МСК или с подпиской. Для завершения этапа нужны три ответа.</p>}
+          <button className="learn-secondary" onClick={() => setSubscribeOpen(true)}>Выбрать подписку</button>
+          {onExit && <button className="learn-link" onClick={onExit}>К программе</button>}
+        </section>
+      </ModalScreen>}
+
       {subscribeOpen && (
         <SubscribeScreen
           onClose={() => setSubscribeOpen(false)}
           onPaid={() => {
             // Подписка активна — снимем lock.
             setLockState(null);
+            if (course) {setLimits(null);setConversationStarted(false);}
           }}
         />
       )}

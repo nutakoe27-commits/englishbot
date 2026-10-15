@@ -240,11 +240,28 @@ async def _usage_watchdog(
                 except Exception:
                     pass
                 return
+            if getattr(limits_ctx, 'lesson_id', None):
+                await websocket.send_json({'type':'limits', **limits_ctx.snapshot().to_dict()})
     except asyncio.CancelledError:
         # Нормальный путь — сессия закрылась раньше тика
         raise
     except Exception as exc:
         logger.error("[limits] watchdog упал: %s", exc, exc_info=True)
+        if getattr(limits_ctx, 'lesson_id', None):
+            # Course access and budget must remain enforceable after a DB failure.
+            try:
+                await websocket.close(code=4009 if getattr(exc, 'detail', '') == 'conversation_replaced' else 1011,
+                    reason='Course conversation unavailable')
+            except Exception:
+                pass
+
+
+async def _finish_course_usage(limits_ctx, seconds):
+    if getattr(limits_ctx, 'lesson_id', None):
+        try:
+            await limits_ctx.finish(seconds)
+        except Exception as exc:
+            logger.warning('[limits] course final usage failed: %s', type(exc).__name__)
 
 
 
@@ -308,19 +325,26 @@ async def _run_chat_session(
         try:
             from .db import Repo, db_session
             async with db_session() as db:
+                from . import learning_modules as course
+                await course.require(db,limits_ctx.user_db_id,websocket.query_params.get('learning_lesson_id'),'conversation')
                 row = await Repo(db).open_session(
                     user_id=limits_ctx.user_db_id,
                     mode="chat",
                     level=session_settings.level,
                     role=session_settings.role,
                     mytracker_instance_id=websocket.query_params.get("mt_iid"),
+                    learning_lesson_id=websocket.query_params.get('learning_lesson_id'),
                 )
                 chat_session_db_id = int(row.id)
-                from . import learning_modules as course
                 await course.conversation_open(db,limits_ctx.user_db_id,
                     websocket.query_params.get('learning_lesson_id'),row)
+                if getattr(limits_ctx, 'lesson_id', None):
+                    limits_ctx.activity_id = chat_session_db_id
         except Exception as exc:
             logger.warning("[chat] open_session failed: %r", exc)
+            if websocket.query_params.get('learning_lesson_id'):
+                await websocket.close(code=1011,reason='Course session unavailable')
+                return
 
     # Онлайн-присутствие для админки.
     if limits_ctx is not None:
@@ -452,6 +476,7 @@ async def _run_chat_session(
             except asyncio.CancelledError:
                 pass
         duration_sec = int(asyncio.get_event_loop().time() - chat_session_start)
+        await _finish_course_usage(limits_ctx, duration_sec)
         if chat_session_db_id is not None:
             try:
                 from .db import Repo, db_session
@@ -519,7 +544,7 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                 }
                 websocket.state.learning_history=course.result(guided,'conversation').get('history',[])
         except Exception:
-            await websocket.close(code=4003,reason='Course stage unavailable')
+            await websocket.close(code=4009,reason='Course stage unavailable')
             return
 
     # Контекст учащегося (recent_vocab + recent_mistakes за неделю)
@@ -993,6 +1018,8 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
         try:
             from .db import Repo, db_session
             async with db_session() as db:
+                from . import learning_modules as course
+                await course.require(db,limits_ctx.user_db_id,websocket.query_params.get('learning_lesson_id'),'conversation')
                 repo = Repo(db)
                 row = await repo.open_session(
                     user_id=limits_ctx.user_db_id,
@@ -1000,11 +1027,13 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                     level=session_settings.level,
                     role=session_settings.role,
                     mytracker_instance_id=websocket.query_params.get("mt_iid"),
+                    learning_lesson_id=websocket.query_params.get('learning_lesson_id'),
                 )
                 session_db_id = int(row.id)
-                from . import learning_modules as course
                 await course.conversation_open(db,limits_ctx.user_db_id,
                     websocket.query_params.get('learning_lesson_id'),row)
+                if getattr(limits_ctx, 'lesson_id', None):
+                    limits_ctx.activity_id = session_db_id
         except Exception as exc:
             logger.warning("[voice] open_session failed: %r", exc)
     try:
@@ -1025,6 +1054,7 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
         if limits_ctx is not None:
             presence.clear(limits_ctx.user_db_id)
         duration_sec = int(asyncio.get_event_loop().time() - session_start)
+        await _finish_course_usage(limits_ctx, duration_sec)
         # Закрываем запись сессии в БД (если открылась).
         if session_db_id is not None:
             try:
