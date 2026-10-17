@@ -5,15 +5,15 @@ import { grammarRequest } from './grammarRequests';
 export const LEARNING_API = ((import.meta.env.VITE_API_BASE as string | undefined) || 'https://api-english.krichigindocs.ru') + '/api/learning';
 export interface LearningAnswer { value: string; correct: boolean; correct_answer: string; explanation: string }
 export interface LearningQuestion { id: string; prompt: string; choices: string[]; answer?: LearningAnswer; kind?: string; script?: string }
-export interface LessonSpec { goal?: string; ordinal: number; cycle: number; position: number; level: string; topic_key: string; title: string; objective: string; kind: string; estimated_minutes: number }
+export interface LessonSpec { goal?: string; ordinal: number; cycle: number; position: number; level: string; topic_key: string; title: string; objective: string; kind: string; estimated_minutes: number; cycle_focus?: string; situation?: string; outcomes?: string[]; required_turns?: number }
 export interface Turn { id: string; text: string; reply: string; feedback: string; score: number | null; assessed: boolean; verified_voice: boolean }
 export interface LessonResult { correct: number; total: number; objective: string; words: {word: string; translation: string}[]; speaking_assessed: boolean; checkpoint_due: boolean }
-export interface GuidedModule { goal?: string; lessonId: string; level: Level; topicKey: string; conversation?: {title: string; objective: string; prompts: string[]; turns?: number}; onComplete: () => void }
+export interface GuidedModule { goal?: string; lessonId: string; level: Level; topicKey: string; conversation?: {title: string; objective: string; prompts: string[]; turns?: number; requiredTurns?: number; situation?: string; outcomes?: string[]; challenge?: string}; onComplete: () => void }
 export interface LearningAccess { full_access: boolean; trial_active: boolean; trial_until: string | null; daily_limit: number | null; used_today: number; remaining_today: number | null; resets_at: string; conversation_seconds: number | null }
 export interface ModuleResult { completed?: boolean; skipped?: boolean; correct?: number; total?: number; turns?: number; history?: {role: string; content: string}[]; podcast?: {session_id: number; transcript: string; audio_url: string; used_words: string[]} }
 export interface LearningLesson { modules?: Record<string,ModuleResult>; id: string; status: string; step_index: number; used_seconds: number; activity_token?: string | null; conversation: Turn[]; result: LessonResult | null; listening_text_mode: boolean;
   content: { engine?: string; spec: LessonSpec; warmup: LearningQuestion[]; theory: string; practice: LearningQuestion[]; listening: {script: string; questions: LearningQuestion[]};
-    conversation: {objective: string; prompts: string[]; opening: string}; words: {word: string; translation: string}[] } }
+    conversation: {objective: string; prompts: string[]; opening: string; required_turns?: number; situation?: string; outcomes?: string[]; challenge?: string}; words: {word: string; translation: string}[] } }
 export interface SkillMetric { key: string; label: string; attempts: number; accuracy: number | null }
 export interface CheckpointResult { cefr: string; level_before: string; after_lessons: number; skills: Record<string,{correct?: number; total?: number; score?: number}>; speaking_feedback?: string }
 export interface LearningOverview { enabled: boolean; access?: LearningAccess; placement_level?: string | null; goals?: Record<string,string>; profile?: {goal: string; goal_label: string; level: string; completed_count: number; cycle: number; cycle_completed: number; until_checkpoint: number; checkpoint_due: boolean} | null;

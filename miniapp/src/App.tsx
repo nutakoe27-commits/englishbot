@@ -959,7 +959,7 @@ export default function App({ onExit, course }: AppProps = {}) {
     setLockState(null);
     setLockMessage("");
     // Завершили через «Назад» (без summary) — сразу уходим в меню режимов.
-    if (course) { course.onComplete(); return; }
+    if (course) { setConversationStarted(false); course.onComplete(); return; }
     if (exitAfterEndRef.current) {
       exitAfterEndRef.current = false;
       onExit?.();
@@ -972,7 +972,7 @@ export default function App({ onExit, course }: AppProps = {}) {
     setSummarySeconds(null);
     setDialogLog([]);
     setLimits(null);
-    if (course) course.onComplete(); else onExit?.();
+    if (course) {setConversationStarted(false); course.onComplete();} else onExit?.();
   }, [onExit,course]);
 
   // ── Применение новых настроек: сохраняем, закрываем текущую сессию и
@@ -1227,6 +1227,7 @@ export default function App({ onExit, course }: AppProps = {}) {
   const conversationTitle = scenario?.title || 'Разговор в уроке';
   const lessonBudgetReached = !!course && lockState === 'limit_reached' && limits?.scope === 'lesson';
   const courseTurns = (course?.conversation?.turns || 0) + dialogLog.filter(entry => entry.role === 'user').length;
+  const requiredCourseTurns = course?.conversation?.requiredTurns || 3;
 
   // Таймер дневного лимита (free-тариф) — показываем над вводом/кнопкой.
   const showTimer =
@@ -1284,19 +1285,23 @@ export default function App({ onExit, course }: AppProps = {}) {
         <span className="conversation-topic__eyebrow">Практика в уроке · {settings.level}</span>
         <h2>{conversationTitle}</h2>
         {conversationStarted && scenario?.objective && <p>{scenario.objective}</p>}
+        <span className="conversation-topic__progress" aria-label="Ответы в разговоре">Ответы: {courseTurns} / {requiredCourseTurns}</span>
       </aside>}
 
       {/* Лог диалога — всегда одинакового размера */}
       <section className="tutor-log" ref={logRef} aria-live="polite">
         {!conversationStarted && course ? (
           <div className="conversation-intro">
+            {scenario?.situation && <><h3>Ситуация</h3><p lang="en">{scenario.situation}</p></>}
             <h3>Твоя задача</h3>
             <p>{scenario?.objective}</p>
+            {!!scenario?.outcomes?.length && <ul>{scenario.outcomes.slice(1).map(outcome => <li key={outcome}>{outcome}</li>)}</ul>}
             {course?.conversation?.prompts.length ? <>
               <h3>О чём поговорим</h3>
               <ul lang="en">{course.conversation.prompts.map((prompt, i) => <li key={i}>{prompt}</li>)}</ul>
             </> : null}
-            {course && <p className="conversation-intro__hint">Ответь минимум три раза, затем нажми «Завершить», чтобы перейти к итогу урока.</p>}
+            {scenario?.challenge && <p lang="en">{scenario.challenge}</p>}
+            <p className="conversation-intro__hint">Минимальное число ответов: {requiredCourseTurns}. Затем нажми «Завершить», чтобы перейти к итогу урока.</p>
             {course && <p className="conversation-intro__hint">Время этого разговора учитывается отдельно от самостоятельной практики.</p>}
           </div>
         ) : dialogLog.length === 0 ? (
@@ -1569,10 +1574,10 @@ export default function App({ onExit, course }: AppProps = {}) {
         <section className="learn-panel learn-conversation-limit" role="dialog" aria-modal="true" aria-label="Время разговора в уроке">
           <h2>Время разговора на сегодня закончилось</h2>
           <p>Ответы и прогресс урока сохранены. Время самостоятельной практики не потрачено.</p>
-          {courseTurns >= 3 ? <>
-            <p>Ты уже ответил минимум три раза — можно перейти к итогу урока.</p>
+          {courseTurns >= requiredCourseTurns ? <>
+            <p>Достаточно ответов для завершения этапа — можно перейти к итогу урока.</p>
             <button className="learn-primary" onClick={() => course?.onComplete()}>К итогу урока</button>
-          </> : <p>Продолжить этот разговор можно после 00:00 МСК или с подпиской. Для завершения этапа нужны три ответа.</p>}
+          </> : <p>Продолжить этот разговор можно после 00:00 МСК или с подпиской. Минимальное число ответов для этапа: {requiredCourseTurns}.</p>}
           <button className="learn-secondary" onClick={() => setSubscribeOpen(true)}>Выбрать подписку</button>
           {onExit && <button className="learn-link" onClick={onExit}>К программе</button>}
         </section>
@@ -1654,7 +1659,7 @@ export default function App({ onExit, course }: AppProps = {}) {
           <div className="confirm-card" onClick={(e) => e.stopPropagation()}>
             <p className="confirm-title">Закончить сессию?</p>
             <p className="confirm-hint">
-              {course ? "Разговор сохранится в уроке. После трёх ответов можно перейти к итогу." : "История чата будет удалена — её нельзя восстановить."}
+              {course ? `Разговор сохранится в уроке. Минимальное число ответов для перехода к итогу: ${requiredCourseTurns}.` : "История чата будет удалена — её нельзя восстановить."}
             </p>
             <div className="confirm-actions">
               <button

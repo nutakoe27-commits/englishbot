@@ -11,6 +11,27 @@ from sqlalchemy import select
 STAGES = ('grammar', 'mistakes', 'words', 'listening', 'conversation')
 
 
+def required_turns(row):
+    value = row.content.get('conversation', {}).get('required_turns', 3)
+    return max(3, min(8, value)) if type(value) is int else 3
+
+
+def teaching_context(row):
+    """The same frozen lesson brief for grammar, podcast and conversation."""
+    material = row.content
+    conversation = material['conversation']
+    spec = material['spec']
+    return {
+        'level': row.level, 'title': spec['title'], 'objective': conversation['objective'],
+        'situation': conversation.get('situation', spec.get('situation', '')),
+        'outcomes': conversation.get('outcomes', []),
+        'challenge': conversation.get('challenge', ''),
+        'prompts': conversation['prompts'], 'opening': conversation['opening'],
+        'words': [item['word'] for item in material['words']],
+        'grammar_target': row.topic_key, 'required_turns': required_turns(row),
+    }
+
+
 def grade_grammar(session, activity, key, answers):
     if not key:
         return sum(answer.is_correct for answer in answers), len(answers)
@@ -88,7 +109,7 @@ async def conversation_open(session, uid, key, activity):
     save(row, 'conversation', session_id=str(activity.id), completed=False)
 
 
-async def conversation_closed(session, uid, key, activity_id, history, seconds):
+async def conversation_closed(session, uid, key, activity_id, history, seconds, *, user_turns=None):
     if not key: return
     row = await session.scalar(select(LearningLesson).where(
         LearningLesson.id==key,LearningLesson.user_id==uid).with_for_update())
@@ -96,6 +117,6 @@ async def conversation_closed(session, uid, key, activity_id, history, seconds):
     previous = result(row, 'conversation')
     if str(activity_id) != str(previous.get('session_id')):
         return  # A late close from an older connection must not finish a new one.
-    turns = sum(item.get('role') == 'user' for item in history)
-    save(row, 'conversation', completed=turns >= 3, turns=turns,
+    turns = max(previous.get('turns', 0), user_turns if type(user_turns) is int else sum(item.get('role') == 'user' for item in history))
+    save(row, 'conversation', completed=turns >= required_turns(row), turns=turns,
          seconds=previous.get('seconds', 0) + seconds, history=history[-40:])

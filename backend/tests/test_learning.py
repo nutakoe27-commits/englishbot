@@ -714,6 +714,241 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated['next_lesson']['content']['spec']['level'],'A2')
         self.assertTrue(updated['next_lesson']['content']['spec']['topic_key'].startswith('a2_'))
 
+    async def legacy_prepared(self):
+        key = await self.prepared()
+        async with db_session() as session:
+            row = await session.get(LearningLesson, key)
+            old = copy.deepcopy(row.content)
+            old['spec'].update(version=1, title='Прежний общий сценарий')
+            old['conversation'].pop('required_turns', None)
+            row.content = old
+            row.topic_key = 'a1_imperatives'
+        return key
+
+    async def assert_upgraded(self, row, key):
+        self.assertEqual(row['id'], key)
+        self.assertEqual(row['content']['spec']['version'], 2)
+        self.assertEqual(row['content']['spec']['title'], 'Знакомимся')
+        self.assertEqual(row['content']['spec']['topic_key'], 'a1_to_be')
+        self.assertEqual(row['content']['conversation']['required_turns'], 3)
+
+    async def test_legacy_prepared_upgrades_on_overview_without_creating_activity(self):
+        key = await self.legacy_prepared()
+        data = (await self.client.get('/api/learning/overview', headers=self.headers)).json()
+        await self.assert_upgraded(data['next_lesson'], key)
+        self.assertEqual(data['profile']['completed_count'], 0)
+        async with db_session() as session:
+            self.assertIsNone((await session.get(LearningLesson, key)).session_id)
+            self.assertEqual(await Repo(session).count_sessions_today(self.uid, 'lesson'), 0)
+
+    async def test_legacy_prepared_upgrades_when_opened_by_its_existing_link(self):
+        key = await self.legacy_prepared()
+        row = (await self.client.get(f'/api/learning/lessons/{key}', headers=self.headers)).json()
+        await self.assert_upgraded(row, key)
+
+    async def test_legacy_prepared_upgrades_atomically_when_started_directly(self):
+        key = await self.legacy_prepared()
+        row = await self.post(f'/lessons/{key}/start')
+        await self.assert_upgraded(row, key)
+        self.assertEqual(row['status'], 'active')
+        async with db_session() as session:
+            self.assertEqual(await Repo(session).count_sessions_today(self.uid, 'lesson'), 1)
+
+    async def test_active_legacy_material_and_saved_stages_survive_release_and_level_change(self):
+        key = await self.prepared(); await self.post(f'/lessons/{key}/start')
+        async with db_session() as session:
+            row = await session.get(LearningLesson, key)
+            old = copy.deepcopy(row.content); old['spec']['version'] = 1
+            old['conversation'].pop('required_turns', None)
+            row.content = old; row.step_index = 3
+            learning_modules.save(row, 'grammar', completed=True, correct=4, total=4)
+            snapshot = copy.deepcopy(learning.lesson_data(row)['content'])
+        await self.post(f'/lessons/{key}/pause', {'elapsed_sec': 30})
+        result = await self.client.put('/api/auth/level', headers=self.headers, json={'level':'C1'})
+        self.assertEqual(result.status_code, 200, result.text)
+        data = (await self.client.get('/api/learning/overview', headers=self.headers)).json()
+        self.assertEqual(data['profile']['level'], 'C1')
+        self.assertEqual(data['next_lesson']['content'], snapshot)
+        resumed = await self.post(f'/lessons/{key}/start')
+        self.assertEqual(resumed['content'], snapshot)
+        self.assertEqual(resumed['step_index'], 3)
+        self.assertTrue(resumed['modules']['grammar']['completed'])
+
+    async def advanced_course(self, cycle=1):
+        async with db_session() as session:
+            (await session.get(User, self.uid)).cefr_level = 'C1'
+        key = await self.prepared()
+        if cycle > 1:
+            async with db_session() as session:
+                row = await session.get(LearningLesson, key); row.status = 'completed'
+                p = await session.get(LearningProfile, self.uid)
+                p.completed_count = p.checkpoint_count = (cycle - 1) * 20
+                row = await learning.prepare_next(session, p)
+                key = row.id
+        return key
+
+    async def test_c1_has_advanced_content_and_all_three_generators_share_its_frozen_case(self):
+        from app import listening
+        key = await self.advanced_course(); row = await self.post(f'/lessons/{key}/start')
+        case = row['content']['spec']['situation']
+        self.assertEqual(row['content']['spec']['topic_key'], 'c1_cleft_sentences')
+        self.assertNotIn('family', [item['word'] for item in row['content']['words']])
+        items = [grammar.Exercise(id=f'e{i}', type='mcq', category='other', prompt='What we need ___ clarity.',
+                 choices=['is','are','be','being'], correct='is', explanation='What-clause.') for i in range(4)]
+        with patch.object(grammar, '_generate_exercises', new_callable=AsyncMock, return_value=items) as generate:
+            await self.api_post('grammar/lesson/exercises', {'learning_lesson_id':key, 'topic_key':'c1_cleft_sentences'})
+        self.assertIn(case, generate.call_args.args[0])
+        self.assertIn('counterargument', generate.call_args.args[0])
+        async with db_session() as session: (await session.get(LearningLesson, key)).step_index = 3
+        with patch.object(listening, '_call_llm_for_script', new_callable=AsyncMock, return_value='TOPIC: Qualified claims\nA panel examines a qualified claim and a counterargument.') as podcast, \
+             patch.object(listening, '_synthesize_full', new_callable=AsyncMock, return_value=b'\0'*48000):
+            await self.api_post('listening/generate', {'learning_lesson_id':key})
+        self.assertIn(case, podcast.call_args.args[0])
+        async with db_session() as session: (await session.get(LearningLesson, key)).step_index = 4
+        socket = await self.conversation(key, turns=1)
+        self.assertIn(case, socket.prompts[0])
+        self.assertIn('C1', socket.prompts[0])
+        self.assertIn('counterargument', socket.prompts[0])
+
+    async def test_c1_conversation_requires_six_saved_replies_and_counts_replies_across_reconnects(self):
+        key = await self.advanced_course(); await self.post(f'/lessons/{key}/start')
+        async with db_session() as session: (await session.get(LearningLesson, key)).step_index = 4
+        await self.conversation(key, turns=3, query={'required_turns':'1','level':'A1'})
+        saved = (await self.client.get(f'/api/learning/lessons/{key}', headers=self.headers)).json()
+        self.assertEqual(saved['modules']['conversation']['turns'], 3)
+        self.assertFalse(saved['modules']['conversation']['completed'])
+        await self.post(f'/lessons/{key}/advance', {'step_index':4}, status=409)
+        await self.conversation(key, turns=3)
+        saved = (await self.client.get(f'/api/learning/lessons/{key}', headers=self.headers)).json()
+        self.assertEqual(saved['modules']['conversation']['turns'], 6)
+        self.assertTrue(saved['modules']['conversation']['completed'])
+        self.assertEqual((await self.post(f'/lessons/{key}/advance', {'step_index':4}))['step_index'], 5)
+
+    async def test_legacy_c1_conversation_keeps_its_original_three_reply_requirement(self):
+        key = await self.advanced_course(); await self.post(f'/lessons/{key}/start')
+        async with db_session() as session:
+            row = await session.get(LearningLesson, key); row.step_index = 4
+            old = copy.deepcopy(row.content); old['spec']['version'] = 1
+            old['conversation'].pop('required_turns'); row.content = old
+        await self.conversation(key, turns=3)
+        self.assertEqual((await self.post(f'/lessons/{key}/advance', {'step_index':4}))['step_index'], 5)
+
+    async def test_later_cycle_generation_uses_history_and_keeps_the_authored_learning_targets(self):
+        case = {'title':'Обосновываем доступ к профессиональному обучению',
+                'situation':'A training board considers a qualified claim about access to professional learning. Its underlying assumption is disputed by participants with different needs.',
+                'prompts':['What qualified claim can you defend in this case?', 'Which underlying assumption requires scrutiny?', 'How would you qualify your conclusion in response to a counterargument?']}
+        with patch.object(settings, 'VLLM_BASE_URL', 'http://127.0.0.1:1'):
+            key = await self.advanced_course(cycle=2)
+        async with db_session() as session:
+            before = copy.deepcopy((await session.get(LearningLesson, key)).content)
+            self.assertEqual((await session.get(LearningLesson, key)).generation_status, 'pending')
+        with patch('app.grammar._call_llm', new_callable=AsyncMock, return_value=json.dumps(case)) as llm, \
+             patch.object(learning, 'audio', new_callable=AsyncMock) as legacy_audio:
+            self.assertTrue(await learning.prepare_one())
+        legacy_audio.assert_not_awaited()
+        self.assertTrue(json.loads(llm.call_args.args[1])['previous_cases'])
+        async with db_session() as session:
+            row = await session.get(LearningLesson, key)
+            self.assertEqual(row.generation_status, 'ready')
+            self.assertEqual(row.content['spec']['title'], case['title'])
+            self.assertEqual(row.content['words'], before['words'])
+            self.assertEqual(row.content['spec']['topic_key'], before['spec']['topic_key'])
+            self.assertIsNone(row.session_id)
+
+    async def test_bad_scenario_generation_leaves_a_usable_authored_case_without_a_session(self):
+        with patch.object(settings, 'VLLM_BASE_URL', 'http://127.0.0.1:1'):
+            key = await self.advanced_course(cycle=2)
+        async with db_session() as session: before = copy.deepcopy((await session.get(LearningLesson, key)).content)
+        with patch('app.grammar._call_llm', new_callable=AsyncMock, return_value='invalid JSON'):
+            self.assertTrue(await learning.prepare_one())
+        async with db_session() as session:
+            row = await session.get(LearningLesson, key)
+            self.assertEqual(row.content, before)
+            self.assertEqual(row.generation_status, 'fallback')
+            self.assertIsNone(row.session_id)
+        self.assertEqual((await self.post(f'/lessons/{key}/start'))['content']['spec'], before['spec'])
+        async with db_session() as session:
+            self.assertEqual((await session.get(LearningLesson, key)).content, before)
+
+    async def test_long_course_conversation_counts_all_replies_when_history_is_bounded(self):
+        key = await self.advanced_course(); await self.post(f'/lessons/{key}/start')
+        async with db_session() as session: (await session.get(LearningLesson, key)).step_index = 4
+        await self.conversation(key, turns=23)
+        async with db_session() as session:
+            progress = learning_modules.result(await session.get(LearningLesson, key), 'conversation')
+            self.assertEqual(progress['turns'], 23)
+            self.assertLessEqual(len(progress['history']), 40)
+        await self.conversation(key, turns=2)
+        async with db_session() as session:
+            self.assertEqual(learning_modules.result(await session.get(LearningLesson, key), 'conversation')['turns'], 25)
+
+    async def test_voice_course_counts_six_recognised_replies_through_the_existing_pipeline(self):
+        key = await self.advanced_course(); await self.post(f'/lessons/{key}/start')
+        async with db_session() as session: (await session.get(LearningLesson, key)).step_index = 4
+        class Speech:
+            async def stream(self, queue):
+                while True:
+                    event = await queue.get()
+                    if event is None: return
+                    if event['kind'] == 'eou':
+                        yield 'final', 'The claim should be qualified because the evidence is incomplete.'
+                        yield 'eou', ''
+                        return
+        class Model:
+            async def stream(self, **kwargs):
+                yield 'The limitation matters. Which additional evidence would change your conclusion?'
+        class Socket:
+            query_params = {'mode':'voice','learning_lesson_id':key}
+            client_state = WebSocketState.CONNECTED
+            state = SimpleNamespace()
+            client = ('local', 2)
+            def __init__(self): self.queue=asyncio.Queue(); self.replies=0
+            async def next_audio(self):
+                await self.queue.put({'bytes':b'\0'*640})
+                await self.queue.put({'text':json.dumps({'type':'eou'})})
+            async def receive(self): return await self.queue.get()
+            async def close(self, **kwargs): self.client_state=WebSocketState.DISCONNECTED
+            async def send_json(self, data):
+                if data.get('role') == 'tutor' and data.get('text','').startswith('The limitation matters.'):
+                    self.replies += 1
+                    if self.replies < 6: await self.next_audio()
+                    else: await self.queue.put({'type':'websocket.disconnect'})
+        socket = Socket(); await socket.next_audio()
+        with patch.object(voice, 'get_stt_provider', return_value=Speech()), \
+             patch.object(voice, 'get_tts_provider', return_value=object()), \
+             patch.object(voice, 'get_llm_provider', return_value=Model()), \
+             patch.object(voice, '_send_tts_to_ws', new_callable=AsyncMock), \
+             patch.object(voice, '_check_achievements_hook', new_callable=AsyncMock):
+            await asyncio.wait_for(voice.run_voice_session(socket, limits_ctx=SimpleNamespace(user_db_id=self.uid,tg_id=0)), 5)
+            await asyncio.sleep(0)
+        self.assertEqual(socket.replies, 6)
+        async with db_session() as session:
+            progress = learning_modules.result(await session.get(LearningLesson, key), 'conversation')
+            self.assertEqual(progress['turns'], 6)
+            self.assertTrue(progress['completed'])
+
+    async def test_level_change_during_scenario_preparation_cannot_restore_old_material(self):
+        with patch.object(settings, 'VLLM_BASE_URL', 'http://127.0.0.1:1'):
+            key = await self.advanced_course(cycle=2)
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def generated(request):
+            entered.set(); await release.wait()
+            return {k: v for k, v in request.items() if not k.startswith('_')}
+        with patch.object(learning, 'generate_variant', side_effect=generated):
+            pending = asyncio.create_task(learning.prepare_one())
+            await asyncio.wait_for(entered.wait(), 5)
+            try:
+                response = await self.client.put('/api/auth/level', headers=self.headers, json={'level':'B2'})
+                self.assertEqual(response.status_code, 200, response.text)
+            finally:
+                release.set()
+            await asyncio.wait_for(pending, 5)
+        async with db_session() as session:
+            row = await session.get(LearningLesson, key)
+            self.assertEqual(row.level, 'B2')
+            self.assertTrue(row.topic_key.startswith('b2_'))
+            self.assertEqual(row.content['spec']['level'], 'B2')
+
     async def test_twenty_real_completed_lessons_checkpoint_and_next_cycle(self):
         data=await self.setup_course()
         await self.post('/checkpoint/start',status=409)

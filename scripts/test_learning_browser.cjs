@@ -3,6 +3,8 @@ const assert=require('node:assert/strict');
 const {test,before,after}=require('node:test');
 const {chromium}=require('playwright');
 const fs=require('node:fs/promises');
+const {execFileSync}=require('node:child_process');
+const path=require('node:path');
 const BASE=process.env.LEARNING_UI_URL || 'http://localhost:5173';
 const SHOTS=process.env.LEARNING_SCREENSHOT_DIR;
 const APP=!!process.env.LEARNING_APP_ENTRY;
@@ -10,6 +12,16 @@ let browser;
 before(async()=>{browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});if(SHOTS)await fs.mkdir(SHOTS,{recursive:true});});
 after(async()=>{await browser?.close();});
 const copy=x=>JSON.parse(JSON.stringify(x));
+let authoredCurriculum;
+function curriculumContent(level,ordinal=1){
+ if(!authoredCurriculum){
+  const root=path.resolve(__dirname,'..');
+  authoredCurriculum=JSON.parse(execFileSync(process.env.LEARNING_PYTHON || 'python3',[
+   '-c', 'import json; from app.learning_content import LEVELS,plan,material; print(json.dumps({level:[material(plan(level,"general",n)) for n in range(1,61)] for level in LEVELS},ensure_ascii=False))',
+  ],{cwd:root,env:{...process.env,PYTHONPATH:path.join(root,'backend')},encoding:'utf8',maxBuffer:8*1024*1024}));
+ }
+ return copy(authoredCurriculum[level][ordinal-1]);
+}
 async function assertHeaderFits(page){
  assert.equal(await page.locator('.mode-v2-top').evaluate(header=>{
   const bounds=header.getBoundingClientRect();
@@ -21,18 +33,20 @@ async function assertHeaderFits(page){
 function lesson(){return {id:'lesson-one',status:'prepared',step_index:0,used_seconds:0,activity_token:'active-one',modules:{},conversation:[],result:null,listening_text_mode:false,
  content:{engine:'modules',spec:{ordinal:1,cycle:1,position:1,level:'A1',topic_key:'a1_to_be',title:'Знакомимся',objective:'представиться и узнать о собеседнике',kind:'new',estimated_minutes:18},
  warmup:[],theory:'',practice:[],listening:{script:'',questions:[]},conversation:{objective:'представиться и узнать о собеседнике',opening:'Hello! What is your name?',prompts:['Hello! What is your name?','Where are you from?','What do you like doing?']},words:[{word:'name',translation:'имя'},{word:'city',translation:'город'}]}};}
-async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFinish=false,width=390,height=844,step=0,listeningGate=null,failListening=false,cachedPodcast=false,entryMode='learning',accessKind='paid',lessonStatus='prepared',limitDuringStart=false,limitAfterTurns=null,savedTurns=0}={}){
+async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFinish=false,width=390,height=844,step=0,listeningGate=null,failListening=false,cachedPodcast=false,entryMode='learning',accessKind='paid',lessonStatus='prepared',limitDuringStart=false,limitAfterTurns=null,savedTurns=0,curriculumLevel=null,curriculumOrdinal=1}={}){
  const context=await browser.newContext({viewport:{width,height},permissions:['microphone']});t.after(async()=>{if(SHOTS && context.pages()[0])await shot(context.pages()[0],'last-'+t.name.replace(/[^a-z0-9]+/gi,'-'));await context.close();});
  if(process.env.LEARNING_LUCIDE_PATH)await context.addInitScript({path:process.env.LEARNING_LUCIDE_PATH});
  await context.addInitScript(()=>{localStorage.setItem('englishbot_jwt','local-browser-test');localStorage.setItem('englishbot.tutorSettings.v1',JSON.stringify({level:'A1',mode:'chat'}));});
  context.setDefaultTimeout(7000);
  const row=lesson(),calls=[],errors=[],connections=[];row.step_index=step;row.status=lessonStatus;
+ if(curriculumLevel)row.content={...curriculumContent(curriculumLevel,curriculumOrdinal),engine:'modules'};
+ const requiredTurns=row.content.conversation.required_turns || 3;
  if(savedTurns)row.modules.conversation={completed:false,turns:savedTurns};
  if(cachedPodcast)row.modules.listening={completed:false,podcast:{session_id:103,transcript:'My name is Alex. I live in Bristol.',audio_url:'/api/listening/audio/test.wav',used_words:['name']}};
- let level='A1',completed=0,turns=savedTurns,started=accessKind==='exhausted'||lessonStatus!=='prepared'?1:0;
+ let level=curriculumLevel || 'A1',completed=curriculumOrdinal-1,turns=savedTurns,started=accessKind==='exhausted'||lessonStatus!=='prepared'?1:0;
  const access=()=>{const full=['paid','trial','promotion'].includes(accessKind);const reset=new Date((Math.floor((Date.now()+3*3600000)/86400000)+1)*86400000-3*3600000).toISOString();return {full_access:full,trial_active:accessKind==='trial',trial_until:accessKind==='trial'?new Date(Date.now()+12*3600000).toISOString():null,daily_limit:full?null:1,used_today:started,remaining_today:full?null:Math.max(0,1-started),resets_at:reset,conversation_seconds:full?null:300};};
- const overview=()=>({enabled:true,access:access(),placement_level:level,goals:{general:'Общий английский',travel:'Путешествия',work:'Работа'},profile:profile?{goal:'general',goal_label:'Общий английский',level,completed_count:completed,cycle:1,cycle_completed:completed,until_checkpoint:20-completed,checkpoint_due:false}:null,next_lesson:profile?row:null,
-  route:Array.from({length:20},(_,i)=>({...row.content.spec,ordinal:i+1,position:i+1,status:i<completed?'completed':i===completed?row.status:'locked',id:i===completed?row.id:null})),
+ const overview=()=>({enabled:true,access:access(),placement_level:level,goals:{general:'Общий английский',travel:'Путешествия',work:'Работа'},profile:profile?{goal:'general',goal_label:'Общий английский',level,completed_count:completed,cycle:row.content.spec.cycle,cycle_completed:completed%20,until_checkpoint:20-completed%20,checkpoint_due:false}:null,next_lesson:profile?row:null,
+  route:Array.from({length:20},(_,i)=>{const number=(row.content.spec.cycle-1)*20+i+1;return {...(curriculumLevel?curriculumContent(level,number).spec:row.content.spec),ordinal:number,position:i+1,status:number<=completed?'completed':number===completed+1?row.status:'locked',id:number===completed+1?row.id:null};}),
   skills:['grammar','vocabulary','listening','speaking'].map((key,i)=>({key,label:['Грамматика','Лексика','Понимание речи','Разговор'][i],attempts:0,accuracy:null})),history:[]});
  await context.routeWebSocket('**/ws/voice**',ws=>{
   const params=Object.fromEntries(new URL(ws.url()).searchParams);connections.push(params);
@@ -40,8 +54,8 @@ async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFi
   else assert.equal(params.learning_lesson_id,undefined);
   ws.send(JSON.stringify({type:'limits',scope:entryMode==='learning'?'lesson':'standalone',has_subscription:access().full_access,free_seconds_per_day:300,used_seconds_today:0,remaining_seconds:access().full_access?-1:300,resets_at:access().resets_at}));
   ws.send(JSON.stringify({type:'text',role:'tutor',text:entryMode==='learning' ? row.content.conversation.opening : params.role==='barista' ? 'Hey, what can I get you?' : 'Hi! What do you want to talk about?'}));
-  ws.onMessage(raw=>{const data=JSON.parse(String(raw));if(data.type==='user_text'){turns++;if(process.env.LEARNING_DEBUG)console.log('WS USER TURN',turns);ws.send(JSON.stringify({type:'text',role:'tutor',text:'Tell me more about your city.'}));if(limitAfterTurns!==null && turns>=limitAfterTurns){row.modules.conversation={completed:turns>=3,turns};ws.send(JSON.stringify({type:'limit_reached',scope:'lesson',remaining_seconds:0,free_seconds_per_day:300,used_seconds_today:300,resets_at:access().resets_at}));ws.close({code:4004,reason:'Daily limit reached'});}}});
-  ws.onClose(()=>{row.modules.conversation={completed:turns>=3,turns};});
+  ws.onMessage(raw=>{const data=JSON.parse(String(raw));if(data.type==='user_text'){turns++;if(process.env.LEARNING_DEBUG)console.log('WS USER TURN',turns);ws.send(JSON.stringify({type:'text',role:'tutor',text:'Tell me more about your city.'}));if(limitAfterTurns!==null && turns>=limitAfterTurns){row.modules.conversation={completed:turns>=requiredTurns,turns};ws.send(JSON.stringify({type:'limit_reached',scope:'lesson',remaining_seconds:0,free_seconds_per_day:300,used_seconds_today:300,resets_at:access().resets_at}));ws.close({code:4004,reason:'Daily limit reached'});}}});
+  ws.onClose(()=>{row.modules.conversation={completed:turns>=requiredTurns,turns};});
  });
  await context.route('**/*',async route=>{
   const url=new URL(route.request().url());
@@ -462,4 +476,83 @@ if(APP)test('standalone tutor starts without a preset conversation topic',async 
   return controls.bottom<=nav.top+1 && controls.right<=innerWidth+1;
  }),true);
  await shot(f.page,'standalone-without-topic');
+});
+
+if(APP)for(const width of [320,390,430,768])test(`real C1 curriculum explains its advanced case and fits ${width}px`,async t=>{
+ const f=await fixture(t,{width,step:4,curriculumLevel:'C1'});
+ const spec=f.row.content.spec;
+ await f.page.getByRole('heading',{name:spec.title,exact:true}).waitFor();
+ assert.equal(await f.page.getByRole('list',{name:'Задачи урока'}).getByRole('listitem').count(),3);
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.locator('.conversation-intro').waitFor();
+ assert.equal(await f.page.locator('.conversation-intro p[lang="en"]').first().textContent(),spec.situation);
+ assert.match(await f.page.locator('.conversation-intro').textContent(),/Минимальное число ответов: 6/);
+ assert.equal(await f.page.getByText('Hello! What is your name?',{exact:true}).count(),0);
+ assert.equal(await f.page.evaluate(()=>{
+  const log=document.querySelector('.tutor-log').getBoundingClientRect();
+  const controls=document.querySelector('.tutor-controls').getBoundingClientRect();
+  const nav=document.querySelector('.bnav').getBoundingClientRect();
+  return document.documentElement.scrollWidth<=innerWidth && log.height>=110 && controls.bottom<=nav.top+1 && controls.right<=innerWidth+1;
+ }),true);
+ await shot(f.page,'curriculum-c1-preparation');
+ await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
+ await f.page.locator('.msg--tutor').filter({hasText:f.row.content.conversation.opening}).waitFor();
+ assert.equal(f.connections[0].level,'C1');
+});
+
+if(APP)test('C1 can resume an early finish and completes only after its six saved replies',async t=>{
+ const f=await fixture(t,{width:390,step:4,curriculumLevel:'C1'});
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ const talk=async count=>{
+  await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
+  await f.page.getByRole('textbox',{name:'Сообщение',exact:true}).waitFor();
+  for(let i=0;i<count;i++){
+   await f.page.getByRole('textbox',{name:'Сообщение',exact:true}).fill('The qualified claim depends on an underlying assumption that deserves further scrutiny. '+i);
+   await f.page.getByRole('button',{name:'Отправить',exact:true}).click();
+   await f.page.waitForFunction(()=>document.querySelector('textarea[aria-label="Сообщение"]')?.value==='');
+  }
+  await f.page.getByRole('button',{name:'Завершить',exact:true}).click();
+  await f.page.getByRole('dialog',{name:'Завершить сессию?'}).getByRole('button',{name:'Завершить',exact:true}).click();
+ };
+ await talk(3);
+ await f.page.getByRole('alert').filter({hasText:'Ответов сохранено: 3 из 6'}).waitFor();
+ assert.equal(f.row.step_index,4);assert.equal(f.row.modules.conversation.completed,false);
+ await talk(3);
+ await f.page.getByRole('heading',{name:'Твоя практика сегодня',exact:true}).waitFor();
+ assert.equal(f.row.modules.conversation.turns,6);assert.equal(f.row.modules.conversation.completed,true);
+});
+
+if(APP)test('next curriculum cycle keeps the level and previews a different situation',async t=>{
+ const f=await fixture(t,{width:320,step:4,curriculumLevel:'C1',curriculumOrdinal:21});
+ await f.page.getByText('Перенос навыков в новые ситуации',{exact:true}).waitFor();
+ assert.notEqual(f.row.content.spec.situation,curriculumContent('C1',1).spec.situation);
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.locator('.conversation-intro').waitFor();
+ assert.match(await f.page.locator('.conversation-intro').textContent(),/Ask|Identify/);
+ await shot(f.page,'curriculum-c1-next-cycle');
+});
+
+if(APP)test('advanced conversation still leaves room for dialogue on a short phone screen',async t=>{
+ const f=await fixture(t,{width:320,height:568,step:4,curriculumLevel:'C1'});
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
+ await f.page.locator('.msg--tutor').waitFor();
+ const log=await f.page.locator('.tutor-log').boundingBox();
+ assert(log.height>=80,'advanced lesson titles must leave room for the dialogue');
+ await shot(f.page,'curriculum-c1-short');
+});
+
+if(APP)test('a long generated lesson title cannot crowd out conversation on a short screen',async t=>{
+ const f=await fixture(t,{width:320,height:568,step:4,curriculumLevel:'C1'});
+ f.row.content.spec.title='Обосновываем внедрение автоматизированных рекомендаций с учётом неопределённости, ответственности и конкурирующих интересов участников';
+ await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
+ await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
+ await f.page.locator('.msg--tutor').waitFor();
+ const log=await f.page.locator('.tutor-log').boundingBox();
+ assert(log.height>=80);
+ assert.equal(await f.page.evaluate(()=>{
+  const controls=document.querySelector('.tutor-controls').getBoundingClientRect();
+  return controls.bottom<=document.querySelector('.bnav').getBoundingClientRect().top+1;
+ }),true);
+ await shot(f.page,'curriculum-c1-long-title');
 });

@@ -138,7 +138,10 @@ function LessonRunner({initial,onExit,onDone}: {initial: LearningLesson; onExit:
       for (let i=0;i<8;i++) {
         const saved=await learningGet<LearningLesson>(path);
         if (saved.modules?.conversation?.completed) break;
-        if (i===7) throw new Error('Для завершения разговора нужны три ответа. Продолжи разговор и заверши сессию.');
+        if (i===7) {
+          update(saved);
+          throw new Error(`Ответов сохранено: ${saved.modules?.conversation?.turns || 0} из ${saved.content.conversation.required_turns || 3}. Продолжи разговор и заверши сессию.`);
+        }
         await new Promise(resolve => setTimeout(resolve,200));
       }
     }
@@ -152,7 +155,8 @@ function LessonRunner({initial,onExit,onDone}: {initial: LearningLesson; onExit:
   });
   const step=lesson.step_index;
   const course={goal:lesson.content.spec.goal,lessonId:lesson.id,level:lesson.content.spec.level as Level,topicKey:lesson.content.spec.topic_key,
-    conversation:{title:lesson.content.spec.title,objective:lesson.content.conversation.objective || lesson.content.spec.objective,prompts:lesson.content.conversation.prompts || [],turns:lesson.modules?.conversation?.turns || 0},
+    conversation:{title:lesson.content.spec.title,objective:lesson.content.conversation.objective || lesson.content.spec.objective,prompts:lesson.content.conversation.prompts || [],turns:lesson.modules?.conversation?.turns || 0,
+      requiredTurns:lesson.content.conversation.required_turns,situation:lesson.content.conversation.situation,outcomes:lesson.content.conversation.outcomes,challenge:lesson.content.conversation.challenge},
     onComplete:() => void advance()};
   const finished=lesson.status==='completed';
   const stageResult=lesson.modules?.[moduleKeys[step]];
@@ -301,6 +305,10 @@ export function LearningScreen({onExit,onPlacement}: {onExit: () => void; onPlac
     {data?.profile && <><section className="learn-home-card"><span className="learn-eyebrow">{data.profile.checkpoint_due ? 'Контрольная точка' : `Урок ${data.next_lesson?.content.spec.ordinal || data.profile.completed_count+1}`}</span>
       <h2>{data.profile.checkpoint_due ? 'Пора проверить развитие' : data.next_lesson?.content.spec.title}</h2>
       <p>{data.profile.checkpoint_due ? 'Диагностика сохранит новый результат и откроет следующий цикл.' : `Научишься ${data.next_lesson?.content.spec.objective}. 15–20 минут, в своём темпе.`}</p>
+      {!data.profile.checkpoint_due && data.next_lesson?.content.spec.cycle_focus && <p className="learn-muted">{data.next_lesson.content.spec.cycle_focus}</p>}
+      {!data.profile.checkpoint_due && !!data.next_lesson?.content.spec.outcomes?.length && <ul className="learn-outcomes" aria-label="Задачи урока">
+        {data.next_lesson.content.spec.outcomes.map(outcome => <li key={outcome}>{outcome}</li>)}
+      </ul>}
       <button className="learn-primary" disabled={busy} onClick={() => void begin()}>{busy ? 'Открываем…' : data.profile.checkpoint_due ? 'Начать проверку' : data.next_lesson?.status==='active' || data.next_lesson?.status==='paused' ? 'Продолжить урок' : needsSubscription ? 'Открыть подписку' : 'Начать урок'} →</button>
     </section><LearningMap data={data} onLesson={id => void act(async () => {
       if(id===data.next_lesson?.id && data.next_lesson.status==='prepared' && data.access?.remaining_today===0) {setSubscribeOpen(true);return;}

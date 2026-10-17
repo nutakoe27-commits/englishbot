@@ -77,6 +77,8 @@
 .learn-module .mode-v2-hello,.learn-module .bg-orb{display:none}
 .learn-module .mode-v2-top{padding-top:16px;padding-bottom:16px}
 .learn-course-notice{margin:16px 20px;flex-shrink:0}
+.learn-outcomes{margin:0;padding-left:20px;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.learn-outcomes li+li{margin-top:8px}
 .learn-completed-stages{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:16px}
 .learn-completed-stages li{display:flex;justify-content:space-between;align-items:baseline;gap:12px;line-height:1.5;font-size:14px}
 .learn-completed-stages li>span:last-child{font-size:12px;color:var(--text-dim);text-align:right}

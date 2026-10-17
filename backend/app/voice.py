@@ -317,6 +317,8 @@ async def _run_chat_session(
     """
     logger.warning("[chat] старт текстовой сессии")
     history: list[dict] = list(getattr(websocket.state,'learning_history',[]))
+    course_turns = getattr(websocket.state, 'learning_turns', 0)
+    history_limit = 40 if session_settings.lesson_context else MAX_HISTORY_TURNS * 2
     chat_session_start = asyncio.get_event_loop().time()
 
     # Запись сессии в БД для админ-вкладки «Сессии».
@@ -444,8 +446,9 @@ async def _run_chat_session(
 
             history.append({"role": "user", "text": user_text})
             history.append({"role": "assistant", "text": body})
-            if len(history) > MAX_HISTORY_TURNS * 2:
-                del history[: len(history) - MAX_HISTORY_TURNS * 2]
+            course_turns += 1
+            if len(history) > history_limit:
+                del history[: len(history) - history_limit]
 
             if websocket.client_state == WebSocketState.CONNECTED:
                 try:
@@ -487,7 +490,7 @@ async def _run_chat_session(
                     )
                     from . import learning_modules as course
                     await course.conversation_closed(db,limits_ctx.user_db_id,
-                        websocket.query_params.get('learning_lesson_id'),chat_session_db_id,history,duration_sec)
+                        websocket.query_params.get('learning_lesson_id'),chat_session_db_id,history,duration_sec,user_turns=course_turns)
             except Exception as exc:
                 logger.warning("[chat] close_session failed: %r", exc)
         asyncio.create_task(_bump_streak_after_session(
@@ -534,15 +537,9 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                 session_settings.level=guided.level
                 session_settings.role='language_partner'
                 session_settings.role_custom=''
-                material=guided.content
-                session_settings.lesson_context={
-                    'title':material['spec']['title'],
-                    'objective':material['conversation']['objective'],
-                    'prompts':material['conversation']['prompts'],
-                    'opening':material['conversation']['opening'],
-                    'words':[item['word'] for item in material['words']],
-                }
+                session_settings.lesson_context=course.teaching_context(guided)
                 websocket.state.learning_history=course.result(guided,'conversation').get('history',[])
+                websocket.state.learning_turns=course.result(guided,'conversation').get('turns',0)
         except Exception:
             await websocket.close(code=4009,reason='Course stage unavailable')
             return
@@ -610,6 +607,8 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
     stt_queue: asyncio.Queue[Optional[dict]] = asyncio.Queue(maxsize=4096)
     stt_dropped_audio = 0  # счётчик дропнутых аудио-чанков (диагностика)
     history: list[dict] = list(getattr(websocket.state,'learning_history',[]))
+    course_turns = getattr(websocket.state, 'learning_turns', 0)
+    history_limit = 40 if session_settings.lesson_context else MAX_HISTORY_TURNS * 2
     # Буфер финалов, пришедших между EOU — соберём их в одну реплику.
     pending_finals: list[str] = []
 
@@ -707,6 +706,7 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
 
     async def handle_user_utterance(text: str) -> None:
         """Для готовой реплики пользователя: LLM в ответ и озвучка."""
+        nonlocal course_turns
         # Каждый новый user-turn — чистый флаг прерывания.
         interrupt_event.clear()
         # Language guard: если Whisper всё же распознал кириллицу —
@@ -882,8 +882,9 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
 
         history.append({"role": "user", "text": text})
         history.append({"role": "assistant", "text": body_final})
-        if len(history) > MAX_HISTORY_TURNS * 2:
-            del history[: len(history) - MAX_HISTORY_TURNS * 2]
+        course_turns += 1
+        if len(history) > history_limit:
+            del history[: len(history) - history_limit]
 
         if websocket.client_state == WebSocketState.CONNECTED:
             payload = {
@@ -1066,7 +1067,7 @@ async def run_voice_session(websocket: WebSocket, limits_ctx=None) -> None:
                     )
                     from . import learning_modules as course
                     await course.conversation_closed(db,limits_ctx.user_db_id,
-                        websocket.query_params.get('learning_lesson_id'),session_db_id,history,duration_sec)
+                        websocket.query_params.get('learning_lesson_id'),session_db_id,history,duration_sec,user_turns=course_turns)
             except Exception as exc:
                 logger.warning("[voice] close_session failed: %r", exc)
         # Streak: фиксируем сегодняшнюю практику + последнюю роль.
