@@ -2462,6 +2462,17 @@ button {
 @media (max-width: 360px) {
   .lst-chips--grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+.lst-chips--grid.lst-chips--levels {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.lst-chips--levels .lst-chip {
+  min-height: 48px;
+}
+@media (max-width: 380px) {
+  .lst-chips--grid.lst-chips--levels {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .lst-chip {
   padding: 11px 18px;
   border-radius: 999px;

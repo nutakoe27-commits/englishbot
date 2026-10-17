@@ -1662,6 +1662,12 @@
   align-items: center;
   gap: 6px;
 }
+@media (max-width: 380px) {
+  .mode-v2-top { flex-wrap: wrap; row-gap: 8px; }
+  .mode-v2-back { flex-shrink: 0; }
+  .mode-v2-title { flex-basis: auto; flex-shrink: 0; }
+  .mode-v2-actions { margin-left: auto; }
+}
 .mode-v2-hello {
   display: none;
   font-size: 12px;

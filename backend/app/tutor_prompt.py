@@ -509,7 +509,7 @@ def build_greeting(s: SessionSettings, history: Optional[list[dict]] = None) -> 
         "travel_agent": "Hey. So where are you thinking of going?",
         "doctor": "Hi, come in. What's going on?",
         "shopkeeper": "Hey. Anything I can help you find?",
-        "language_partner": "Hi! How is your day?",
+        "language_partner": "Hi! What do you want to talk about?",
     }
     if s.role == "custom" and s.role_custom:
         return "Hey. So what's on your mind?"

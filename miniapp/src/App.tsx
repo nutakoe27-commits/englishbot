@@ -32,7 +32,6 @@ import {
   loadSettings,
   saveSettings,
   settingsToQuery,
-  ROLE_SCENARIOS,
   type TutorSettings,
 } from "./tutorSettings";
 import { IconButton as DSIconButton } from "./ds-react/IconButton";
@@ -1224,9 +1223,8 @@ export default function App({ onExit, course }: AppProps = {}) {
   const isChatMode = settings.mode === "chat";
 
   useLucide(`${appState}-${settingsOpen}-${progressOpen}-${wordsOpen}-${subscribeOpen}-${isChatMode}-${conversationStarted}`);
-  const scenario = course?.conversation || ROLE_SCENARIOS[settings.role];
-  const conversationTitle = !course && settings.role === "custom" && settings.roleCustom.trim()
-    ? settings.roleCustom.trim() : scenario.title;
+  const scenario = course?.conversation;
+  const conversationTitle = scenario?.title || 'Разговор в уроке';
   const lessonBudgetReached = !!course && lockState === 'limit_reached' && limits?.scope === 'lesson';
   const courseTurns = (course?.conversation?.turns || 0) + dialogLog.filter(entry => entry.role === 'user').length;
 
@@ -1245,7 +1243,7 @@ export default function App({ onExit, course }: AppProps = {}) {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="tutor-app tutor-app--with-topic">
+    <div className={`tutor-app${course ? ' tutor-app--with-topic' : ''}`}>
       {/* Декоративный фон — статичные градиентные пятна */}
       <div className="bg-orb bg-orb--one" aria-hidden />
       <div className="bg-orb bg-orb--two" aria-hidden />
@@ -1282,22 +1280,22 @@ export default function App({ onExit, course }: AppProps = {}) {
         </div>
       </header>
 
-      <aside className="conversation-topic" aria-label="Тема разговора">
-        <span className="conversation-topic__eyebrow">{course ? "Практика в уроке" : "Тема разговора"} · {settings.level}</span>
+      {course && <aside className="conversation-topic" aria-label="Тема разговора">
+        <span className="conversation-topic__eyebrow">Практика в уроке · {settings.level}</span>
         <h2>{conversationTitle}</h2>
-        {conversationStarted && <p>{scenario.objective}</p>}
-      </aside>
+        {conversationStarted && scenario?.objective && <p>{scenario.objective}</p>}
+      </aside>}
 
       {/* Лог диалога — всегда одинакового размера */}
       <section className="tutor-log" ref={logRef} aria-live="polite">
-        {!conversationStarted ? (
+        {!conversationStarted && course ? (
           <div className="conversation-intro">
             <h3>Твоя задача</h3>
-            <p>{scenario.objective}</p>
+            <p>{scenario?.objective}</p>
             {course?.conversation?.prompts.length ? <>
               <h3>О чём поговорим</h3>
               <ul lang="en">{course.conversation.prompts.map((prompt, i) => <li key={i}>{prompt}</li>)}</ul>
-            </> : <p className="conversation-intro__hint">Собеседника, уровень и режим можно выбрать в настройках.</p>}
+            </> : null}
             {course && <p className="conversation-intro__hint">Ответь минимум три раза, затем нажми «Завершить», чтобы перейти к итогу урока.</p>}
             {course && <p className="conversation-intro__hint">Время этого разговора учитывается отдельно от самостоятельной практики.</p>}
           </div>
@@ -1308,7 +1306,9 @@ export default function App({ onExit, course }: AppProps = {}) {
             </div>
             <p className="tutor-log__empty-title">Поболтаем по-английски?</p>
             <p className="tutor-log__empty-hint">
-              {isChatMode
+              {!conversationStarted
+                ? "Выбери собеседника и режим в настройках, затем нажми «Начать разговор»."
+                : isChatMode
                 ? "Напиши сообщение внизу и нажми «Отправить»."
                 : "Зажми кнопку внизу, скажи фразу и отпусти — я отвечу."}
             </p>

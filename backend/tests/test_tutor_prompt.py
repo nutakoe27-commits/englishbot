@@ -11,7 +11,7 @@ class TutorPromptTests(unittest.TestCase):
         })
         self.assertEqual(settings.level, 'A1')
         self.assertIsNone(settings.lesson_context)
-        self.assertEqual(build_greeting(settings), 'Hi! How is your day?')
+        self.assertEqual(build_greeting(settings), 'Hi! What do you want to talk about?')
 
     def test_standalone_role_still_sets_the_situation(self):
         settings = SessionSettings.from_query({'role': 'barista', 'level': 'A1'})

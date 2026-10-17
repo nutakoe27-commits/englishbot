@@ -10,6 +10,14 @@ let browser;
 before(async()=>{browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});if(SHOTS)await fs.mkdir(SHOTS,{recursive:true});});
 after(async()=>{await browser?.close();});
 const copy=x=>JSON.parse(JSON.stringify(x));
+async function assertHeaderFits(page){
+ assert.equal(await page.locator('.mode-v2-top').evaluate(header=>{
+  const bounds=header.getBoundingClientRect();
+  const items=[...header.children].filter(el=>el.getClientRects().length).map(el=>el.getBoundingClientRect());
+  return items.every(rect=>rect.left>=bounds.left-1 && rect.right<=bounds.right+1) &&
+   items.every((rect,i)=>items.slice(i+1).every(other=>rect.right<=other.left+1 || other.right<=rect.left+1 || rect.bottom<=other.top+1 || other.bottom<=rect.top+1));
+ }),true,'header title and controls must fit without overlapping');
+}
 function lesson(){return {id:'lesson-one',status:'prepared',step_index:0,used_seconds:0,activity_token:'active-one',modules:{},conversation:[],result:null,listening_text_mode:false,
  content:{engine:'modules',spec:{ordinal:1,cycle:1,position:1,level:'A1',topic_key:'a1_to_be',title:'Знакомимся',objective:'представиться и узнать о собеседнике',kind:'new',estimated_minutes:18},
  warmup:[],theory:'',practice:[],listening:{script:'',questions:[]},conversation:{objective:'представиться и узнать о собеседнике',opening:'Hello! What is your name?',prompts:['Hello! What is your name?','Where are you from?','What do you like doing?']},words:[{word:'name',translation:'имя'},{word:'city',translation:'город'}]}};}
@@ -31,7 +39,7 @@ async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFi
   if(entryMode==='learning')assert.equal(params.learning_lesson_id,row.id);
   else assert.equal(params.learning_lesson_id,undefined);
   ws.send(JSON.stringify({type:'limits',scope:entryMode==='learning'?'lesson':'standalone',has_subscription:access().full_access,free_seconds_per_day:300,used_seconds_today:0,remaining_seconds:access().full_access?-1:300,resets_at:access().resets_at}));
-  ws.send(JSON.stringify({type:'text',role:'tutor',text:entryMode==='learning' ? row.content.conversation.opening : params.role==='barista' ? 'Hey, what can I get you?' : 'Hi! How is your day?'}));
+  ws.send(JSON.stringify({type:'text',role:'tutor',text:entryMode==='learning' ? row.content.conversation.opening : params.role==='barista' ? 'Hey, what can I get you?' : 'Hi! What do you want to talk about?'}));
   ws.onMessage(raw=>{const data=JSON.parse(String(raw));if(data.type==='user_text'){turns++;if(process.env.LEARNING_DEBUG)console.log('WS USER TURN',turns);ws.send(JSON.stringify({type:'text',role:'tutor',text:'Tell me more about your city.'}));if(limitAfterTurns!==null && turns>=limitAfterTurns){row.modules.conversation={completed:turns>=3,turns};ws.send(JSON.stringify({type:'limit_reached',scope:'lesson',remaining_seconds:0,free_seconds_per_day:300,used_seconds_today:300,resets_at:access().resets_at}));ws.close({code:4004,reason:'Daily limit reached'});}}});
   ws.onClose(()=>{row.modules.conversation={completed:turns>=3,turns};});
  });
@@ -231,7 +239,9 @@ if(APP)test('standalone listening still offers settings and waits for manual gen
 
 if(APP)for(const width of [320,390,430,768])test(`conversation settings fit all five CEFR levels at ${width}px`,async t=>{
  const f=await fixture(t,{entryMode:'speaking',width});
- await f.page.getByRole('heading',{name:'Повседневная жизнь',exact:true}).waitFor();
+ await f.page.getByRole('button',{name:'Начать разговор',exact:true}).waitFor();
+ await assertHeaderFits(f.page);
+ assert.equal(await f.page.locator('.conversation-topic,.conversation-intro').count(),0);
  assert.equal(f.connections.length,0);
  await f.page.getByRole('button',{name:'Настройки',exact:true}).click();
  const modal=f.page.getByRole('dialog',{name:'Настройки разговора'});
@@ -251,17 +261,20 @@ if(APP)for(const width of [320,390,430,768])test(`conversation settings fit all 
  assert.equal(await levels.getByRole('button',{name:'C1 Продвинутый',exact:true}).getAttribute('aria-pressed'),'true');
  await modal.getByRole('button',{name:'Применить',exact:true}).click();
  assert.equal(f.connections.length,0,'editing settings before start must not connect');
- assert.match(await f.page.getByRole('complementary',{name:'Тема разговора'}).textContent(),/C1/);
+ assert.equal(await f.page.locator('.conversation-topic').count(),0);
+ assert.equal(await f.page.evaluate(()=>JSON.parse(localStorage.getItem('englishbot.tutorSettings.v1')).level),'C1');
  await f.page.getByRole('button',{name:'Настройки',exact:true}).click();
  await modal.getByRole('group',{name:'Уровень английского'}).getByRole('button',{name:'A1 Начальный',exact:true}).click();
  await modal.getByRole('button',{name:'Бариста',exact:false}).click();
  await modal.getByRole('button',{name:'Применить',exact:true}).click();
- await f.page.getByRole('heading',{name:'Заказываем в кафе',exact:true}).waitFor();
+ assert.equal(await f.page.locator('.conversation-topic,.conversation-intro').count(),0);
  assert.equal(f.connections.length,0);
  await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
  await f.page.getByRole('textbox',{name:'Сообщение',exact:true}).waitFor();
  await f.page.waitForFunction(()=>document.querySelector('.msg--tutor'));
  assert.equal(f.connections.length,1);assert.equal(f.connections[0].level,'A1');assert.equal(f.connections[0].role,'barista');
+ assert.equal(await f.page.locator('.conversation-topic,.conversation-intro').count(),0);
+ assert.equal(await f.page.locator('.tutor-app--with-topic').count(),0);
  await shot(f.page,'standalone-conversation');
 });
 if(APP)test('settings keep their footer reachable on a short screen and cancel discards draft',async t=>{
@@ -411,4 +424,42 @@ for(const answers of [1,3])test(`lesson time limit saves ${answers} replies and 
   await popup.getByRole('button',{name:'К программе',exact:true}).click();
   await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).waitFor();
  }
+});
+
+
+if(APP)for(const width of [320,390,430,768])test(`podcast settings fit all five levels at ${width}px`,async t=>{
+ const f=await fixture(t,{entryMode:'listening',width});
+ const levels=f.page.getByRole('group',{name:'Уровень подкаста'});
+ await assertHeaderFits(f.page);
+ assert.equal(await levels.getByRole('button').count(),5);
+ assert.equal(await levels.evaluate(el=>{
+  const bounds=el.getBoundingClientRect();
+  return [...el.querySelectorAll('button')].every(button=>{
+   const rect=button.getBoundingClientRect();const hint=button.querySelector('.lst-chip__sub');
+   return rect.left>=bounds.left-1 && rect.right<=bounds.right+1 && button.scrollWidth<=button.clientWidth+1 && hint.scrollWidth<=hint.clientWidth+1;
+  }) && bounds.right<=innerWidth+1 && document.documentElement.scrollWidth<=innerWidth;
+ }),true,'level chips and their labels must fit without clipping');
+ const columns=await levels.evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length);
+ assert(columns>=2 && columns<=3,'mobile level choices must wrap into readable rows');
+ await levels.getByRole('button',{name:'A1 Начальный',exact:true}).click();
+ assert.equal(await levels.getByRole('button',{name:'A1 Начальный',exact:true}).getAttribute('aria-pressed'),'true');
+ await shot(f.page,'podcast-levels');
+ await levels.getByRole('button',{name:'C1 Продвинутый',exact:true}).click();
+ assert.equal(await levels.getByRole('button',{name:'C1 Продвинутый',exact:true}).getAttribute('aria-pressed'),'true');
+ await f.page.getByRole('button',{name:'Сгенерировать подкаст',exact:true}).click();await f.page.locator('audio').waitFor();
+ assert.equal(f.calls.find(c=>c.key==='/api/listening/generate').body.level,'C1');
+});
+if(APP)test('standalone tutor starts without a preset conversation topic',async t=>{
+ const f=await fixture(t,{entryMode:'speaking',width:320});
+ assert.equal(await f.page.locator('.conversation-topic,.conversation-intro').count(),0);
+ await shot(f.page,'standalone-before-start');
+ await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
+ await f.page.locator('.msg--tutor').filter({hasText:'Hi! What do you want to talk about?'}).waitFor();
+ assert.equal(await f.page.getByRole('complementary',{name:'Тема разговора'}).count(),0);
+ assert.equal(f.connections[0].learning_lesson_id,undefined);
+ assert.equal(await f.page.evaluate(()=>{
+  const nav=document.querySelector('.bnav').getBoundingClientRect();const controls=document.querySelector('.tutor-controls').getBoundingClientRect();
+  return controls.bottom<=nav.top+1 && controls.right<=innerWidth+1;
+ }),true);
+ await shot(f.page,'standalone-without-topic');
 });

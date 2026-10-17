@@ -40,13 +40,14 @@ export function ListeningSettingsPanel({ value, onChange }: Props) {
       {/* Уровень */}
       <section className="lst-section">
         <h3 className="lst-section__title">Уровень</h3>
-        <div className="lst-chips lst-chips--grid" style={{ "--cols": LEVEL_OPTIONS.length } as React.CSSProperties}>
+        <div className="lst-chips lst-chips--grid lst-chips--levels" role="group" aria-label="Уровень подкаста">
           {LEVEL_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               type="button"
               className="lst-chip lst-chip--level"
               data-active={value.level === opt.value ? "true" : "false"}
+              aria-pressed={value.level === opt.value}
               onClick={() => onChange({ ...value, level: opt.value })}
               title={opt.hint}
             >
