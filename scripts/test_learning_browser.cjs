@@ -411,7 +411,11 @@ test('the trial card shows the actual server expiry and full access',async t=>{
  await shot(f.page,'access-trial');
 });
 test('course access refreshes when returning after the daily reset',async t=>{
- const f=await fixture(t,{accessKind:'exhausted'});f.newDay();
+ const f=await fixture(t,{accessKind:'exhausted'});
+ // The page title precedes the async overview. Wait for the initial access
+ // state before simulating the next day and its foreground event.
+ await f.page.getByText('Новые уроки на сегодня закончились',{exact:true}).waitFor();
+ f.newDay();
  await f.page.evaluate(()=>window.dispatchEvent(new Event('focus')));
  await f.page.getByText('Твой бесплатный урок на сегодня',{exact:true}).waitFor();
  await f.page.getByRole('button',{name:'Начать урок →',exact:true}).waitFor();

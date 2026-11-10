@@ -12,6 +12,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 ROOT=Path(__file__).resolve().parents[2]
+MIGRATION_COUNT=len(list((ROOT/'db/migrations').glob('*.sql')))
 spec=importlib.util.spec_from_file_location('migrate_database',ROOT/'scripts/migrate_database.py')
 migrations=importlib.util.module_from_spec(spec); spec.loader.exec_module(migrations)
 URL=os.environ.get('MIGRATION_TEST_DATABASE_URL','')
@@ -72,14 +73,14 @@ class MigrationIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await connection.scalar(text('SELECT mode FROM sessions WHERE user_id=:uid'),{'uid':self.uid}),'lesson')
             self.assertEqual(await connection.scalar(text('SELECT provider FROM user_identities WHERE user_id=:uid'),{'uid':self.uid}),'google')
             self.assertEqual(await connection.scalar(text("SELECT value FROM settings_kv WHERE `key`='free_seconds_per_day'")),'777')
-            self.assertEqual(await connection.scalar(text('SELECT COUNT(*) FROM schema_version')),44)
+            self.assertEqual(await connection.scalar(text('SELECT COUNT(*) FROM schema_version')),MIGRATION_COUNT)
 
     async def test_read_only_check_and_repair_real_history_gaps(self):
         async with self.engine.begin() as connection:
             await connection.execute(text('DELETE FROM schema_version WHERE version IN (8,10,13,15,17,18,21,23,24,35,43,44)'))
         await migrations.run(ROOT/'db/migrations',self.url.database,self.url.username,False,ROOT/'backend')
         async with self.engine.connect() as connection:
-            self.assertEqual(await connection.scalar(text('SELECT COUNT(*) FROM schema_version')),32)
+            self.assertEqual(await connection.scalar(text('SELECT COUNT(*) FROM schema_version')),MIGRATION_COUNT-12)
         await migrations.run(ROOT/'db/migrations',self.url.database,self.url.username,True,ROOT/'backend')
         await self.preserved()
         await migrations.run(ROOT/'db/migrations',self.url.database,self.url.username,True,ROOT/'backend')
@@ -95,6 +96,23 @@ class MigrationIntegrationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError,'does not match'):
             await migrations.run(ROOT/'db/migrations','wrong_database',self.url.username,True,ROOT/'backend')
         await self.preserved()
+
+    async def test_subscription_feedback_and_admin_promo_settings_survive_replay(self):
+        key=str(uuid4())
+        async with self.engine.begin() as connection:
+            await connection.execute(text("INSERT INTO subscription_offer_impressions(id,user_id,audience,shown_at) VALUES(:key,:uid,'trial_expired',UTC_TIMESTAMP(6))"),{'key':key,'uid':self.uid})
+            await connection.execute(text("INSERT INTO subscription_offer_state(user_id,first_shown_at,last_shown_at,reason_code,answered_at,answer_impression_id) VALUES(:uid,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),'other',UTC_TIMESTAMP(6),:key)"),{'uid':self.uid,'key':key})
+            await connection.execute(text("UPDATE promo_codes SET active=0,discount_percent=37 WHERE code='OLD50'"))
+            await connection.execute(text('DELETE FROM schema_version WHERE version=45'))
+        try:
+            await migrations.run(ROOT/'db/migrations',self.url.database,self.url.username,True,ROOT/'backend')
+            async with self.engine.connect() as connection:
+                self.assertEqual(await connection.scalar(text('SELECT reason_code FROM subscription_offer_state WHERE user_id=:uid'),{'uid':self.uid}),'other')
+                self.assertEqual((await connection.execute(text("SELECT active,discount_percent FROM promo_codes WHERE code='OLD50'"))).one(),(0,37))
+            await self.preserved()
+        finally:
+            async with self.engine.begin() as connection:
+                await connection.execute(text("UPDATE promo_codes SET active=1,discount_percent=50 WHERE code='OLD50'"))
 
     async def test_course_bindings_are_backfilled_and_migration_can_be_replayed(self):
         key=str(uuid4())

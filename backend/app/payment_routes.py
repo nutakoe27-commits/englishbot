@@ -20,6 +20,8 @@ Telegram-бот живёт параллельно (Telegram Payments + provider_
 
 from __future__ import annotations
 
+from decimal import Decimal, ROUND_HALF_UP
+
 import asyncio
 import logging
 from typing import Optional
@@ -201,7 +203,10 @@ async def create_payment(
             if await repo.promo_used_by_user(promo_code_norm, user.id):
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "promo_already_used")
             promo_pct = int(promo.discount_percent)
-            final_amount = max(1, round(int(info["amount_rub"]) * (100 - promo_pct) / 100))
+            # Match the price shown by SubscribeScreen (Math.round), including
+            # half-ruble results introduced by OLD50 and custom plan prices.
+            discounted = Decimal(int(info["amount_rub"])) * Decimal(100 - promo_pct) / Decimal(100)
+            final_amount = max(1, int(discounted.quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
 
         # Email для чека: приоритет — переданный в body (свежий ввод от юзера),
         # потом users.email. Если фискализация включена и email нигде нет — 400.

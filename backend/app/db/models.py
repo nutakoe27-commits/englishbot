@@ -97,6 +97,34 @@ class User(Base):
     source_link_id: Mapped[Optional[int]] = mapped_column(BigInteger)
 
 
+class SubscriptionOfferState(Base):
+    """Account-wide cooldown and the single saved subscription feedback answer."""
+
+    __tablename__ = "subscription_offer_state"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    first_shown_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_shown_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    reason_code: Mapped[Optional[str]] = mapped_column(String(40))
+    answered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
+    answer_impression_id: Mapped[Optional[str]] = mapped_column(String(36))
+
+
+class SubscriptionOfferImpression(Base):
+    __tablename__ = "subscription_offer_impressions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    audience: Mapped[str] = mapped_column(String(24), nullable=False)
+    payment_cursor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    shown_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    declined_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    clicked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    initial_clicked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    followup_clicked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
 class UserIdentity(Base):
     """Личность пользователя у внешнего провайдера (миграция 0020).
 

@@ -145,6 +145,9 @@ Backend обращается к ним по `host.docker.internal:<порт>` (�
 
 ---
 
+Инструкция по предложениям подписки, опросу и аналитике:
+[`docs/subscription-offers.md`](docs/subscription-offers.md).
+
 ## База данных
 
 MySQL 8 на хосте VPS. Миграции — обычные SQL-файлы в `db/migrations/`,

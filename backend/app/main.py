@@ -36,6 +36,7 @@ from .listening import router as listening_router
 from .srs import router as srs_router
 from .tts import router as tts_router
 from .learning import router as learning_router, preparation_loop, maintenance_loop
+from .subscription_offers import router as subscription_offer_router, admin_router as subscription_offer_admin_router
 from .auth import resolve_user
 from .config import settings
 from .db import db_session, init_db
@@ -174,6 +175,8 @@ app.include_router(grammar_router)
 app.include_router(srs_router)
 app.include_router(tts_router)
 app.include_router(learning_router)
+app.include_router(subscription_offer_router)
+app.include_router(subscription_offer_admin_router)
 
 
 @app.get("/health", tags=["System"])

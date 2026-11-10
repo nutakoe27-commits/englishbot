@@ -49,6 +49,7 @@ import {
   userFullName,
 } from "./ui";
 import { useIsMobile } from "./useIsMobile";
+import { SubscriptionOffersPage } from "./SubscriptionOffersPage";
 
 // На узких экранах делаем саму таблицу горизонтально прокручиваемой
 // (display:block + overflow-x), чтобы колонки не сжимались до нечитаемости.
@@ -237,6 +238,8 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     view = <UsersList />;
   } else if (route === "/payments") {
     view = <PaymentsPage />;
+  } else if (route === "/subscription-offers") {
+    view = <SubscriptionOffersPage onUser={id => navigate(`/user/${id}`)} />;
   } else if (route === "/promo") {
     view = <PromosPage />;
   } else if (route === "/orgs") {
@@ -301,12 +304,13 @@ function Shell({ onLogout }: { onLogout: () => void }) {
           )}
         </div>
         <nav
-          style={{ ...S.nav, ...(isMobile ? { gap: 6, flex: "none" } : {}) }}
+          style={{ ...S.nav, minWidth: 0, overflowX: "auto", ...(isMobile ? { gap: 6, flex: "none" } : {}) }}
           className={isMobile ? "adm-nav-scroll" : undefined}
         >
           {navBtn("/dashboard", "Метрики")}
           {navBtn("/users", "Пользователи")}
           {navBtn("/payments", "Платежи")}
+          {navBtn("/subscription-offers", "Опрос подписки")}
           {navBtn("/promo", "Промокоды")}
           {navBtn("/orgs", "Школы")}
           {navBtn("/referrals", "Рефералка")}

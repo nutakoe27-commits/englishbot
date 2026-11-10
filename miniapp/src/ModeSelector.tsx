@@ -17,6 +17,7 @@ import { TopBar } from "./ds-react/TopBar";
 import { LogoBox } from "./ds-react/LogoBox";
 import { SerifH } from "./ds-react/typography";
 import { CourseHomeCard } from "./LearningProgress";
+import { SubscriptionOffer } from "./SubscriptionOffer";
 
 export type Mode = "speaking" | "listening" | "grammar" | "srs" | "level" | "learning";
 
@@ -27,6 +28,9 @@ const API_BASE =
 interface Props {
   onPick: (mode: Mode) => void;
   onLoggedOut?: () => void;
+  suppressOffers?: boolean;
+  onOfferSubscribe?: (promo: string) => void;
+  onOfferAnswered?: (promo: string) => void;
 }
 
 interface MeStats {
@@ -37,7 +41,8 @@ interface MeStats {
   achievements_total: number;
 }
 
-export function ModeSelector({ onPick }: Props) {
+export function ModeSelector({ onPick, suppressOffers = false, onOfferSubscribe, onOfferAnswered }: Props) {
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [userName, setUserName] = useState<string>("there");
   const [stats, setStats] = useState<MeStats | null>(null);
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
@@ -101,6 +106,7 @@ export function ModeSelector({ onPick }: Props) {
     // Подтянем профиль: для веба — first_name; для всех — флаг tutorial_done.
     // Если онбординг ещё не пройден (новый юзер) — открываем модалку.
     void fetchMe().then((me) => {
+      setProfileLoaded(!!me);
       if (!user?.first_name && me?.first_name) setUserName(me.first_name);
       if (me && me.tutorial_done === false) {
         setOnboardingAuto(true);
@@ -284,6 +290,9 @@ export function ModeSelector({ onPick }: Props) {
         learning={learningEnabled}
         onStart={() => onPick(learningEnabled ? "learning" : "speaking")}
       />
+      {profileLoaded && !suppressOffers && !onboardingAuto && !onboardingManual && !progressOpen && !subscribeOpen && onOfferSubscribe && (
+        <SubscriptionOffer onSubscribe={onOfferSubscribe} onAnswered={onOfferAnswered} />
+      )}
     </div>
   );
 }

@@ -48,6 +48,7 @@ import { BottomNav } from "./BottomNav";
 import { AccountSheet } from "./AccountSheet";
 import { LeaderboardScreen } from "./LeaderboardScreen";
 import { SubscribeScreen } from "./SubscribeScreen";
+import { SubscriptionOffer } from "./SubscriptionOffer";
 import { OnboardingModal } from "./OnboardingModal";
 import type { TabKey } from "./tabs";
 import {
@@ -141,12 +142,10 @@ const SCHOOLS_INTENT_KEY = "et_schools_intent";
  */
 const PAY_INTENT_KEY = "et_pay_intent";
 
-/** Прочитать и погасить намерение — оно одноразовое. */
-function consumePayIntent(): boolean {
+/** Read without mutation: StrictMode may invoke state initializers twice. */
+function readPayIntent(): boolean {
   try {
-    if (localStorage.getItem(PAY_INTENT_KEY) !== "1") return false;
-    localStorage.removeItem(PAY_INTENT_KEY);
-    return true;
+    return localStorage.getItem(PAY_INTENT_KEY) === "1";
   } catch {
     return false;
   }
@@ -194,11 +193,6 @@ function Root() {
     try {
       const p = new URLSearchParams(window.location.search);
       const v = (p.get("promo") || "").trim();
-      if (v) {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("promo");
-        window.history.replaceState(null, "", url.pathname + (url.search || "") + url.hash);
-      }
       return v;
     } catch { return ""; }
   });
@@ -209,12 +203,16 @@ function Root() {
     try {
       const p = new URLSearchParams(window.location.search);
       if (p.get("subscribe") !== "1") return false;
-      const url = new URL(window.location.href);
-      url.searchParams.delete("subscribe");
-      window.history.replaceState(null, "", url.pathname + (url.search || "") + url.hash);
       return true;
     } catch { return false; }
   });
+  useEffect(() => {
+    if (!promoParam && !subscribeParam) return;
+    const url = new URL(window.location.href);
+    if (promoParam) url.searchParams.delete("promo");
+    if (subscribeParam) url.searchParams.delete("subscribe");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+  }, [promoParam, subscribeParam]);
   // B2B deep-link: ?school=CODE — после входа подключаем юзера к школе.
   // Код дублируем в localStorage: вход через Яндекс OAuth делает полный
   // redirect с сайта и обратно — query и React-state теряются, а код
@@ -438,9 +436,14 @@ function TabShell({
   const [subscribeOpen, setSubscribeOpen] = useState<boolean>(
     () => !!(initialPromo && initialPromo.trim())
       || !!initialSubscribe
-      || consumePayIntent(),
+      || readPayIntent(),
   );
+  useEffect(() => {
+    try { localStorage.removeItem(PAY_INTENT_KEY); } catch { /* private mode */ }
+  }, []);
   const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
+  const [subscriptionPromo, setSubscriptionPromo] = useState(initialPromo);
+  const [skipEntryOffer] = useState(subscribeOpen || !!initialSchool);
   // B2B: ?school=CODE — подключаем к школе и показываем результат тостом.
   const [orgToast, setOrgToast] = useState<string>("");
 
@@ -503,6 +506,9 @@ function TabShell({
   } else if (tab === "home") {
     body = (
       <ModeSelector
+        suppressOffers={skipEntryOffer || subscribeOpen || onboardingManual}
+        onOfferSubscribe={(promo) => { setSubscriptionPromo(promo); setSubscribeOpen(true); }}
+        onOfferAnswered={setSubscriptionPromo}
         onPick={(m) => {
           if (m === "srs") { setTab("words"); return; }
           setMode(m);
@@ -550,7 +556,7 @@ function TabShell({
       <BottomNav active={activeForNav as TabKey} onChange={switchTab} />
       {subscribeOpen && (
         <SubscribeScreen
-          initialPromoCode={initialPromo}
+          initialPromoCode={subscriptionPromo}
           onClose={() => setSubscribeOpen(false)}
         />
       )}
@@ -560,6 +566,9 @@ function TabShell({
           markDoneOnFinish={false}
           onClose={() => setOnboardingManual(false)}
         />
+      )}
+      {!!(initialMode || (initialTab && initialTab !== "home")) && !skipEntryOffer && !subscribeOpen && !onboardingManual && (
+        <SubscriptionOffer onSubscribe={promo => { setSubscriptionPromo(promo); setSubscribeOpen(true); }} onAnswered={setSubscriptionPromo} />
       )}
     </div>
   );

@@ -16,30 +16,69 @@
  * привычного поведения.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { isAppMode } from "./appMode";
 
-interface GuardState {
-  etGuard: number;
+interface Guard { id: string; onBack: () => void; pushed: boolean }
+const guards: Guard[] = [];
+const retired = new Set<string>();
+let sequence = 0;
+let pendingBack = false;
+let listening = false;
+
+function currentMarker(): string | undefined {
+  return (window.history.state as { etGuard?: string } | null)?.etGuard;
+}
+
+function flushHistory(): void {
+  if (pendingBack) return;
+  const marker = currentMarker();
+  if (marker && retired.has(marker)) {
+    pendingBack = true;
+    window.history.back();
+    return;
+  }
+  // A close followed by opening another modal must finish its asynchronous
+  // history.back() before the replacement guard pushes its own entry.
+  for (const guard of guards) {
+    if (!guard.pushed) {
+      window.history.pushState({ etGuard: guard.id }, "");
+      guard.pushed = true;
+    }
+  }
+}
+
+function onPop(): void {
+  if (pendingBack) {
+    pendingBack = false;
+    flushHistory();
+    return;
+  }
+  const top = guards[guards.length - 1];
+  if (top?.pushed && currentMarker() !== top.id) {
+    guards.pop();
+    retired.add(top.id);
+    top.onBack();
+  }
+  flushHistory();
 }
 
 export function useBackGuard(active: boolean, onBack: () => void): void {
+  const callback = useRef(onBack);
+  callback.current = onBack;
   useEffect(() => {
     if (!active || !isAppMode() || typeof window === "undefined") return;
-
-    const marker: GuardState = { etGuard: Date.now() + Math.random() };
-    window.history.pushState(marker, "");
-
-    const onPop = () => { onBack(); };
-    window.addEventListener("popstate", onPop);
+    if (!listening) { window.addEventListener("popstate", onPop); listening = true; }
+    const guard: Guard = { id: `${Date.now()}-${++sequence}`, onBack: () => callback.current(), pushed: false };
+    guards.push(guard);
+    flushHistory();
 
     return () => {
-      window.removeEventListener("popstate", onPop);
-      // Экран закрыли не «Назад», а изнутри — снимаем свою запись, чтобы
-      // история не копила пустышки. Слушателя уже нет, так что этот
-      // history.back() ничего не запустит по второму кругу.
-      const cur = window.history.state as GuardState | null;
-      if (cur && cur.etGuard === marker.etGuard) window.history.back();
+      const index = guards.indexOf(guard);
+      if (index < 0) return; // Already consumed by the hardware Back button.
+      guards.splice(index, 1);
+      if (guard.pushed) retired.add(guard.id);
+      flushHistory();
     };
-  }, [active, onBack]);
+  }, [active]);
 }
