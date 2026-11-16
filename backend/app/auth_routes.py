@@ -593,7 +593,8 @@ async def auth_me(authorization: Optional[str] = Header(None)) -> dict:
         repo = Repo(session)
         user = await auth_lib.resolve_user(repo, authorization=authorization)
         identities = await repo.list_identities(user.id)
-        has_sub = await repo.has_active_subscription(user)
+        from .learning_access import full_access
+        has_sub = await full_access(repo, user)
         org_mem = await repo.user_org_membership(user.id)
     out = _user_summary(user, identities)
     out["has_subscription"] = has_sub

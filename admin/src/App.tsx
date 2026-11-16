@@ -1146,13 +1146,6 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
               tone="muted"
             />
           )}
-          {u.trial_active && (
-            <StatusPill
-              label="Приветственные дни"
-              value={u.trial_until ? `до ${fmtDate(u.trial_until)}` : "активны"}
-              tone="success"
-            />
-          )}
           <StatusPill
             label="Блокировка"
             value={u.is_blocked ? "заблокирован" : "активен"}
@@ -1160,9 +1153,7 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
           />
           <StatusPill
             label="Сегодня"
-            value={`${fmtSeconds(u.used_seconds_today)} / ${fmtSeconds(
-              u.free_seconds_per_day
-            )}`}
+            value={fmtSeconds(u.used_seconds_today)}
             tone="muted"
           />
           <StatusPill

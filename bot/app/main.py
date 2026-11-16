@@ -63,7 +63,7 @@ FREE_PERIOD: bool = os.getenv("FREE_PERIOD", "0") == "1"
 
 # Приветственный полный доступ новичкам (миграция 0033). Значение должно
 # совпадать с backend'ом: права выдаёт он, а тексты пишем мы.
-FREE_TRIAL_DAYS: int = int(os.getenv("FREE_TRIAL_DAYS", "1") or 0)
+FREE_TRIAL_DAYS: int = 0  # Welcome days retired, including stale environment values.
 
 FREE_PERIOD_TEXT = (
     "🎁 <b>Сейчас всё бесплатно!</b>\n\n"
@@ -659,12 +659,12 @@ async def _send_welcome(message: Message) -> None:
             f"Привет, {user_name}! 👋\n\n"
             "Я — AI-репетитор английского. Со мной можно <b>говорить вслух</b>: "
             "я пойму, отвечу и объясню ошибки по-русски.\n\n"
-            f"✨ <b>{_trial_phrase()} — полный доступ без ограничений</b>: "
-            "разговор, подкасты под твой уровень, грамматика A1–C1 и словарь. "
-            "Карта не нужна.\n\n"
-            "Настраивать ничего не надо — жми кнопку и скажи первую фразу, "
-            "хоть «hello, how are you». Пять минут, и станет понятно, твоё это "
-            "или нет."
+            "✨ <b>Первый полный урок бесплатно</b>: грамматика, работа над ошибками, "
+            "слова с озвучкой, подкаст и разговор. Карту привязывать не нужно.\n\n"
+            "Открой программу и пройди первый урок в своём темпе. "
+            "Дальше — 7 дней за 1 ₽ при первом подключении, затем месячная подписка "
+            "с автопродлением. Условия и цена продления — перед оплатой."
+
         ),
         parse_mode="HTML",
         reply_markup=_miniapp_keyboard(),
@@ -836,13 +836,6 @@ def _pluralize_days(n: int) -> str:
     return "дней"
 
 
-def _trial_phrase() -> str:
-    """«Первые сутки» / «Ближайшие 3 дня» — без корявого «Ближайшие 1 день»."""
-    if FREE_TRIAL_DAYS == 1:
-        return "Первые сутки"
-    return f"Ближайшие {FREE_TRIAL_DAYS} {_pluralize_days(FREE_TRIAL_DAYS)}"
-
-
 def _profile_keyboard(has_sub: bool) -> InlineKeyboardMarkup:
     rows = [
         [
@@ -934,7 +927,7 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
             if days > 0:
                 lines.append(f"Осталось: <b>{days}</b> дн.")
         else:
-            lines.append("Free — бесплатный тариф")
+            lines.append("Первый урок — бесплатно, дальнейшие занятия — по подписке")
     lines.append("")
 
     # Сегодня
@@ -945,34 +938,9 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
     if FREE_PERIOD or profile["has_subscription"] or org_name:
         lines.append(f"Практика: <b>{_fmt_minutes(used_today)}</b> — без лимитов")
     else:
-        free_speaking = int(profile.get("free_seconds_per_day") or FREE_DAILY_SECONDS)
-        free_listening = int(profile.get("free_listening_per_day") or 1)
-        free_grammar = int(profile.get("free_grammar_per_day") or 1)
-        limit_min = free_speaking // 60
-        total_limit = free_speaking + bonus_today
-        left_sec = max(0, total_limit - speaking_today)
-        if bonus_today > 0:
-            lines.append(
-                f"🗣 Разговор: <b>{_fmt_minutes(speaking_today)}</b> из "
-                f"{limit_min} мин + бонус <b>{_fmt_minutes(bonus_today)}</b>"
-            )
-        else:
-            lines.append(
-                f"🗣 Разговор: <b>{_fmt_minutes(speaking_today)}</b> из {limit_min} мин"
-            )
-        if left_sec > 0:
-            lines.append(
-                f"Осталось разговора: <b>{_fmt_minutes(left_sec)}</b> (сброс в 00:00 МСК)"
-            )
-        else:
-            lines.append(
-                "Лимит разговора исчерпан — продолжи завтра или оформи подписку."
-            )
-        lines.append(
-            f"🎧 Слушание: <b>{free_listening}</b>/день · "
-            f"📝 грамматика: <b>{free_grammar}</b>/день · "
-            "📚 слова — <b>без лимита</b>"
-        )
+        lines.append(f"Практика: <b>{_fmt_minutes(used_today)}</b>")
+        lines.append("Первый полный урок доступен бесплатно один раз на аккаунт. "
+                     "Следующие уроки и отдельные тренажёры — по подписке.")
     lines.append("")
 
     # Всего практики

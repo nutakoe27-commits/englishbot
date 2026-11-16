@@ -3311,12 +3311,8 @@ class Repo:
 
     @staticmethod
     def free_trial_until(user) -> Optional[datetime]:
-        """Момент окончания welcome-триала. None — если триал отключён."""
-        from ..config import settings
-        days = int(getattr(settings, "FREE_TRIAL_DAYS", 0) or 0)
-        if days <= 0 or user is None or user.created_at is None:
-            return None
-        return user.created_at + timedelta(days=days)
+        """Compatibility for older clients: welcome days have been retired."""
+        return None
 
     @classmethod
     def in_free_trial(cls, user) -> bool:
@@ -3324,9 +3320,7 @@ class Repo:
         return until is not None and until > utcnow()
 
     async def has_full_access(self, user) -> bool:
-        """Полный доступ = активная подписка/место в школе ИЛИ welcome-триал."""
-        if self.in_free_trial(user):
-            return True
+        """Full access comes from a subscription or a school seat."""
         return await self.has_active_subscription(user)
 
     async def nudge_once(

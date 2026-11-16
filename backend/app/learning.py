@@ -55,6 +55,12 @@ async def profile(session, uid, lock=False):
 async def owned(session, cls, key, uid):
     row = await session.scalar(select(cls).where(cls.id==key,cls.user_id==uid).with_for_update())
     if row is None: raise HTTPException(404,'learning_not_found')
+    from .learning_access import require_lesson, require_standalone
+    account = await session.get(User, uid)
+    if cls is LearningLesson and row.status != 'completed':
+        await require_lesson(Repo(session), account, row)
+    elif cls is LearningCheckpoint:
+        await require_standalone(Repo(session), account)
     return row
 
 async def event(session,uid,key,name,params,iid=None):
@@ -264,7 +270,7 @@ async def start(key:str,body:Input,authorization:Optional[str]=Header(None)):
         if row.status=='prepared':
             access=await learning_access(Repo(session),account)
             if access['remaining_today'] == 0:
-                raise HTTPException(402,'lesson_limit_reached')
+                raise HTTPException(402,'subscription_required')
             activity=await Repo(session).open_session(user_id=account.id,mode='lesson',level=row.level,role=row.topic_key,learning_lesson_id=row.id)
             row.session_id=activity.id
             iid=mytracker.current_instance_id.get()
@@ -459,6 +465,8 @@ async def lesson_audio(key:str,init_data:str='',authorization:Optional[str]=Head
     async with db_session() as session:
         account=await user(session,authorization,init_data)
         row=await owned(session,LearningLesson,key,account.id)
+        from .learning_access import require_lesson
+        await require_lesson(Repo(session), account, row)
         script=row.content['listening']['script']; cache_key=row.id
     response=await audio(script,cache_key)
     async with db_session() as session:
@@ -580,6 +588,8 @@ def checkpoint_data(row):
 async def checkpoint_start(body:Input,authorization:Optional[str]=Header(None)):
     async with db_session() as session:
         account=await user(session,authorization,body.init_data)
+        from .learning_access import require_standalone
+        await require_standalone(Repo(session), account)
         p=await profile(session,account.id,True)
         if p.completed_count<p.checkpoint_count+20: raise HTTPException(409,'checkpoint_not_due')
         row=await session.scalar(select(LearningCheckpoint).where(LearningCheckpoint.user_id==account.id,

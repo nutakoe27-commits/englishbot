@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 
 interface TranslatePopoverProps {
   apiBase: string;
+  lessonId?: string;
   initData: string;
   word: string;
   context: string;
@@ -30,6 +31,7 @@ type AddState =
 
 export function TranslatePopover({
   apiBase,
+  lessonId,
   initData,
   word,
   context,
@@ -53,7 +55,7 @@ export function TranslatePopover({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          init_data: initData,
+          init_data: initData, learning_lesson_id: lessonId,
           word,
           translation: state.translations[0] ?? null,
         }),
@@ -86,7 +88,7 @@ export function TranslatePopover({
         const res = await fetch(`${apiBase}/api/translate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ init_data: initData, word, context }),
+          body: JSON.stringify({ init_data: initData, learning_lesson_id: lessonId, word, context }),
           signal: controller.signal,
         });
         if (!res.ok) {

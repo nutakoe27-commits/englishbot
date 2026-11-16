@@ -17,7 +17,7 @@ import { TopBar } from "./ds-react/TopBar";
 import { LogoBox } from "./ds-react/LogoBox";
 import { SerifH } from "./ds-react/typography";
 import { CourseHomeCard } from "./LearningProgress";
-import { SubscriptionOffer } from "./SubscriptionOffer";
+
 
 export type Mode = "speaking" | "listening" | "grammar" | "srs" | "level" | "learning";
 
@@ -28,9 +28,6 @@ const API_BASE =
 interface Props {
   onPick: (mode: Mode) => void;
   onLoggedOut?: () => void;
-  suppressOffers?: boolean;
-  onOfferSubscribe?: (promo: string) => void;
-  onOfferAnswered?: (promo: string) => void;
 }
 
 interface MeStats {
@@ -41,8 +38,7 @@ interface MeStats {
   achievements_total: number;
 }
 
-export function ModeSelector({ onPick, suppressOffers = false, onOfferSubscribe, onOfferAnswered }: Props) {
-  const [profileLoaded, setProfileLoaded] = useState(false);
+export function ModeSelector({ onPick }: Props) {
   const [userName, setUserName] = useState<string>("there");
   const [stats, setStats] = useState<MeStats | null>(null);
   const [progressOpen, setProgressOpen] = useState<boolean>(false);
@@ -51,10 +47,6 @@ export function ModeSelector({ onPick, suppressOffers = false, onOfferSubscribe,
   // manualOpen — юзер сам открыл через «Открыть гид» в Аккаунте (не помечаем).
   const [onboardingAuto, setOnboardingAuto] = useState<boolean>(false);
   const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
-  // Приветственные дни полного доступа (миграция 0033): показываем, сколько
-  // осталось. Человек должен знать, что у него есть — иначе потом нечего
-  // терять, а именно потеря и продаёт.
-  const [trialDaysLeft, setTrialDaysLeft] = useState<number | null>(null);
   // Уровень по тесту. null — тест ещё не проходили: показываем предложение,
   // а не сухую строчку. Для новичка это и есть первый осмысленный шаг.
   const [cefr, setCefr] = useState<string | null>(null);
@@ -106,19 +98,11 @@ export function ModeSelector({ onPick, suppressOffers = false, onOfferSubscribe,
     // Подтянем профиль: для веба — first_name; для всех — флаг tutorial_done.
     // Если онбординг ещё не пройден (новый юзер) — открываем модалку.
     void fetchMe().then((me) => {
-      setProfileLoaded(!!me);
       if (!user?.first_name && me?.first_name) setUserName(me.first_name);
       if (me && me.tutorial_done === false) {
         setOnboardingAuto(true);
       }
       setCefr(me?.cefr_level || null);
-      if (me?.trial_active && me.trial_until) {
-        const iso = me.trial_until.endsWith("Z") ? me.trial_until : me.trial_until + "Z";
-        const ms = Date.parse(iso) - Date.now();
-        setTrialDaysLeft(ms > 0 ? Math.max(1, Math.ceil(ms / 86400000)) : null);
-      } else {
-        setTrialDaysLeft(null);
-      }
     });
 
     // Статистика на главном экране — чтобы прогресс был виден сразу.
@@ -150,22 +134,6 @@ export function ModeSelector({ onPick, suppressOffers = false, onOfferSubscribe,
       <main className="mode-selector__main">
         <LevelProgressBar />
         <CourseHomeCard onOpen={() => onPick("learning")} onAvailability={setLearningEnabled} />
-        {trialDaysLeft !== null && (
-          <button
-            type="button"
-            className="ms-trial-banner"
-            onClick={() => setSubscribeOpen(true)}
-          >
-            <span className="ms-trial-banner__title">
-              ✨ Полный доступ ещё {trialDaysLeft}{" "}
-              {trialDaysLeft === 1 ? "день" : trialDaysLeft < 5 ? "дня" : "дней"}
-            </span>
-            <span className="ms-trial-banner__sub">
-              Все режимы без лимитов. Успей попробовать всё — потом останется
-              5 минут разговора в день.
-            </span>
-          </button>
-        )}
         <SerifH as="h1" size={32}>Что тренируем сегодня?</SerifH>
         <p className="mode-selector__subtitle">
           Выбери режим — слова и прогресс общие.
@@ -290,9 +258,7 @@ export function ModeSelector({ onPick, suppressOffers = false, onOfferSubscribe,
         learning={learningEnabled}
         onStart={() => onPick(learningEnabled ? "learning" : "speaking")}
       />
-      {profileLoaded && !suppressOffers && !onboardingAuto && !onboardingManual && !progressOpen && !subscribeOpen && onOfferSubscribe && (
-        <SubscriptionOffer onSubscribe={onOfferSubscribe} onAnswered={onOfferAnswered} />
-      )}
+
     </div>
   );
 }

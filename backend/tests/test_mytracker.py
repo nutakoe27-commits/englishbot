@@ -18,6 +18,7 @@ from app.auth import issue_jwt
 from app.config import settings
 from app.db import Repo, db_session
 from app.db.engine import db_engine, init_db
+from app.db.repo import utcnow
 from app.db.models import MytrackerEvent, MytrackerInstall, Payment, Session, User
 
 TEST_URL = os.environ.get("TEST_DATABASE_URL", "")
@@ -138,6 +139,8 @@ class FunnelTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(isinstance(v, str) for v in row.payload["customEventParams"].values()))
 
     async def test_rest_header_context_and_diagnostic_authentication(self):
+        async with db_session() as session:
+            (await session.get(User,self.uid)).subscription_until = utcnow() + timedelta(days=30)
         from app.main import app
         headers = {"Authorization": f"Bearer {issue_jwt(self.uid)}", "X-MyTracker-Instance-ID": self.iid}
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local.test", trust_env=False) as client:

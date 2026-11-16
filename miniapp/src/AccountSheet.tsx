@@ -646,8 +646,7 @@ function RecurringBlock({ subscriptionUntil }: { subscriptionUntil: string | nul
                 Автопродление остановится, а сохранённая карта будет отвязана —
                 списаний больше не будет. Полный доступ сохранится
                 {subscriptionUntil ? ` до ${_fmtSubUntil(subscriptionUntil)}` : " до конца оплаченного периода"},
-                потом — бесплатный тариф: 5 минут разговора в день, один подкаст
-                и один урок грамматики.
+                после этого для занятий потребуется подписка. Прогресс и результаты сохранятся.
               </span>
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                 <button type="button" className="acc-renew__btn acc-renew__btn--danger" disabled={busy} onClick={() => void act("cancel")}>

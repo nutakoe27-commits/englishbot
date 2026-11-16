@@ -13,13 +13,10 @@ from .admin import require_admin_token
 from .auth import resolve_user
 from .config import settings
 from .db import Repo, db_session
-from .db.models import Payment, Session, SubscriptionOfferImpression as Impression, SubscriptionOfferState as OfferState, User
+from .db.models import Payment, SubscriptionOfferImpression as Impression, SubscriptionOfferState as OfferState, User
 from .db.repo import utcnow
 
-PROMO_CODE = "SALE20"
-DISCOUNT_PERCENT = 20
-FOLLOWUP_PROMO_CODE = "OLD50"
-FOLLOWUP_DISCOUNT_PERCENT = 50
+CAMPAIGN = "intro_week"
 REASONS = {
     "price": "Для меня дорого",
     "time": "Не хватает времени заниматься",
@@ -49,12 +46,12 @@ class OfferRequest(BaseModel):
 
 class ClaimRequest(OfferRequest):
     request_id: UUID
+    trigger: Literal["entry", "access", "lesson_completed"] = "entry"
 
 
 class EventRequest(OfferRequest):
     impression_id: UUID
-    action: Literal["declined", "closed", "tariffs"]
-    promo_code: Literal["SALE20", "OLD50"] = PROMO_CODE
+    action: Literal["declined", "closed", "checkout"]
 
 
 class AnswerRequest(OfferRequest):
@@ -71,35 +68,36 @@ async def _locked_user(session, authorization, init_data):
     return await session.scalar(select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True))
 
 
-def _paid_subscription():
-    return (Payment.status.in_(("succeeded", "refunded")), Payment.amount_rub > 0,
-            Payment.plan.not_in(("gift", "admin_grant", "referral", "org")))
+async def _audience(session, user, trigger):
+    from .learning_access import full_access, access
+    from .payment_routes import intro_eligible
+    if user.is_blocked or await full_access(Repo(session), user):
+        return None
+    if trigger == "access":
+        return "access_required"
+    if not await intro_eligible(Repo(session), user):
+        return None
+    data = await access(Repo(session), user)
+    return "lesson_completed" if not data['free_lesson_available'] else None
 
 
-async def _audience(session, user, now):
-    repo = Repo(session)
-    if user.is_blocked or settings.FREE_PERIOD or Repo.in_free_trial(user) or await repo.has_active_subscription(user):
-        return None
-    if await session.scalar(select(Payment.id).where(Payment.user_id == user.id, *_paid_subscription()).limit(1).with_for_update()):
-        return None
-    promo = await repo.get_promo(PROMO_CODE)
-    if not promo or not promo.active or promo.discount_percent != DISCOUNT_PERCENT or await repo.promo_used_by_user(PROMO_CODE, user.id):
-        return None
-    followup = await repo.get_promo(FOLLOWUP_PROMO_CODE)
-    if not followup or not followup.active or followup.discount_percent != FOLLOWUP_DISCOUNT_PERCENT or await repo.promo_used_by_user(FOLLOWUP_PROMO_CODE, user.id):
-        return None
-    until = Repo.free_trial_until(user)
-    if until is not None and until <= now:
-        return "trial_expired"
-    # Also cover existing free learners when welcome trials are disabled.
-    if await session.scalar(select(Session.id).where(Session.user_id == user.id, Session.used_seconds > 0).limit(1)):
-        return "free_learner"
-    return None
-
-
-def _offer(impression):
+async def _offer(session, user, impression, state):
+    from .payment_routes import intro_eligible, _plan_catalog
+    from . import recurring
+    eligible = await intro_eligible(Repo(session), user)
+    plan = 'trial7' if eligible else 'monthly'
+    info = _plan_catalog()[plan]
+    renewal = _plan_catalog()['monthly']['amount_rub']
+    if eligible:
+        pending = await session.scalar(select(Payment).where(Payment.user_id == user.id,
+            Payment.plan == 'trial7', Payment.status == 'pending').order_by(Payment.id.desc()).limit(1).with_for_update())
+        if pending and pending.checkout_data:
+            renewal = pending.checkout_data.get('renew_amount_rub', renewal)
     return {"show": True, "impression_id": impression.id, "audience": impression.audience,
-            "promo_code": PROMO_CODE, "discount_percent": DISCOUNT_PERCENT,
+            "answered": bool(state and state.answered_at), "plan": plan,
+            "amount_rub": info['amount_rub'], "days": info['days'],
+            "renew_amount_rub": renewal,
+            "available": recurring.enabled(),
             "reasons": [{"code": code, "label": label} for code, label in REASONS.items()]}
 
 
@@ -117,9 +115,9 @@ async def claim(body: ClaimRequest, authorization: Optional[str] = Header(None))
         user = await _locked_user(session, authorization, body.init_data)
         now = utcnow()
         state = await _state(session, user.id)
-        if state and state.answered_at:
+        if state and state.answered_at and body.trigger != "access":
             return {"show": False, "answered": True}
-        audience = await _audience(session, user, now)
+        audience = await _audience(session, user, body.trigger)
         if not audience:
             return {"show": False}
         previous = await session.scalar(select(Impression).where(Impression.id == str(body.request_id)).with_for_update())
@@ -129,9 +127,13 @@ async def claim(body: ClaimRequest, authorization: Optional[str] = Header(None))
             # A transport retry may recover the same unconsumed response, but
             # cannot manufacture a second impression or revive a closed popup.
             if previous.shown_at >= now - timedelta(minutes=5) and not previous.closed_at and not previous.clicked_at:
-                return _offer(previous)
+                return await _offer(session, user, previous, state)
             return {"show": False}
-        if state and state.last_shown_at > now - timedelta(hours=24):
+        if body.trigger == "lesson_completed" and await session.scalar(select(Impression.id).where(
+            Impression.user_id == user.id, Impression.campaign == CAMPAIGN,
+            Impression.audience == "lesson_completed").limit(1).with_for_update()):
+            return {"show": False}
+        if body.trigger == "entry" and state and state.last_shown_at > now - timedelta(hours=24):
             return {"show": False}
         if state is None:
             state = OfferState(user_id=user.id, first_shown_at=now, last_shown_at=now)
@@ -143,10 +145,10 @@ async def claim(body: ClaimRequest, authorization: Optional[str] = Header(None))
         # an older checkout or discard a fast checkout after this impression.
         cursor = await session.scalar(select(Payment.id).where(Payment.user_id == user.id)
             .order_by(Payment.id.desc()).limit(1).with_for_update())
-        impression = Impression(id=str(body.request_id), user_id=user.id, audience=audience, shown_at=now, payment_cursor=cursor or 0)
+        impression = Impression(campaign=CAMPAIGN, id=str(body.request_id), user_id=user.id, audience=audience, shown_at=now, payment_cursor=cursor or 0)
         session.add(impression)
         await session.flush()
-        return _offer(impression)
+        return await _offer(session, user, impression, state)
 
 
 async def _owned_impression(session, user, impression_id):
@@ -162,13 +164,8 @@ async def event(body: EventRequest, authorization: Optional[str] = Header(None))
         user = await _locked_user(session, authorization, body.init_data)
         impression = await _owned_impression(session, user, body.impression_id)
         state = await _state(session, user.id)
-        if body.action == "tariffs":
-            if body.promo_code == FOLLOWUP_PROMO_CODE:
-                if not state or state.answer_impression_id != impression.id or not state.answered_at:
-                    raise HTTPException(409, "answer_required")
-                impression.followup_clicked_at = impression.followup_clicked_at or utcnow()
-            else:
-                impression.initial_clicked_at = impression.initial_clicked_at or utcnow()
+        if body.action == "checkout":
+            impression.initial_clicked_at = impression.initial_clicked_at or utcnow()
             impression.clicked_at = impression.clicked_at or utcnow()
         elif not state or not state.answered_at:
             field = "declined_at" if body.action == "declined" else "closed_at"
@@ -189,7 +186,7 @@ async def answer(body: AnswerRequest, authorization: Optional[str] = Header(None
             state.reason_code = body.reason
             state.answered_at = utcnow()
             state.answer_impression_id = impression.id
-        return {"ok": True, "reason": state.reason_code, "promo_code": FOLLOWUP_PROMO_CODE, "discount_percent": FOLLOWUP_DISCOUNT_PERCENT}
+        return {"ok": True, "reason": state.reason_code}
 
 
 @admin_router.get("")
@@ -205,46 +202,40 @@ async def analytics(days: int = Query(30, ge=1, le=365)):
             func.count(func.distinct(func.if_(Impression.clicked_at.is_not(None), Impression.user_id, None))),
             func.count(Impression.initial_clicked_at),
             func.count(Impression.followup_clicked_at),
-        ).where(Impression.shown_at >= since))).one()
+        ).where(Impression.campaign == CAMPAIGN, Impression.shown_at >= since))).one()
         answers = list((await session.execute(select(OfferState.reason_code, func.count())
             .join(Impression, Impression.id == OfferState.answer_impression_id)
-            .where(Impression.shown_at >= since).group_by(OfferState.reason_code))).all())
+            .where(Impression.campaign == CAMPAIGN, Impression.shown_at >= since).group_by(OfferState.reason_code))).all())
         total_answers = sum(number for _, number in answers)
         reason_counts = dict(answers)
-        # Attribute only SALE20 purchases created after a qualifying impression.
+        # Attribute introductory purchases created after a new-campaign impression.
         viewed = select(Impression.id).where(Impression.user_id == Payment.user_id,
-            Impression.shown_at >= since, Impression.payment_cursor < Payment.id).exists()
+            Impression.campaign == CAMPAIGN, Impression.shown_at >= since, Impression.payment_cursor < Payment.id).exists()
         payments = list((await session.execute(select(Payment.user_id, Payment.amount_rub, Payment.promo_code).where(
-            Payment.status == "succeeded", Payment.promo_code.in_((PROMO_CODE, FOLLOWUP_PROMO_CODE)), Payment.amount_rub > 0,
+            Payment.status == "succeeded", Payment.plan == "trial7", Payment.amount_rub == 1, Payment.checkout_data.is_not(None), Payment.amount_rub > 0,
             Payment.plan.not_in(("gift", "admin_grant", "referral", "org")), viewed))).all())
         paid_users = {uid for uid, _, _ in payments}
         recent = list((await session.execute(select(OfferState, User, Impression)
             .join(User, User.id == OfferState.user_id).join(Impression, Impression.id == OfferState.answer_impression_id)
-            .where(Impression.shown_at >= since).order_by(OfferState.answered_at.desc()).limit(100))).all())
+            .where(Impression.campaign == CAMPAIGN, Impression.shown_at >= since).order_by(OfferState.answered_at.desc()).limit(100))).all())
         daily = {}
         for column, label in ((Impression.shown_at, "shown"), (Impression.clicked_at, "tariffs")):
             day = func.date(column + text("INTERVAL 3 HOUR"))
-            rows = (await session.execute(select(day, func.count()).where(Impression.shown_at >= since,
+            rows = (await session.execute(select(day, func.count()).where(Impression.campaign == CAMPAIGN, Impression.shown_at >= since,
                 column.is_not(None)).group_by(day))).all()
             for key, value in rows:
                 daily.setdefault(str(key), {})[label] = value
         day = func.date(OfferState.answered_at + text("INTERVAL 3 HOUR"))
         rows = (await session.execute(select(day, func.count()).join(Impression, Impression.id == OfferState.answer_impression_id)
-            .where(Impression.shown_at >= since).group_by(day))).all()
+            .where(Impression.campaign == CAMPAIGN, Impression.shown_at >= since).group_by(day))).all()
         for key, value in rows:
             daily.setdefault(str(key), {})["answers"] = value
-        return {"days": days, "timezone": "Europe/Moscow", "promo_code": PROMO_CODE, "discount_percent": DISCOUNT_PERCENT,
-            "followup_promo_code": FOLLOWUP_PROMO_CODE, "followup_discount_percent": FOLLOWUP_DISCOUNT_PERCENT,
+        return {"days": days, "timezone": "Europe/Moscow", "campaign": CAMPAIGN,
             "impressions": count, "users_shown": users, "declines": declines, "dismissals": closes,
             "tariff_clicks": clicks, "users_clicked": click_users, "answers": total_answers,
-            "sale20_tariff_clicks": initial_clicks, "old50_tariff_clicks": followup_clicks,
             "answer_rate": round(100 * total_answers / users, 1) if users else 0,
             "click_rate": round(100 * click_users / users, 1) if users else 0,
             "paid_users": len(paid_users), "revenue_rub": float(sum(amount for _, amount, _ in payments)),
-            "payments_by_promo": [{"code": code, "discount_percent": percent,
-                "users": len({uid for uid, _, paid_code in payments if paid_code == code}),
-                "revenue_rub": float(sum(amount for _, amount, paid_code in payments if paid_code == code))}
-                for code, percent in ((PROMO_CODE, DISCOUNT_PERCENT), (FOLLOWUP_PROMO_CODE, FOLLOWUP_DISCOUNT_PERCENT))],
             "reasons": [{"code": code, "label": label, "count": reason_counts.get(code, 0),
                          "percent": round(100 * reason_counts.get(code, 0) / total_answers, 1) if total_answers else 0}
                         for code, label in REASONS.items()],
@@ -252,5 +243,5 @@ async def analytics(days: int = Query(30, ge=1, le=365)):
                        **daily.get(str(today - timedelta(days=offset)), {})} for offset in reversed(range(days))],
             "recent_answers": [{"user_id": user.id, "name": user.first_name or user.username or f"Пользователь #{user.id}",
                 "reason": state.reason_code, "reason_label": REASONS.get(state.reason_code, "Другое"),
-                "answered_at": state.answered_at.isoformat() + "Z", "clicked_tariffs": bool(impression.followup_clicked_at),
+                "answered_at": state.answered_at.isoformat() + "Z", "clicked_tariffs": bool(impression.clicked_at),
                 "paid": user.id in paid_users} for state, user, impression in recent]}

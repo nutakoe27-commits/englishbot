@@ -171,6 +171,13 @@ class LimitsContext:
             try:
                 async with self._repo_factory() as session:
                     repo = Repo(session)
+                    from .db.models import User
+                    account = await session.get(User, self.user_db_id)
+                    self.has_subscription = bool(account and not account.is_blocked and
+                        (settings.FREE_PERIOD or await repo.has_full_access(account)))
+                    if not self.has_subscription:
+                        self.free_seconds_per_day = 0
+                        self.bonus_seconds_today = 0
                     await repo.add_used_seconds(
                         user_id=self.user_db_id, seconds=seconds
                     )
@@ -178,6 +185,8 @@ class LimitsContext:
                         user_id=self.user_db_id, seconds=seconds
                     )
             except Exception as exc:
+                self.has_subscription = False
+                self.free_seconds_per_day = self.bonus_seconds_today = 0
                 log.warning("[limits] heartbeat (subscriber) ошибка: %s", exc)
             return self.used_seconds_today
         try:
@@ -211,11 +220,9 @@ async def context_for_user(repo: Repo, repo_factory, user, *, lesson_id: Optiona
     has_sub = trial_active or await repo.has_active_subscription(user)
     if settings.FREE_PERIOD:
         has_sub = True
-    free_seconds = await repo.get_kv_int(
-        "free_seconds_per_day", DEFAULT_FREE_SECONDS_PER_DAY
-    )
+    free_seconds = 0
     used = await repo.get_speaking_seconds_today(user.id)
-    bonus = await repo.get_bonus_seconds_today(user.id)
+    bonus = 0
     reset = None
     if lesson_id:
         from .learning_modules import require
@@ -282,12 +289,4 @@ async def is_section_limit_reached(repo: Repo, user, *, section: str) -> bool:
     # попробовать подкасты и грамматику, а не только разговор.
     if await repo.has_full_access(user):
         return False
-    cfg = _SECTION_QUOTA.get(section)
-    if cfg is None:
-        return False
-    mode, kv_key, default = cfg
-    quota = await repo.get_kv_int(kv_key, default)
-    if quota <= 0:
-        return False
-    used = await repo.count_sessions_today(user.id, mode, standalone_only=True)
-    return used >= quota
+    return True

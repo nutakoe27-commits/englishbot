@@ -46,8 +46,8 @@ router = APIRouter(prefix="/api/payments", tags=["Payments"])
 # незнакомому продукту — поднимать тревожность там, где её надо снимать.
 def _plan_catalog() -> dict[str, dict]:
     return {
-        "trial7":  {"days": 7,   "amount_rub": settings.SUBSCRIPTION_PRICE_TRIAL7_RUB,
-                    "title": "Пробная неделя", "badge": "Попробовать",
+        "trial7":  {"days": 7,   "amount_rub": 1,
+                    "title": "7 дней за 1 ₽", "badge": "Первое подключение",
                     "note": "Полный доступ на 7 дней. Один раз на аккаунт."},
         "monthly": {"days": 30,  "amount_rub": settings.SUBSCRIPTION_PRICE_MONTHLY_RUB,
                     "title": "Подписка на месяц", "badge": "Рекомендуем"},
@@ -66,6 +66,8 @@ class _CreatePaymentIn(BaseModel):
     plan: str                          # trial7 | monthly | yearly | twoyear
     email: Optional[str] = None        # для 54-ФЗ чека, если у юзера ещё нет
     promo_code: Optional[str] = None   # промокод для скидки (опционально)
+    recurring_consent: bool = False
+    renew_amount_rub: Optional[int] = None
 
 
 def _require_db() -> None:
@@ -102,7 +104,7 @@ async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
                 user = await auth_lib.resolve_user(repo, authorization=authorization)
                 viewer_id = int(user.id)
                 for plan_key in ONE_TIME_PLANS:
-                    if await repo.has_used_plan(user.id, plan_key):
+                    if not await intro_eligible(repo, user):
                         used_one_time.add(plan_key)
         except Exception:
             # Неавторизованный/битый токен — просто показываем полный список.
@@ -113,7 +115,7 @@ async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
     monthly = int(catalog["monthly"]["amount_rub"])
     out = []
     for k, v in catalog.items():
-        if k in used_one_time:
+        if k in used_one_time or (k == "trial7" and not recurring.enabled()):
             continue
         item = {
             "key": k, "days": v["days"], "amount_rub": v["amount_rub"],
@@ -137,6 +139,93 @@ async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
     return {"plans": out}
 
 
+async def intro_eligible(repo, user):
+    """A first personal purchase only, including refunded purchases as used."""
+    from sqlalchemy import select
+    from .db.models import Payment
+    if user.is_blocked or await repo.has_active_subscription(user):
+        return False
+    used = await repo.s.scalar(select(Payment.id).where(
+        Payment.user_id == user.id, Payment.status.in_(("succeeded", "refunded")),
+        Payment.amount_rub > 0, Payment.plan.not_in(("gift", "admin_grant", "referral", "org"))
+    ).limit(1).with_for_update())
+    return used is None
+
+
+async def create_intro_payment(body, authorization):
+    """Reserve one checkout per account; retries reuse the exact provider payload."""
+    from datetime import timedelta
+    from sqlalchemy import select
+    from . import recurring
+    from .db import Repo
+    from .db.models import User, Payment
+    from .db.repo import utcnow
+    if not recurring.enabled():
+        raise HTTPException(503, 'recurring_unavailable')
+    if not body.recurring_consent:
+        raise HTTPException(400, 'recurring_consent_required')
+    if body.promo_code:
+        raise HTTPException(400, 'intro_promo_not_allowed')
+    async with db_session() as session:
+        repo = Repo(session)
+        user = await auth_lib.resolve_user(repo, authorization=authorization)
+        user = await session.get(User, user.id, with_for_update=True, populate_existing=True)
+        if not await intro_eligible(repo, user):
+            raise HTTPException(400, 'plan_already_used')
+        payment = await session.scalar(select(Payment).where(Payment.user_id == user.id,
+            Payment.plan == 'trial7', Payment.status == 'pending').order_by(Payment.id.desc()).limit(1).with_for_update())
+        if payment:
+            data = payment.checkout_data or {}
+            if not data.get('request'):
+                raise HTTPException(409, 'payment_pending')
+            if body.renew_amount_rub != data['renew_amount_rub']:
+                raise HTTPException(409, 'renewal_price_changed')
+            if data.get('confirmation_url'):
+                return {'payment_id': payment.id, 'confirmation_url': data['confirmation_url']}
+            # Provider idempotency keys expire after 24h. Never recreate an
+            # uncertain charge with an expired key: reconcile it first.
+            if payment.created_at < utcnow() - timedelta(hours=23):
+                raise HTTPException(409, 'payment_pending')
+        else:
+            amount = int(_plan_catalog()['monthly']['amount_rub'])
+            if amount <= 0 or body.renew_amount_rub != amount:
+                raise HTTPException(409, 'renewal_price_changed')
+            email = (body.email or '').strip() or user.email
+            if settings.YOOKASSA_FISCALIZATION and not email:
+                raise HTTPException(400, 'email_required')
+            if email and ('@' not in email or len(email) > 255):
+                raise HTTPException(400, 'email_invalid')
+            if email and not user.email:
+                user.email = email
+            import secrets
+            payment = await repo.create_pending_payment(user_id=user.id, plan='trial7', amount_rub=1,
+                days_granted=7, provider_payment_id='tmp_' + secrets.token_urlsafe(16), notes='intro_week: explicit recurring consent')
+            await session.flush()
+            data = {'renew_amount_rub': amount, 'renew_days': 30, 'consented_at': utcnow().isoformat(),
+                'request': dict(amount_rub=1, description='English Tutor: 7 дней за 1 ₽',
+                    return_url=_return_url(payment.id),
+                    metadata={'user_id': str(user.id), 'plan': 'trial7', 'payment_id': str(payment.id),
+                        'recurring_setup': '1'}, customer_email=email,
+                    save_payment_method=True, require_recurring=True, idempotence_key=f'intro-{payment.id}')}
+            payment.checkout_data = data
+        payment_id = int(payment.id)
+        await session.commit()
+    confirmed = await yk.create_payment(**data['request'])
+    if (confirmed or {}).get('_creation_rejected'):
+        async with db_session() as session:
+            await Repo(session).mark_payment_status(payment_id, 'canceled')
+        raise HTTPException(503, 'recurring_unavailable')
+    url = ((confirmed or {}).get('confirmation') or {}).get('confirmation_url')
+    if not confirmed or not confirmed.get('id') or not url:
+        # Unknown outcome stays pending; repeating the same request is safe.
+        raise HTTPException(502, 'yookassa_create_failed')
+    async with db_session() as session:
+        row = await session.get(Payment, payment_id, with_for_update=True, populate_existing=True)
+        row.provider_payment_id = str(confirmed['id'])
+        row.checkout_data = {**data, 'confirmation_url': url}
+    return {'payment_id': payment_id, 'confirmation_url': url}
+
+
 @router.get("/promo/check")
 async def promo_check(
     code: str, authorization: Optional[str] = Header(None),
@@ -146,7 +235,7 @@ async def promo_check(
     _require_db()
     from .db import Repo
     norm = (code or "").strip().upper()
-    if not norm:
+    if not norm or norm in ("SALE20", "OLD50"):
         return {"valid": False, "discount_percent": 0, "already_used": False}
     async with db_session() as session:
         repo = Repo(session)
@@ -169,6 +258,8 @@ async def create_payment(
     """Создать платёж в ЮKassa. Возвращает confirmation_url + локальный
     payment_id (для последующего опроса статуса)."""
     _require_db()
+    if (body.plan or '').strip().lower() == 'trial7':
+        return await create_intro_payment(body, authorization)
     catalog = _plan_catalog()
     plan = (body.plan or "").strip().lower()
     if plan not in catalog:
@@ -198,7 +289,7 @@ async def create_payment(
         if body.promo_code:
             promo_code_norm = body.promo_code.strip().upper()
             promo = await repo.get_promo(promo_code_norm)
-            if not promo or not promo.active:
+            if promo_code_norm in ("SALE20", "OLD50") or not promo or not promo.active:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "promo_invalid")
             if await repo.promo_used_by_user(promo_code_norm, user.id):
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "promo_already_used")

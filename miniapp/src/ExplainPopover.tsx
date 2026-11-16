@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 interface ExplainPopoverProps {
   apiBase: string;
+  lessonId?: string;
   initData: string;
   original: string;
   corrected: string;
@@ -17,6 +18,7 @@ type State =
 
 export function ExplainPopover({
   apiBase,
+  lessonId,
   initData,
   original,
   corrected,
@@ -34,7 +36,7 @@ export function ExplainPopover({
         const res = await fetch(`${apiBase}/api/explain-correction`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ init_data: initData, original, corrected }),
+          body: JSON.stringify({ init_data: initData, learning_lesson_id: lessonId, original, corrected }),
           signal: controller.signal,
         });
         if (!res.ok) {

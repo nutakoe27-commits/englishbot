@@ -53,6 +53,8 @@ async def create_payment(
     metadata: dict,
     customer_email: Optional[str],
     save_payment_method: bool = False,
+    idempotence_key: Optional[str] = None,
+    require_recurring: bool = False,
 ) -> Optional[dict]:
     """Создать платёж в ЮKassa. Возвращает payload или None при ошибке.
 
@@ -79,6 +81,8 @@ async def create_payment(
     }
     if save_payment_method:
         payload["save_payment_method"] = True
+    if require_recurring:
+        payload["payment_method_data"] = {"type": "bank_card"}
     if settings.YOOKASSA_FISCALIZATION:
         if not customer_email:
             logger.warning("[yookassa] fiscalization on but no email — skipping receipt")
@@ -86,7 +90,7 @@ async def create_payment(
             payload["receipt"] = _build_receipt(amount_rub, description, customer_email)
 
     headers = {
-        "Idempotence-Key": secrets.token_urlsafe(24),
+        "Idempotence-Key": idempotence_key or secrets.token_urlsafe(24),
         "Content-Type": "application/json",
     }
     try:
@@ -102,7 +106,9 @@ async def create_payment(
                 "[yookassa] create_payment failed %s: %s",
                 resp.status_code, resp.text[:400],
             )
-            if save_payment_method and 400 <= resp.status_code < 500:
+            if require_recurring and 400 <= resp.status_code < 500 and resp.status_code not in (408, 429):
+                return {"_creation_rejected": True}
+            if save_payment_method and not require_recurring and 400 <= resp.status_code < 500:
                 logger.warning("[yookassa] автоплатежи недоступны — платим без сохранения карты")
                 retry = await create_payment(
                     amount_rub=amount_rub, description=description,

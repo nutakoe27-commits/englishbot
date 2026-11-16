@@ -114,6 +114,20 @@ class MigrationIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with self.engine.begin() as connection:
                 await connection.execute(text("UPDATE promo_codes SET active=1,discount_percent=50 WHERE code='OLD50'"))
 
+    async def test_intro_migration_replay_preserves_checkout_and_legacy_campaign_history(self):
+        key=str(uuid4())
+        async with self.engine.begin() as connection:
+            await connection.execute(text("INSERT INTO subscription_offer_impressions(id,user_id,audience,shown_at) VALUES(:key,:uid,'trial_expired',UTC_TIMESTAMP(6))"),{'key':key,'uid':self.uid})
+            pid=(await connection.execute(text("INSERT INTO payments(user_id,amount_rub,plan,status,days_granted,checkout_data) VALUES(:uid,1,'trial7','succeeded',7,:data)"),{'uid':self.uid,'data':json.dumps({'renew_amount_rub':999,'consented_at':'2026-11-16'})})).lastrowid
+            await connection.execute(text("UPDATE promo_codes SET active=1 WHERE code IN ('SALE20','OLD50')"))
+            await connection.execute(text('DELETE FROM schema_version WHERE version=46'))
+        await migrations.run(ROOT/'db/migrations',self.url.database,self.url.username,True,ROOT/'backend')
+        async with self.engine.connect() as connection:
+            self.assertEqual(await connection.scalar(text('SELECT campaign FROM subscription_offer_impressions WHERE id=:key'),{'key':key}),'legacy_discounts')
+            self.assertEqual(await connection.scalar(text("SELECT JSON_EXTRACT(checkout_data,'$.renew_amount_rub') FROM payments WHERE id=:pid"),{'pid':pid}),'999')
+            self.assertEqual(await connection.scalar(text("SELECT SUM(active) FROM promo_codes WHERE code IN ('SALE20','OLD50')")),0)
+        await self.preserved()
+
     async def test_course_bindings_are_backfilled_and_migration_can_be_replayed(self):
         key=str(uuid4())
         async with self.engine.begin() as connection:

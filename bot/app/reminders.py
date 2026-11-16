@@ -1034,6 +1034,8 @@ async def _select_non_subscribers() -> list["_User"]:
 
 async def _send_discount_broadcast(bot: Bot, miniapp_url: str) -> None:
     """Один проход рассылки скидки. Глобальный cooldown через settings_kv."""
+    if DISCOUNT_PROMO_CODE.strip().upper() in {"SALE20", "OLD50"}:
+        return
     if await _discount_cooldown_active():
         logger.info("[discount] cooldown активен — пропуск")
         return
@@ -1182,7 +1184,7 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-FREE_TRIAL_DAYS = _env_int("FREE_TRIAL_DAYS", 1)
+FREE_TRIAL_DAYS = 0  # Replaced with one introductory lesson.
 
 
 def _plural_days(n: int) -> str:
@@ -1533,7 +1535,6 @@ async def run_monetization_passes(bot: Bot, miniapp_url: str) -> None:
         ("streak_milestone", _pass_streak_milestone(bot, kb)),
         ("sub_expiring", _pass_sub_expiring(bot, kb)),
         ("paid_checkin", _pass_paid_checkin(bot, miniapp_url)),
-        ("trial7_end", _pass_trial7_upsell(bot, kb)),
     )
     for name, coro in passes:
         try:

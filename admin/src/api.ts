@@ -411,13 +411,10 @@ export const api = {
 };
 
 export interface SubscriptionOfferAnalytics {
-  days: number; timezone: string; promo_code: string; discount_percent: number;
-  followup_promo_code: string; followup_discount_percent: number;
+  days: number; timezone: string; campaign: string;
   impressions: number; users_shown: number; declines: number; dismissals: number;
   tariff_clicks: number; users_clicked: number; answers: number; answer_rate: number; click_rate: number;
-  sale20_tariff_clicks: number; old50_tariff_clicks: number;
   paid_users: number; revenue_rub: number;
-  payments_by_promo: { code: string; discount_percent: number; users: number; revenue_rub: number }[];
   reasons: { code: string; label: string; count: number; percent: number }[];
   daily: { date: string; shown: number; tariffs: number; answers: number }[];
   recent_answers: { user_id: number; name: string; reason: string; reason_label: string;

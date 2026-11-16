@@ -39,7 +39,7 @@ from .learning import router as learning_router, preparation_loop, maintenance_l
 from .subscription_offers import router as subscription_offer_router, admin_router as subscription_offer_admin_router
 from .auth import resolve_user
 from .config import settings
-from .db import db_session, init_db
+from .db import Repo, db_session, init_db
 from .limits import LimitsContext, build_limits_context
 from .llm_providers import explain_correction, get_llm_provider, translate_word
 from .voice import run_voice_session
@@ -447,6 +447,7 @@ async def _get_translation_cached(word: str, context: str) -> list[str]:
 
 
 class _TranslateIn(BaseModel):
+    learning_lesson_id: Optional[str] = None
     init_data: Optional[str] = None
     word: str = Field(..., min_length=1, max_length=64)
     context: str = Field("", max_length=500)
@@ -460,6 +461,13 @@ async def translate(body: _TranslateIn, authorization: Optional[str] = Header(No
     от LLM — translations=[].
     """
     from .auth import auth_key
+    if settings.DATABASE_URL:
+        from .auth import resolve_user
+        from .learning_access import require_practice
+        async with db_session() as session:
+            repo = Repo(session)
+            account = await resolve_user(repo, authorization=authorization, init_data=body.init_data)
+            await require_practice(repo, account, body.learning_lesson_id)
     key = auth_key(authorization, body.init_data)
     word = body.word.strip().lower()
     if not word:
@@ -476,6 +484,7 @@ _EXPLAIN_CACHE_MAX = 1000
 
 
 class _ExplainIn(BaseModel):
+    learning_lesson_id: Optional[str] = None
     init_data: Optional[str] = None
     original: str = Field(..., min_length=1, max_length=300)
     corrected: str = Field(..., min_length=1, max_length=300)
@@ -490,6 +499,13 @@ async def explain_correction_endpoint(
     Возвращает {explanation: str}. На ошибку LLM — пустая строка.
     """
     from .auth import auth_key
+    if settings.DATABASE_URL:
+        from .auth import resolve_user
+        from .learning_access import require_practice
+        async with db_session() as session:
+            repo = Repo(session)
+            account = await resolve_user(repo, authorization=authorization, init_data=body.init_data)
+            await require_practice(repo, account, body.learning_lesson_id)
     # Переиспользуем существующий rate-limit бакет с translate'ом.
     _enforce_rate_limit(auth_key(authorization, body.init_data))
 
@@ -1117,6 +1133,14 @@ async def ws_voice(websocket: WebSocket, init_data: str = "", token: str = ""):
         else:
             logger.info("DEV: нет токена/init_data — пропускаем проверку")
 
+    if not settings.is_development:
+        if not web_uid and not user_info:
+            await websocket.close(code=4001, reason="Unauthorized")
+            return
+        if not settings.DATABASE_URL:
+            await websocket.close(code=1011, reason="Access check unavailable")
+            return
+
     # ── Принимаем WebSocket-соединение ────────────────────────────────────
     await websocket.accept()
     logger.warning(
@@ -1181,21 +1205,13 @@ async def ws_voice(websocket: WebSocket, init_data: str = "", token: str = ""):
                 getattr(limits_ctx, "remaining_seconds", None),
             )
         except asyncio.TimeoutError:
-            if websocket.query_params.get('learning_lesson_id'):
-                await websocket.close(code=1011, reason='Course access check unavailable')
-                return
-            logger.error(
-                "[WS] preflight БД превысил 5 сек — продолжаем без лимитов для user_id=%s",
-                user_info.get("id"),
-            )
-            limits_ctx = None
+            logger.error("[WS] access check timed out")
+            await websocket.close(code=1011, reason='Access check unavailable')
+            return
         except Exception as exc:
-            if websocket.query_params.get('learning_lesson_id'):
-                await websocket.close(code=4009 if isinstance(exc, HTTPException) else 1011,
-                    reason='Course access unavailable')
-                return
-            logger.error("Ошибка БД на connect: %s", exc, exc_info=True)
-            limits_ctx = None  # fallback: лучше работать без лимитов, чем падать
+            logger.warning("[WS] access check failed: %s", type(exc).__name__)
+            await websocket.close(code=4009 if isinstance(exc, HTTPException) else 1011, reason='Access unavailable')
+            return
 
     if limits_ctx is not None:
         if limits_ctx.is_blocked:

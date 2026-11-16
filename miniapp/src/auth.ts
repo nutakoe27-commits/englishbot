@@ -84,7 +84,12 @@ export function installFetchAuth(): void {
     } catch {
       /* если что-то пошло не так — отдаём оригинальный fetch без правок */
     }
-    return orig(input, init);
+    return orig(input, init).then(response => {
+      if (response.status === 402) void response.clone().json().then(data => {
+        if (data.detail === 'subscription_required') window.dispatchEvent(new CustomEvent('subscription:open', {detail:'access'}));
+      }).catch(() => {});
+      return response;
+    });
   };
 }
 
@@ -356,9 +361,10 @@ interface CreatePaymentResult {
 
 export async function createPayment(
   plan: Plan["key"], email?: string, promo_code?: string,
+  terms?: { recurring_consent: boolean; renew_amount_rub: number },
 ): Promise<CreatePaymentResult> {
   try {
-    const res = await _postJson("/api/payments/create", { plan, email, promo_code });
+    const res = await _postJson("/api/payments/create", { plan, email, promo_code, ...terms });
     if (res.ok) {
       const data = await res.json() as { confirmation_url: string; payment_id: number };
       return { ok: true, ...data };

@@ -196,7 +196,7 @@ async def _user_to_detail(repo: Repo, u) -> UserDetail:
 
     brief = await _user_to_brief(repo, u)
     used = await repo.get_used_seconds_today(u.id)
-    free_seconds = await repo.get_kv_int("free_seconds_per_day", 300)
+    free_seconds = 0  # Standalone practice now requires a subscription.
     bonus = await repo.get_bonus_seconds_today(u.id)
 
     # Всего практики за всё время.

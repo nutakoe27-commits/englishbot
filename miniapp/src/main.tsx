@@ -1,3 +1,4 @@
+import { fetchMe } from "./auth";
 import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import WebApp from "@twa-dev/sdk";
@@ -48,7 +49,7 @@ import { BottomNav } from "./BottomNav";
 import { AccountSheet } from "./AccountSheet";
 import { LeaderboardScreen } from "./LeaderboardScreen";
 import { SubscribeScreen } from "./SubscribeScreen";
-import { SubscriptionOffer } from "./SubscriptionOffer";
+import { SubscriptionOffer, requestSubscription } from "./SubscriptionOffer";
 import { OnboardingModal } from "./OnboardingModal";
 import type { TabKey } from "./tabs";
 import {
@@ -442,8 +443,22 @@ function TabShell({
     try { localStorage.removeItem(PAY_INTENT_KEY); } catch { /* private mode */ }
   }, []);
   const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
-  const [subscriptionPromo, setSubscriptionPromo] = useState(initialPromo);
-  const [skipEntryOffer] = useState(subscribeOpen || !!initialSchool);
+  const [subscriptionPromo] = useState(initialPromo);
+  const [skipEntryOffer] = useState(() => subscribeOpen || !!initialSchool
+    || new URLSearchParams(window.location.search).has("payment_id"));
+  const [toolAccess, setToolAccess] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => { if (!document.hidden) void fetchMe().then(me => { if (alive) setToolAccess(!!me?.has_subscription); }); };
+    refresh(); window.addEventListener("focus", refresh); document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("subscription:paid", refresh);
+    return () => { alive = false; window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); window.removeEventListener("subscription:paid", refresh); };
+  }, []);
+  useEffect(() => {
+    const error = () => { setOrgToast("Не удалось загрузить предложение. Проверьте соединение и попробуйте снова."); };
+    window.addEventListener("subscription:error", error);
+    return () => window.removeEventListener("subscription:error", error);
+  }, []);
   // B2B: ?school=CODE — подключаем к школе и показываем результат тостом.
   const [orgToast, setOrgToast] = useState<string>("");
 
@@ -479,7 +494,12 @@ function TabShell({
     return () => { alive = false; };
   }, [initialSchool]);
 
+  useEffect(() => {
+    if (subscribeOpen && toolAccess === false) { setSubscribeOpen(false); requestSubscription(); }
+  }, [subscribeOpen, toolAccess]);
+
   const switchTab = (next: TabKey) => {
+    if (next === "words" && !toolAccess) { requestSubscription(); return; }
     setMode(null);
     setTab(next);
   };
@@ -492,8 +512,14 @@ function TabShell({
   useBackGuard(subscribeOpen, useCallback(() => setSubscribeOpen(false), []));
   useBackGuard(onboardingManual, useCallback(() => setOnboardingManual(false), []));
 
+  const protectedMode = mode === "speaking" || mode === "listening" || mode === "grammar" || tab === "words";
+  useEffect(() => {
+    if (protectedMode && toolAccess === false) { setMode(null); setTab("home"); requestSubscription(); }
+  }, [protectedMode, toolAccess]);
   let body: React.ReactNode;
-  if (mode === "speaking") {
+  if (protectedMode && toolAccess !== true) {
+    body = <p role="status">Проверяем доступ…</p>;
+  } else if (mode === "speaking") {
     body = <App onExit={exitMode} />;
   } else if (mode === "listening") {
     body = <ListeningScreen onExit={exitMode} />;
@@ -506,10 +532,8 @@ function TabShell({
   } else if (tab === "home") {
     body = (
       <ModeSelector
-        suppressOffers={skipEntryOffer || subscribeOpen || onboardingManual}
-        onOfferSubscribe={(promo) => { setSubscriptionPromo(promo); setSubscribeOpen(true); }}
-        onOfferAnswered={setSubscriptionPromo}
         onPick={(m) => {
+          if (["speaking", "listening", "grammar", "srs"].includes(m) && !toolAccess) { requestSubscription(); return; }
           if (m === "srs") { setTab("words"); return; }
           setMode(m);
         }}
@@ -525,7 +549,7 @@ function TabShell({
       <AccountSheet
         embedded
         onLoggedOut={onLoggedOut}
-        onOpenSubscribe={() => setSubscribeOpen(true)}
+        onOpenSubscribe={() => toolAccess ? setSubscribeOpen(true) : requestSubscription()}
         onOpenTutorial={() => setOnboardingManual(true)}
       />
     );
@@ -567,9 +591,7 @@ function TabShell({
           onClose={() => setOnboardingManual(false)}
         />
       )}
-      {!!(initialMode || (initialTab && initialTab !== "home")) && !skipEntryOffer && !subscribeOpen && !onboardingManual && (
-        <SubscriptionOffer onSubscribe={promo => { setSubscriptionPromo(promo); setSubscribeOpen(true); }} onAnswered={setSubscriptionPromo} />
-      )}
+      <SubscriptionOffer enabled={!skipEntryOffer && !subscribeOpen && !onboardingManual} />
     </div>
   );
 }

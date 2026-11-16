@@ -391,7 +391,7 @@ export function SrsScreen({ onExit: _onExit, course }: Props) {
         <NoteCard padding="32px 24px" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 18, minHeight: 220 }}>
           <div className="srs-v2__word-row">
             <div className="srs-v2__flip-word">{card.word}</div>
-            <IconButton icon="volume-2" size="md" label="Послушать" onClick={() => playWord(card.word)} />
+            <IconButton icon="volume-2" size="md" label="Послушать" onClick={() => playWord(card.word, course?.lessonId)} />
           </div>
           {!revealed ? (
             <Button variant="secondary" onClick={() => setRevealed(true)} disabled={busy}>

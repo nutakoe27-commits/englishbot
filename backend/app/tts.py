@@ -16,7 +16,7 @@ import logging
 import time
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, status
 from fastapi.responses import Response
 
 from .config import settings
@@ -56,9 +56,20 @@ def _cache_key(text: str, voice: str, speed: float) -> str:
 async def tts_word(
     text: str = Query(..., min_length=1, max_length=MAX_TEXT_LEN),
     voice: Optional[str] = Query(default=None),
+    learning_lesson_id: Optional[str] = None,
+    init_data: str = "",
+    authorization: Optional[str] = Header(None),
     speed: float = Query(default=1.0, ge=0.5, le=2.0),
 ) -> Response:
     """Озвучить слово/короткую фразу. Возвращает audio/wav."""
+    if settings.DATABASE_URL:
+        from .db import Repo, db_session
+        from .auth import resolve_user
+        from .learning_access import require_practice
+        async with db_session() as session:
+            repo = Repo(session)
+            account = await resolve_user(repo, authorization=authorization, init_data=init_data)
+            await require_practice(repo, account, learning_lesson_id)
     if not settings.KOKORO_TTS_URL:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "tts_unavailable")
 
@@ -75,7 +86,7 @@ async def tts_word(
         return Response(
             content=wav,
             media_type="audio/wav",
-            headers={"Cache-Control": "public, max-age=86400"},
+            headers={"Cache-Control": "private, no-cache"},
         )
 
     # Синтез: короткие таймауты — слово готово быстро.
@@ -104,5 +115,5 @@ async def tts_word(
     return Response(
         content=wav,
         media_type="audio/wav",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "private, no-cache"},
     )

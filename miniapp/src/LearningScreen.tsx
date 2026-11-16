@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { SubscribeScreen } from './SubscribeScreen';
+import { requestSubscription } from './SubscriptionOffer';
 import { LearningAccessCard } from './LearningAccessCard';
-import { useBackGuard } from './backGuard';
 import { LearningError, type LearningAccess } from './learningApi';
 import { LearningMap } from './LearningProgress';
 import { learningGet, learningPost, learningSetup, learningUrl, type LearningOverview, type LearningLesson,
@@ -152,6 +151,7 @@ function LessonRunner({initial,onExit,onDone}: {initial: LearningLesson; onExit:
     finishBody.current ||= {elapsed_sec:elapsed()};
     const data=await learningPost<LearningLesson>(path+'/finish',finishBody.current,true);
     clock.current.running=false; update(data);
+    if (data.content.spec.ordinal === 1) requestSubscription("lesson_completed");
   });
   const step=lesson.step_index;
   const course={goal:lesson.content.spec.goal,lessonId:lesson.id,level:lesson.content.spec.level as Level,topicKey:lesson.content.spec.topic_key,
@@ -236,14 +236,11 @@ export function LearningScreen({onExit,onPlacement}: {onExit: () => void; onPlac
   const [data,setData]=useState<LearningOverview | null>(null), [lesson,setLesson]=useState<LearningLesson | null>(null), [checkpoint,setCheckpoint]=useState<Checkpoint | null>(null);
   const [goal,setGoal]=useState('general'), [busy,setBusy]=useState(false), [error,setError]=useState('');
   const alive=useRef(true), pending=useRef(false), starting=useRef<{key: string; requestId: string} | null>(null), loadVersion=useRef(0);
-  const [subscribeOpen,setSubscribeOpen]=useState(false);
+  const openSubscription = () => requestSubscription();
   const refreshAccess=useCallback(async () => {
     const access=await learningGet<LearningAccess>('/access');
     if(alive.current) setData(previous => previous ? {...previous,access} : previous);
   },[]);
-  const closeSubscribe=useCallback(() => {setSubscribeOpen(false);void refreshAccess().catch(() => {});},[refreshAccess]);
-  const paid=useCallback(() => {void refreshAccess().catch(() => {});},[refreshAccess]);
-  useBackGuard(subscribeOpen,closeSubscribe);
   useEffect(() => {
     if(!data?.enabled) return;
     const refresh=() => {if(!document.hidden) void refreshAccess().catch(() => {});};
@@ -266,9 +263,9 @@ export function LearningScreen({onExit,onPlacement}: {onExit: () => void; onPlac
     try {await operation();} catch(e) {
       if(alive.current) {
         setError(message(e));
-        if(e instanceof LearningError && e.detail==='lesson_limit_reached') {
+        if(e instanceof LearningError && e.detail==='subscription_required') {
           starting.current=null;
-          await refreshAccess().catch(() => {});if(alive.current) setSubscribeOpen(true);
+          await refreshAccess().catch(() => {});if(alive.current) openSubscription();
         }
       }
     }
@@ -279,18 +276,18 @@ export function LearningScreen({onExit,onPlacement}: {onExit: () => void; onPlac
     if(data?.profile?.checkpoint_due) {
       const value=await learningPost<Checkpoint>('/checkpoint/start'); if(alive.current) setCheckpoint(value);
     } else if(data?.next_lesson) {
-      if(data.next_lesson.status==='prepared' && data.access?.remaining_today===0) {setSubscribeOpen(true);return;}
+      if(data.next_lesson.status==='prepared' && data.access?.remaining_today===0) {openSubscription();return;}
       starting.current={key:data.next_lesson.id,requestId:crypto.randomUUID()};
       const value=await learningPost<LearningLesson>(`/lessons/${data.next_lesson.id}/start`,{request_id:starting.current.requestId});
       if(alive.current) {setLesson(value); starting.current=null;}
     }
   });
-  const needsSubscription=data?.access?.remaining_today===0 && data.next_lesson?.status==='prepared' && !data.profile?.checkpoint_due;
+  const needsSubscription=data?.access?.full_access === false && !data.access.free_lesson_available;
   if(lesson) return <LessonRunner key={lesson.id} initial={lesson} onExit={returnToProgram} onDone={returnToProgram} />;
   if(checkpoint) return <CheckpointRunner key={checkpoint.id} initial={checkpoint} onExit={returnToProgram} onDone={returnToProgram} />;
   return <div className="learn-screen"><header className="learn-header"><button className="learn-link" onClick={onExit}>← Главная</button><span>Персональная программа</span></header>
     <h1>Твой английский, шаг за шагом</h1>
-    {data?.access && <LearningAccessCard access={data.access} onSubscribe={needsSubscription ? undefined : () => setSubscribeOpen(true)} />}
+    {data?.access && <LearningAccessCard access={data.access} onSubscribe={needsSubscription ? undefined : () => openSubscription()} />}
     {error && <p className="learn-error" role="alert">{error}<button className="learn-link" disabled={busy} onClick={() => void act(load)}>Повторить загрузку</button></p>}
     {!data && !error && <p role="status">Собираем твой маршрут…</p>}
     {data && !data.enabled && <p>Программа пока недоступна в этом сервисе.</p>}
@@ -311,10 +308,9 @@ export function LearningScreen({onExit,onPlacement}: {onExit: () => void; onPlac
       </ul>}
       <button className="learn-primary" disabled={busy} onClick={() => void begin()}>{busy ? 'Открываем…' : data.profile.checkpoint_due ? 'Начать проверку' : data.next_lesson?.status==='active' || data.next_lesson?.status==='paused' ? 'Продолжить урок' : needsSubscription ? 'Открыть подписку' : 'Начать урок'} →</button>
     </section><LearningMap data={data} onLesson={id => void act(async () => {
-      if(id===data.next_lesson?.id && data.next_lesson.status==='prepared' && data.access?.remaining_today===0) {setSubscribeOpen(true);return;}
+      if(id===data.next_lesson?.id && data.next_lesson.status==='prepared' && data.access?.remaining_today===0) {openSubscription();return;}
       const value=await learningPost<LearningLesson>(`/lessons/${id}/start`,{request_id:crypto.randomUUID()}); if(alive.current) setLesson(value);
     })} /><details className="learn-settings"><summary>Настройки программы</summary><LevelPicker value={data.profile.level} onSaved={load} /><label className="learn-input-label">Цель обучения<select value={goal} onChange={e => setGoal(e.target.value)}>{Object.entries(data.goals || {}).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>
       <button className="learn-secondary" disabled={busy} onClick={() => void act(async () => {await learningSetup(goal); await load();})}>Сохранить цель</button></details></>}
-    {subscribeOpen && <SubscribeScreen onClose={closeSubscribe} onPaid={paid} />}
   </div>;
 }

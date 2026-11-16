@@ -230,7 +230,7 @@ export function ListeningScreen({ onExit, course }: Props) {
             <PodcastPlayer audioUrl={result.audio_url} onRegenerate={course ? undefined : backToConfig} onEnded={() => setListened(true)} onError={() => setError("Не удалось загрузить звук. Можно восстановить подкаст.")} />
             {error && <div role="alert" className="lst-error"><p>{error}</p><button type="button" className="lst-secondary-btn" onClick={() => void startGeneration()}>Восстановить подкаст</button></div>}
             {course && <><p className="learn-muted">Прослушай подкаст до конца. Можно открыть перевод любого слова в тексте ниже.</p><button type="button" className="lst-primary-btn" disabled={!listened} onClick={course.onComplete}>Продолжить урок →</button></>}
-            <Transcript apiBase={API_BASE} text={result.transcript} />
+            <Transcript lessonId={course?.lessonId} apiBase={API_BASE} text={result.transcript} />
           </div>
         )}
 

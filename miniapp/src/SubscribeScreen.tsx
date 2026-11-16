@@ -27,6 +27,7 @@ import { Button } from "./ds-react/Button";
 import { IconButton } from "./ds-react/IconButton";
 import { NoteCard } from "./ds-react/NoteCard";
 import { SerifH } from "./ds-react/typography";
+import { requestSubscription } from "./SubscriptionOffer";
 import { useLucide } from "./lucide";
 import { learningGet, type LearningAccess } from "./learningApi";
 
@@ -55,7 +56,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
   const [promoMsg, setPromoMsg] = useState<string>("");
   const [promoBusy, setPromoBusy] = useState<boolean>(false);
   const [promoOpen, setPromoOpen] = useState<boolean>(!!initialPromoCode);
-  const [returnPaymentId, setReturnPaymentId] = useState<number | null>(
+  const [returnPaymentId] = useState<number | null>(
     initialReturnPaymentId ?? null,
   );
   const [returnStatus, setReturnStatus] = useState<"pending" | "succeeded" | "canceled" | "expired" | null>(
@@ -71,6 +72,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
     void (async () => {
       const [p, m, access] = await Promise.all([listPlans(), fetchMe(),learningGet<LearningAccess>('/access').catch(() => null)]);
       if (!alive) return;
+      if (m && !m.has_subscription && !initialReturnPaymentId) { onClose(); requestSubscription(); return; }
       setPlans(p); setMe(m); setLoading(false);
       setProgramAccess(access);
       if (m?.email) setEmailInput(m.email);
@@ -97,6 +99,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
         });
         await fetchMe();
         onPaid?.();
+        window.dispatchEvent(new Event("subscription:paid"));
         return;
       }
       if (s?.status === "canceled" || s?.status === "refunded") {
@@ -164,6 +167,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
 
   const launchPayment = useCallback(async (planKey: Plan["key"], emailOverride?: string) => {
     if (busy) return;
+    if (planKey === "trial7") { onClose(); requestSubscription(); return; }
     setBusy(planKey); setError("");
     const planInfo = plans.find((p) => p.key === planKey);
     ymReachGoal("subscribe_plan_clicked", {
@@ -243,8 +247,8 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
                 <>
                   <div className="sub-status sub-status--err">❌ Платёж отменён.</div>
                   <p className="sub-hint">Можешь попробовать ещё раз.</p>
-                  <Button variant="primary" fullWidth onClick={() => { setReturnPaymentId(null); setReturnStatus(null); }}>
-                    К тарифам
+                  <Button variant="primary" fullWidth onClick={() => { onClose(); requestSubscription(); }}>
+                    Попробовать снова
                   </Button>
                 </>
               )}
@@ -388,9 +392,9 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
                 <div className="sub-includes__title">Что входит в полный доступ</div>
                 <ul className="sub-includes__list">
                   {programAccess && <li>📚 Полные уроки по программе — <b>без суточного лимита</b>: грамматика, работа над ошибками, слова, подкаст и разговор. Проверка уровня после каждых 20 уроков.</li>}
-                  <li>🎙 Разговор с AI-репетитором — <b>без лимита по времени</b> (на бесплатном — 5 минут в день)</li>
-                  <li>🎧 Подкасты под твой уровень — сколько угодно (на бесплатном — 1 в день)</li>
-                  <li>📝 Грамматика: 50 уроков A1–C1 и разбор твоих ошибок (на бесплатном — 1 урок в день)</li>
+                  <li>🎙 Разговор с AI-репетитором — <b>без лимита по времени</b></li>
+                  <li>🎧 Подкасты под твой уровень — сколько угодно</li>
+                  <li>📝 Грамматика: 50 уроков A1–C1 и разбор твоих ошибок</li>
                   <li>📚 Словарь с интервальным повторением</li>
                 </ul>
               </div>

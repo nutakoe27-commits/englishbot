@@ -34,7 +34,6 @@ import {
 } from "./auth";
 import { LandingNav } from "./LandingNav";
 import { PushPrompt } from "./PushPrompt";
-import { TRIAL_PERIOD } from "./trial";
 import { ymHit, ymReachGoal } from "./metrika";
 import "./Landing.css";
 import "./LevelLanding.css";
@@ -416,8 +415,7 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
                     Открыть разбор
                   </button>
                   <p className="lvl-locked__note">
-                    Вход через Яндекс ID или email — минута. Первые{" "}
-                    {TRIAL_PERIOD} занятий без ограничений.
+                    Вход через Яндекс ID или email — минута. Первый полный урок бесплатно.
                   </p>
                 </div>
               )}
@@ -626,8 +624,7 @@ export function LevelLanding({ authed, onLogin, onOpenApp }: Props) {
               <div className="lp-faq__answer">
                 Уровень увидишь сразу. Дальше можно открыть разбор и заниматься
                 в приложении: разговор с ИИ голосом, подкасты, грамматика и
-                слова — всё под твой уровень. Первые {TRIAL_PERIOD} без
-                ограничений.
+                слова — всё под твой уровень. Первый урок бесплатно, дальнейшие занятия — по подписке.
               </div>
             </details>
           </div>

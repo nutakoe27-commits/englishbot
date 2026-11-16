@@ -1,3 +1,4 @@
+import { requestSubscription } from "./SubscriptionOffer";
 import { useEffect, useState } from "react";
 
 type LockKind = "limit_reached" | "maintenance" | "blocked";
@@ -17,7 +18,7 @@ interface Props {
 }
 
 const TITLES: Record<LockKind, string> = {
-  limit_reached: "Дневной лимит исчерпан",
+  limit_reached: "Откройте полный доступ",
   maintenance: "Технические работы",
   blocked: "Доступ ограничен",
 };
@@ -27,7 +28,7 @@ const TITLES: Record<LockKind, string> = {
 // том, что теряется, и на том, сколько это стоит на самом деле.
 const BODIES: Record<LockKind, string> = {
   limit_reached:
-    "Бесплатные 5 минут разговора на сегодня закончились. Это 2,5 часа практики в год — примерно столько же выходит за одну неделю без лимита.",
+    "Отдельные тренажёры и следующие уроки доступны по подписке. Первый полный урок можно пройти бесплатно.",
   maintenance:
     "Бот временно недоступен. Возвращайся через 10–15 минут.",
   blocked:
@@ -36,16 +37,13 @@ const BODIES: Record<LockKind, string> = {
 
 /** Отдельный текст для тех, у кого только что закончились приветственные
  *  дни полного доступа: это не «мне не дают», а «у меня отняли». */
-const TRIAL_ENDED_BODY =
-  "Твои дни полного доступа закончились. Дальше — 5 минут разговора в сутки: этого хватает, чтобы не забыть язык, но не хватает, чтобы заговорить.";
-
 const CTA_LABEL: Record<LockKind, string> = {
-  limit_reached: "Снять лимит",
+  limit_reached: "Открыть подписку",
   maintenance: "Открыть бота",
   blocked: "Открыть бота",
 };
 
-export function LockScreen({ kind, message, trialEnded, botUsername, onDismiss, onOpenSubscribe }: Props) {
+export function LockScreen({ kind, message, botUsername, onDismiss }: Props) {
   // Простой fade-in при монтировании
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -58,11 +56,11 @@ export function LockScreen({ kind, message, trialEnded, botUsername, onDismiss, 
     // onOpenSubscribe — открываем SubscribeScreen (оплата через ЮKassa).
     // В Mini App внутри Telegram callback не пробрасывается — fallback на
     // открытие бота для оплаты через Telegram Payments.
-    if (kind === "limit_reached" && onOpenSubscribe) {
-      onOpenSubscribe();
+    if (kind === "limit_reached") {
+      requestSubscription();
       return;
     }
-    const cmd = kind === "limit_reached" ? "subscribe" : "start";
+    const cmd = "start";
     if (botUsername) {
       const url = `https://t.me/${botUsername}?start=${cmd}`;
       const tg = (window as any).Telegram?.WebApp;
@@ -84,32 +82,9 @@ export function LockScreen({ kind, message, trialEnded, botUsername, onDismiss, 
           {kind === "maintenance" ? "🔧" : kind === "blocked" ? "🚫" : "⏳"}
         </div>
         <h2 className="lock-screen__title">
-          {kind === "limit_reached" && trialEnded
-            ? "Полный доступ закончился"
-            : TITLES[kind]}
+          {TITLES[kind]}
         </h2>
-        <p className="lock-screen__body">
-          {message
-            || (kind === "limit_reached" && trialEnded
-              ? TRIAL_ENDED_BODY
-              : BODIES[kind])}
-        </p>
-        {kind === "limit_reached" && (
-          <div className="lock-screen__pricing">
-            <div className="lock-screen__price">
-              <span className="lock-screen__price-amount">199 ₽</span>
-              <span className="lock-screen__price-period">/ пробная неделя</span>
-            </div>
-            <div className="lock-screen__price">
-              <span className="lock-screen__price-amount">999 ₽</span>
-              <span className="lock-screen__price-period">/ месяц</span>
-            </div>
-            <div className="lock-screen__price">
-              <span className="lock-screen__price-amount">5 999 ₽</span>
-              <span className="lock-screen__price-period">/ год</span>
-            </div>
-          </div>
-        )}
+        <p className="lock-screen__body">{message || BODIES[kind]}</p>
         <button className="lock-screen__cta" onClick={handleCta}>
           {CTA_LABEL[kind]}
         </button>

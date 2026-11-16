@@ -1595,7 +1595,7 @@ export default function App({ onExit, course }: AppProps = {}) {
       )}
 
       {translateTarget && (
-        <TranslatePopover
+        <TranslatePopover lessonId={course?.lessonId}
           apiBase={API_BASE}
           initData={WebApp.initData || ""}
           word={translateTarget.word}
@@ -1608,7 +1608,7 @@ export default function App({ onExit, course }: AppProps = {}) {
       )}
 
       {explainTarget && (
-        <ExplainPopover
+        <ExplainPopover lessonId={course?.lessonId}
           apiBase={API_BASE}
           initData={WebApp.initData || ""}
           original={explainTarget.original}

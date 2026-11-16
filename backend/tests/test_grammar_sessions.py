@@ -104,7 +104,7 @@ class GrammarLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(rows[0].ended_at)
 
     async def test_lesson_prefetch_and_cancel_do_not_create_or_consume_sessions(self):
-        with patch.object(settings, 'FREE_PERIOD', False), patch.object(settings, 'FREE_TRIAL_DAYS', 0):
+        with patch.object(settings, 'FREE_PERIOD', True), patch.object(settings, 'FREE_TRIAL_DAYS', 0):
             key = await self.prepared(lesson=True)
             self.assertEqual(await self.rows(), [])
             async with db_session() as session:
@@ -113,13 +113,13 @@ class GrammarLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await self.post('/start', {"session_id": key}, expected=410)
             self.assertEqual(await self.rows(), [])
 
-    async def test_concurrent_different_preparations_cannot_exceed_free_quota(self):
-        with patch.object(settings, 'FREE_PERIOD', False), patch.object(settings, 'FREE_TRIAL_DAYS', 0):
-            keys = [await self.prepared(), await self.prepared()]
+    async def test_concurrent_preparations_cannot_bypass_subscription_after_expiry(self):
+        keys = [await self.prepared(), await self.prepared()]
+        with patch.object(settings, 'FREE_PERIOD', False), patch.object(settings, 'FREE_TRIAL_DAYS', 99):
             results = await asyncio.gather(*(self.client.post('/api/grammar/start', headers=self.headers,
                 json={'session_id': key}) for key in keys))
-            self.assertEqual(sorted(response.status_code for response in results), [200, 402])
-            self.assertEqual(len(await self.rows()), 1)
+            self.assertEqual(sorted(response.status_code for response in results), [402, 402])
+            self.assertEqual(len(await self.rows()), 0)
 
     async def test_concurrent_activation_and_lost_reply_reuse_one_persisted_session(self):
         key = await self.prepared()

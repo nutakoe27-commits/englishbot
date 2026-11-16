@@ -1,3 +1,4 @@
+import { SubscriptionOffer } from "../src/SubscriptionOffer";
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LearningScreen } from '../src/LearningScreen';
@@ -9,6 +10,6 @@ installFetchAuth();
 function Harness() {
   const [visible,setVisible]=useState(true);
   return <div className="app-shell"><div className="app-shell__body">
-    {visible ? <LearningScreen onExit={() => setVisible(false)} onPlacement={() => setVisible(false)} /> : <p>Closed</p>}</div></div>;
+    {visible ? <><SubscriptionOffer /><LearningScreen onExit={() => setVisible(false)} onPlacement={() => setVisible(false)} /></> : <p>Closed</p>}</div></div>;
 }
 createRoot(document.getElementById('root')!).render(<StrictMode><Harness /></StrictMode>);

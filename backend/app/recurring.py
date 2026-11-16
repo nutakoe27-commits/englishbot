@@ -230,7 +230,7 @@ async def after_credit(repo, payment, confirmed: Optional[dict]) -> list[dict]:
             sub.attempts = 0
             sub.last_error = None
             sub.locked_until = None
-            sub.next_charge_at = _charge_at(until)
+            sub.next_charge_at = _charge_at(until, sub.charge_before_hours)
             sub.updated_at = now
         if await repo.nudge_once(user_id=user_id, kind="recurring_renewed", dedup_key=str(payment.id)):
             amount = int(float(payment.amount_rub))
@@ -246,13 +246,22 @@ async def after_credit(repo, payment, confirmed: Optional[dict]) -> list[dict]:
     saved = yk.saved_method(confirmed or {})
     terms = renewal_terms(str(payment.plan))
     if meta.get("recurring_setup") == "1" and terms and saved:
+        if sub is not None and sub.setup_payment_id == payment.id:
+            return notes  # Duplicate webhook must not reactivate a canceled subscription.
+        if not await repo.nudge_once(user_id=user_id, kind="recurring_setup_applied", dedup_key=str(payment.id)):
+            return notes
         method_id, title = saved
         renew_plan, renew_amount, renew_days = terms
+        intro = payment.checkout_data or {}
+        if payment.plan == "trial7" and intro.get("consented_at"):
+            renew_amount, renew_days = int(intro["renew_amount_rub"]), int(intro["renew_days"])
         from .db.models import User
         email = (await repo.s.execute(select(User.email).where(User.id == user_id))).scalar_one_or_none()
         if sub is None:
             sub = RS(user_id=user_id, plan=renew_plan, created_at=now)
             repo.s.add(sub)
+        sub.setup_payment_id = payment.id
+        sub.charge_before_hours = 0 if intro.get("consented_at") else None
         sub.plan = renew_plan
         sub.status = "active"
         sub.payment_method_id = method_id
@@ -263,7 +272,7 @@ async def after_credit(repo, payment, confirmed: Optional[dict]) -> list[dict]:
         sub.period_days = renew_days
         sub.email = email
         is_trial = payment.plan == "trial7"
-        sub.next_charge_at = _charge_at(until, TRIAL_CHARGE_BEFORE_HOURS if is_trial else None)
+        sub.next_charge_at = _charge_at(until, 0 if intro.get("consented_at") else TRIAL_CHARGE_BEFORE_HOURS if is_trial else None)
         sub.attempts = 0
         sub.last_error = None
         sub.locked_until = None
@@ -293,7 +302,7 @@ async def after_credit(repo, payment, confirmed: Optional[dict]) -> list[dict]:
     # Обычная покупка при включённом автопродлении — сдвигаем дату списания,
     # чтобы не взять деньги за уже оплаченное время.
     if sub is not None and sub.status == "active":
-        sub.next_charge_at = _charge_at(until)
+        sub.next_charge_at = _charge_at(until, sub.charge_before_hours)
         sub.reminded_for = None
         sub.updated_at = now
     return notes
@@ -391,9 +400,9 @@ async def charge_one(sub_id: int) -> str:
         # Telegram Payments не вызывает after_credit). Если до конца периода
         # ещё далеко — не списываем, а переносим дату.
         until = user.subscription_until
-        guard = timedelta(hours=int(settings.RECURRING_CHARGE_BEFORE_HOURS) + 2)
+        guard = timedelta(hours=sub.charge_before_hours if sub.charge_before_hours is not None else int(settings.RECURRING_CHARGE_BEFORE_HOURS) + 2)
         if until is not None and until > utcnow() + guard:
-            sub.next_charge_at = _charge_at(until)
+            sub.next_charge_at = _charge_at(until, sub.charge_before_hours)
             sub.locked_until = None
             sub.reminded_for = None
             sub.updated_at = utcnow()
@@ -636,7 +645,7 @@ async def resume_recurring(authorization: Optional[str] = Header(None)) -> dict:
             sub.attempts = 0
             sub.last_error = None
             sub.reminded_for = None
-            sub.next_charge_at = _charge_at(until)
+            sub.next_charge_at = _charge_at(until, sub.charge_before_hours)
             sub.updated_at = now
             logger.info("[recurring] user_id=%s resumed autorenew", user.id)
         return _state(sub)

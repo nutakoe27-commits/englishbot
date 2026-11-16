@@ -42,12 +42,8 @@ class Settings(BaseSettings):
     REFERRAL_DAYS_REFERRER: int = 7
 
     # ─── Активация новых пользователей (миграция 0033) ───────────────────
-    # Первые N дней после регистрации — полный доступ без лимитов. Окно
-    # считается от users.created_at, отдельной колонки нет. 0 = выключить.
-    # Меняя значение, поправь и тексты: в боте они склоняются от этой
-    # переменной, а в мини-аппе и на лендингах зашиты (TRIAL_DAYS в
-    # miniapp/src/trial.ts) — иначе обещание разъедется с правами.
-    FREE_TRIAL_DAYS: int = 1
+    # Backward-compatible setting; welcome days no longer grant access.
+    FREE_TRIAL_DAYS: int = 0  # Deprecated: ignored; one free lesson replaces welcome days.
     # Апсейл после платного триала trial7: сколько дней из 7 нужно было
     # позаниматься, чтобы получить предложение года со скидкой.
     TRIAL7_UPSELL_MIN_ACTIVE_DAYS: int = 4
@@ -137,9 +133,8 @@ class Settings(BaseSettings):
     # Цены подписки в рублях (синхронизированы с bot/app/main.py).
     # TRIAL3 больше не предлагается, но константа оставлена для back-compat.
     SUBSCRIPTION_PRICE_TRIAL3_RUB: int = 99
-    # Платный триал-ступень: 7 дней за 199 ₽ (миграция 0033). Первый шаг
-    # лестницы — дальше апсейл на год тем, кто реально занимался.
-    SUBSCRIPTION_PRICE_TRIAL7_RUB: int = 199
+    # Introductory subscription: a fixed 1 RUB, followed by monthly renewal.
+    SUBSCRIPTION_PRICE_TRIAL7_RUB: int = 1  # Deprecated override; introduction always costs 1 RUB.
     SUBSCRIPTION_PRICE_MONTHLY_RUB: int = 999
     SUBSCRIPTION_PRICE_YEARLY_RUB: int = 5999
     SUBSCRIPTION_PRICE_TWOYEAR_RUB: int = 9999

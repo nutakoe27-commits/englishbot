@@ -112,6 +112,7 @@ class SubscriptionOfferState(Base):
 
 class SubscriptionOfferImpression(Base):
     __tablename__ = "subscription_offer_impressions"
+    campaign: Mapped[str] = mapped_column(String(32), nullable=False, default="intro_week")
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -218,6 +219,7 @@ class DailyUsage(Base):
 
 class Payment(Base):
     __tablename__ = "payments"
+    checkout_data: Mapped[Optional[dict]] = mapped_column(JSON)
 
     # with_variant: в SQLite (локальные тесты) автоинкремент есть только у
     # INTEGER PRIMARY KEY; в MySQL тип прежний — BIGINT.
@@ -824,6 +826,8 @@ class RecurringSubscription(Base):
     """Автопродление месячной подписки (миграция 0039, docs/recurring.md)."""
 
     __tablename__ = "recurring_subscriptions"
+    charge_before_hours: Mapped[Optional[int]] = mapped_column(Integer)
+    setup_payment_id: Mapped[Optional[int]] = mapped_column(BigInteger)
 
     id: Mapped[int] = mapped_column(
         BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True,

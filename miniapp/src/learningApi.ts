@@ -9,7 +9,7 @@ export interface LessonSpec { goal?: string; ordinal: number; cycle: number; pos
 export interface Turn { id: string; text: string; reply: string; feedback: string; score: number | null; assessed: boolean; verified_voice: boolean }
 export interface LessonResult { correct: number; total: number; objective: string; words: {word: string; translation: string}[]; speaking_assessed: boolean; checkpoint_due: boolean }
 export interface GuidedModule { goal?: string; lessonId: string; level: Level; topicKey: string; conversation?: {title: string; objective: string; prompts: string[]; turns?: number; requiredTurns?: number; situation?: string; outcomes?: string[]; challenge?: string}; onComplete: () => void }
-export interface LearningAccess { full_access: boolean; trial_active: boolean; trial_until: string | null; daily_limit: number | null; used_today: number; remaining_today: number | null; resets_at: string; conversation_seconds: number | null }
+export interface LearningAccess { full_access: boolean; free_lesson_available: boolean; free_lesson_id: string | null; trial_active: boolean; trial_until: string | null; daily_limit: number | null; used_today: number; remaining_today: number | null; resets_at: string | null; conversation_seconds: number | null }
 export interface ModuleResult { completed?: boolean; skipped?: boolean; correct?: number; total?: number; turns?: number; history?: {role: string; content: string}[]; podcast?: {session_id: number; transcript: string; audio_url: string; used_words: string[]} }
 export interface LearningLesson { modules?: Record<string,ModuleResult>; id: string; status: string; step_index: number; used_seconds: number; activity_token?: string | null; conversation: Turn[]; result: LessonResult | null; listening_text_mode: boolean;
   content: { engine?: string; spec: LessonSpec; warmup: LearningQuestion[]; theory: string; practice: LearningQuestion[]; listening: {script: string; questions: LearningQuestion[]};
@@ -37,7 +37,7 @@ export async function learningPost<T>(path: string, body: Record<string,unknown>
   catch (error) {
     const detail = error && typeof error === 'object' && 'detail' in error ? String(error.detail) : '';
     const messages: Record<string,string> = {
-      lesson_limit_reached: 'На сегодня бесплатный урок уже начат. Его можно продолжить; следующий откроется завтра или с подпиской.',
+      subscription_required: 'Первый бесплатный урок завершён. Продолжите занятия с подпиской.',
       account_blocked: 'Доступ к аккаунту ограничен.',
       placement_required: 'Сначала пройди тест уровня, чтобы составить программу.',
       lesson_not_active: 'Урок приостановлен. Нажми «Продолжить», чтобы вернуться к нему.',

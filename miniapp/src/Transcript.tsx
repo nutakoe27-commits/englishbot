@@ -7,6 +7,7 @@ import { TranslatePopover } from "./TranslatePopover";
 
 interface Props {
   apiBase: string;
+  lessonId?: string;
   text: string;
   initiallyVisible?: boolean;
 }
@@ -31,7 +32,7 @@ function findSentence(text: string, wordIndex: number): string {
   return text.slice(start, end).trim();
 }
 
-export function Transcript({ apiBase, text, initiallyVisible = false }: Props) {
+export function Transcript({ lessonId, apiBase, text, initiallyVisible = false }: Props) {
   const [visible, setVisible] = useState<boolean>(initiallyVisible);
   const [target, setTarget] = useState<TranslateTarget | null>(null);
 
@@ -94,7 +95,7 @@ export function Transcript({ apiBase, text, initiallyVisible = false }: Props) {
         </div>
       )}
       {target && (
-        <TranslatePopover
+        <TranslatePopover lessonId={lessonId}
           apiBase={apiBase}
           initData={WebApp.initData || ""}
           word={target.word}

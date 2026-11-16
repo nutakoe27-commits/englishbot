@@ -116,7 +116,6 @@ export function SessionSummary({ apiBase, sessionSeconds, onClose }: Props) {
   const streak = data?.streak.current ?? 0;
   const best = data?.streak.best ?? 0;
   const inTelegram = !!WebApp.initData;
-  const trialLeft = data?.trial?.active ? data.trial.days_left : 0;
 
   // Подсказку про второй способ входа показываем ОДИН раз и только после
   // занятия: до первой сессии человеку нечего терять, и просьба звучит
@@ -212,14 +211,6 @@ export function SessionSummary({ apiBase, sessionSeconds, onClose }: Props) {
 
         {/* Остаток приветственных дней: к четвёртому дню человек должен
             уже знать, что именно у него заберут. */}
-        {trialLeft > 0 && (
-          <div className="summary-trial">
-            {trialLeft === 1
-              ? "⏳ Последний день полного доступа. Завтра останется 5 минут разговора в сутки."
-              : `✨ Полный доступ ещё ${trialLeft} ${pluralizeDays(trialLeft)} — успей попробовать подкасты и грамматику.`}
-          </div>
-        )}
-
         {/* Момент хороший: человек только что позанимался, и повод
             напоминать понятен обоим. */}
         <PushPrompt

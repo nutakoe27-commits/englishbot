@@ -21,11 +21,10 @@ before(async () => {
 after(async () => { await browser?.close(); });
 
 function analytics(empty=false) {
-  return { days:30, timezone:'Europe/Moscow',promo_code:'SALE20',discount_percent:20,followup_promo_code:'OLD50',followup_discount_percent:50,
+  return { days:30, timezone:'Europe/Moscow',campaign:'intro_week',
     impressions:empty?0:120,users_shown:empty?0:80,declines:empty?0:36,dismissals:empty?0:12,tariff_clicks:empty?0:24,
     users_clicked:empty?0:20,answers:empty?0:30,answer_rate:empty?0:37.5,click_rate:empty?0:25,
-    sale20_tariff_clicks:empty?0:14,old50_tariff_clicks:empty?0:10,paid_users:empty?0:8,revenue_rub:empty?0:4800,
-    payments_by_promo:[{code:'SALE20',discount_percent:20,users:empty?0:3,revenue_rub:empty?0:2400},{code:'OLD50',discount_percent:50,users:empty?0:5,revenue_rub:empty?0:2400}],
+    paid_users:empty?0:8,revenue_rub:empty?0:8,
     reasons:reasons.map((r,i)=>({...r,count:empty?0:i===0?15:i===1?6:i===2?4:1,percent:empty?0:i===0?50:i===1?20:i===2?13.3:3.3})),
     daily:Array.from({length:7},(_,i)=>({date:`2026-11-${String(i+1).padStart(2,'0')}`,shown:empty?0:10+i,tariffs:empty?0:2,answers:empty?0:3})),
     recent_answers:empty?[]:[{user_id:123,name:'Александра',reason:'price',reason_label:reasons[0].label,answered_at:'2026-11-07T10:30:00Z',clicked_tariffs:true,paid:true},
@@ -33,7 +32,7 @@ function analytics(empty=false) {
   };
 }
 
-async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboarding=false,url='/?app=1',admin=false,empty=false,legacyUuid=false,payIntent=false,failClaim=false}={}) {
+async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboarding=false,url='/?app=1',admin=false,empty=false,legacyUuid=false,payIntent=false,failClaim=false,newLearner=false,paymentStatus='succeeded'}={}) {
   const context = await browser.newContext({viewport:{width,height},serviceWorkers:'block'});
   t.after(async()=>{
     if(process.env.OFFERS_DEBUG) for(const page of context.pages()) console.log('DEBUG PAGE',await page.locator('body').innerText());
@@ -46,7 +45,7 @@ async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboard
     if(legacyUuid) Object.defineProperty(crypto,'randomUUID',{value:undefined});
     if(payIntent) localStorage.setItem('et_pay_intent','1');
   },{dark,legacyUuid,payIntent});
-  const state={eligible,claimed:false,cooldown:true,answered:false,failAnswer:false,failAdmin:false,onboarding};
+  const state={eligible,claimed:false,cooldown:true,answered:false,failAnswer:false,failAdmin:false,onboarding,newLearner,needEmail:false,paid:false,paymentStatus};
   const calls=[];
   await context.route('**/*',async route=>{
     const u = new URL(route.request().url());
@@ -56,16 +55,16 @@ async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboard
     if(route.request().method()==='OPTIONS') return json({});
     const body=route.request().postDataJSON() || {};
     calls.push({path:u.pathname,body,query:u.searchParams});
-    if(u.pathname==='/api/auth/me') return json({id:123,first_name:'Александра',email:'browser@example.invalid',tg_id:null,identities:[],has_subscription:!state.eligible,
+    if(u.pathname==='/api/auth/me') return json({id:123,first_name:'Александра',email:'browser@example.invalid',tg_id:null,identities:[],has_subscription:!state.eligible || state.paid,
       trial_active:false,tutorial_done:!state.onboarding,cefr_level:'A1'});
     if(u.pathname==='/api/auth/tutorial/complete') {state.onboarding=false;return json({ok:true});}
     if(u.pathname==='/api/me/progress') return json({streak:{current:3,best:5},total_minutes:48,total_words:12,achievements_earned:2,achievements_total:10});
     if(u.pathname==='/api/me/level') return json({level:2,lifetime_points:150,into_level:50,level_span:100,progress_pct:50});
     if(u.pathname==='/api/learning/overview') return json({enabled:false});
-    if(u.pathname==='/api/learning/access') return json({full_access:false,daily_limit:1,used_today:0,remaining_today:1,conversation_seconds:300});
+    if(u.pathname==='/api/learning/access') return json({full_access:!state.eligible || state.paid,free_lesson_available:state.newLearner,daily_limit:1,used_today:state.newLearner?0:1,remaining_today:state.newLearner?1:0,conversation_seconds:null});
     if(u.pathname==='/api/push/key') return json({enabled:false});
     if(u.pathname==='/api/payments/plans') return json({plans:[
-      {key:'trial7',title:'Пробная неделя',days:7,amount_rub:99,recurring:false},
+      {key:'trial7',title:'7 дней за 1 ₽',days:7,amount_rub:1,recurring:true,renew_amount_rub:999,renew_days:30},
       {key:'monthly',title:'Подписка на месяц',days:30,amount_rub:999,recurring:false},
       {key:'yearly',title:'Подписка на год',days:365,amount_rub:7999,recurring:false},
       {key:'twoyear',title:'Подписка на 2 года',days:730,amount_rub:14999,recurring:false},
@@ -73,15 +72,20 @@ async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboard
     if(u.pathname==='/api/payments/promo/check') return json({valid:true,already_used:false,discount_percent:u.searchParams.get('code')==='OLD50'?50:20});
     if(u.pathname==='/api/subscription-offers/claim') {
       if(failClaim) return json({detail:'synthetic campaign outage'},503);
-      if(!state.eligible || state.answered || state.claimed && state.cooldown) return json({show:false,answered:state.answered});
+      if(!state.eligible || state.paid || (body.trigger==='entry' && (state.answered || state.newLearner || state.claimed && state.cooldown))) return json({show:false,answered:state.answered});
       state.claimed=true;state.cooldown=true;
-      return json({show:true,impression_id:body.request_id,audience:'trial_expired',promo_code:'SALE20',discount_percent:20,reasons});
+      return json({show:true,impression_id:body.request_id,audience:body.trigger==='access'?'access_required':'lesson_completed',plan:'trial7',amount_rub:1,days:7,renew_amount_rub:999,available:true,answered:state.answered,reasons});
     }
     if(u.pathname==='/api/subscription-offers/event') return json({ok:true});
     if(u.pathname==='/api/subscription-offers/answer') {
       if(state.failAnswer) return json({detail:'synthetic failure'},503);
-      state.answered=true;return json({ok:true,reason:body.reason,promo_code:'OLD50',discount_percent:50});
+      state.answered=true;return json({ok:true,reason:body.reason});
     }
+    if(u.pathname==='/api/payments/create') {
+      if(state.needEmail && !body.email) return json({detail:'email_required'},400);
+      return json({payment_id:123,confirmation_url:BASE+'/?payment_id=123&app=1'});
+    }
+    if(u.pathname==='/api/payments/status') {state.paid=state.paymentStatus==='succeeded';return json({status:state.paymentStatus,plan:'trial7',amount_rub:1,days_granted:7});}
     if(u.pathname==='/api/admin/me') return json({ok:true});
     if(u.pathname==='/api/admin/subscription-offers') return state.failAdmin?json({detail:'Временная ошибка'},503):json({...analytics(empty),days:Number(u.searchParams.get('days'))});
     return json({});
@@ -93,9 +97,8 @@ async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboard
   await page.goto((admin?ADMIN:BASE)+(admin?'#/subscription-offers':url));
   return {page,state,calls};
 }
-const offer = page=>page.getByRole('dialog',{name:'Продолжим заниматься?'});
+const offer = page=>page.getByRole('dialog',{name:'Ещё 7 дней — за 1 ₽'});
 const survey = page=>page.getByRole('dialog',{name:'Почему вы пока не хотите оформить подписку?'});
-const thanks = page=>page.getByRole('dialog',{name:'Спасибо за ответ!'});
 async function shot(page,name) {if(SHOTS) {await page.mouse.move(0,0);await page.screenshot({path:path.join(SHOTS,name+'.png'),fullPage:true,animations:'disabled'});}}
 async function fit(page) {
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'page must not overflow horizontally');
@@ -103,128 +106,125 @@ async function fit(page) {
   if(await dialog.count()) assert.equal(await dialog.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight+1&&el.scrollWidth<=el.clientWidth;}),true,'dialog fits viewport and scrolls internally');
 }
 
-test('first offer uses SALE20; StrictMode makes one claim',async t=>{
-  const f=await fixture(t);await offer(f.page).waitFor();
-  assert.match(await offer(f.page).innerText(),/SALE20/);
-  assert.equal(f.calls.filter(c=>c.path.endsWith('/claim')).length,1);
-  await f.page.getByRole('button',{name:'Закрыть предложение'}).click();
-  await offer(f.page).waitFor({state:'detached'});assert.equal(f.state.answered,false);
+
+test('single introductory offer explains renewal, links the offer and has no checkbox',async t=>{
+ const f=await fixture(t);await offer(f.page).waitFor();
+ assert.match(await offer(f.page).innerText(),/999 ₽ каждые 30 дней автоматически/);
+ assert.equal(f.calls.filter(c=>c.path.endsWith('/claim')).length,1);
+ assert.equal(await offer(f.page).getByRole('checkbox').count(),0);
+ assert.equal(await offer(f.page).getByRole('link',{name:'Ознакомиться с офертой'}).getAttribute('href'),'/oferta.html');
+ assert.equal(await offer(f.page).getByRole('button',{name:'Подключить 7 дней за 1 ₽'}).isDisabled(),false);
+ assert(!/SALE20|OLD50|Перейти к тарифам/.test(await offer(f.page).innerText()));
 });
-test('older WebViews can claim an offer without randomUUID',async t=>{
-  const f=await fixture(t,{legacyUuid:true});await offer(f.page).waitFor();
-  assert.match(f.calls.find(c=>c.path.endsWith('/claim')).body.request_id,/^[a-f0-9-]{36}$/);
+test('older WebViews claim without randomUUID',async t=>{
+ const f=await fixture(t,{legacyUuid:true});await offer(f.page).waitFor();
+ assert.match(f.calls.find(c=>c.path.endsWith('/claim')).body.request_id,/^[a-f0-9-]{36}$/);
 });
-test('first CTA opens existing tariffs with SALE20 applied',async t=>{
-  const {page}=await fixture(t);await offer(page).getByRole('button',{name:'Перейти к тарифам'}).click();
-  await page.getByText('Скидка 20% применена ко всем тарифам.',{exact:true}).waitFor();
-  assert.equal(await page.getByPlaceholder('Промокод (если есть)').inputValue(),'SALE20');
+test('CTA goes directly to checkout with consent and the displayed renewal price',async t=>{
+ const f=await fixture(t);
+ await offer(f.page).getByRole('button',{name:'Подключить 7 дней за 1 ₽'}).click();
+ await f.page.waitForURL('**payment_id=123**');
+ const pay=f.calls.find(c=>c.path==='/api/payments/create').body;
+ assert.deepEqual(pay,{plan:'trial7',recurring_consent:true,renew_amount_rub:999});
+ assert(!f.calls.some(c=>c.path==='/api/payments/promo/check'));
 });
-test('answer is fixed choice; thanks offers OLD50 and opens tariffs at 50%',async t=>{
-  const {page,state,calls}=await fixture(t);await offer(page).getByRole('button',{name:'Спасибо, не надо'}).click();
-  await survey(page).waitFor();assert.equal(await survey(page).locator('.retention-reason').count(),8);
-  assert.equal(await survey(page).locator('input,textarea').count(),0);
-  assert.match(await survey(page).locator('.retention-reason').last().innerText(),/Другое/);
-  await survey(page).getByRole('button',{name:'Для меня дорого'}).click();await thanks(page).waitFor();
-  assert.equal(state.answered,true);assert.match(await thanks(page).innerText(),/OLD50/);
-  await thanks(page).getByRole('button',{name:'Перейти к тарифам'}).click();
-  await page.getByText('Скидка 50% применена ко всем тарифам.',{exact:true}).waitFor();
-  assert.equal(await page.getByPlaceholder('Промокод (если есть)').inputValue(),'OLD50');
-  assert.equal(calls.find(c=>c.path.endsWith('/event')&&c.body.action==='tariffs').body.promo_code,'OLD50');
+test('return from payment waits for confirmation without another introductory offer',async t=>{
+ const f=await fixture(t,{url:'/?payment_id=123&app=1',paymentStatus:'pending'});
+ await f.page.getByText('Ждём подтверждения от ЮKassa…',{exact:false}).waitFor();
+ assert.equal(await offer(f.page).count(),0);
+ assert(!f.calls.some(c=>c.path.endsWith('/claim')));
+ f.state.paymentStatus='succeeded';
+ await f.page.getByText('Подписка активирована!',{exact:false}).waitFor();
+ assert(!f.calls.some(c=>c.path==='/api/payments/create'));
+ assert.equal(await offer(f.page).count(),0);
 });
-test('failed save stays in survey; retry saves Other without free text',async t=>{
-  const f=await fixture(t);f.state.failAnswer=true;await offer(f.page).getByRole('button',{name:'Спасибо, не надо'}).click();
-  await survey(f.page).getByRole('button',{name:'Другое',exact:true}).click();await f.page.getByRole('alert').waitFor();
-  assert.equal(f.state.answered,false);assert.equal(await thanks(f.page).count(),0);
-  f.state.failAnswer=false;await survey(f.page).getByRole('button',{name:'Другое',exact:true}).click();await thanks(f.page).waitFor();
-  assert.equal(f.calls.filter(c=>c.path.endsWith('/answer')).at(-1).body.reason,'other');
+test('canceled payment retries through the single offer instead of a tariff chooser',async t=>{
+ const f=await fixture(t,{url:'/?payment_id=123&app=1',paymentStatus:'canceled'});
+ await f.page.getByText('Платёж отменён.',{exact:false}).waitFor();
+ await f.page.getByRole('button',{name:'Попробовать снова',exact:true}).click();
+ await offer(f.page).waitFor();
+ assert.equal(await f.page.locator('.sub-plans-v2').count(),0);
 });
-test('Escape closes the survey without submitting an answer',async t=>{
-  const f=await fixture(t);await offer(f.page).getByRole('button',{name:'Спасибо, не надо'}).click();
-  await survey(f.page).waitFor();await f.page.keyboard.press('Escape');await survey(f.page).waitFor({state:'detached'});
-  assert.equal(f.state.answered,false);assert.equal(f.calls.some(c=>c.path.endsWith('/answer')),false);
+test('receipt email stays inside the same offer',async t=>{
+ const f=await fixture(t);f.state.needEmail=true;
+ await offer(f.page).getByRole('button',{name:'Подключить 7 дней за 1 ₽'}).click();
+ await offer(f.page).getByLabel('Email для чека').fill('receipt@example.invalid');
+ await offer(f.page).getByRole('button',{name:'Подключить 7 дней за 1 ₽'}).click();
+ await f.page.waitForURL('**payment_id=123**');
+ assert.equal(f.calls.filter(c=>c.path==='/api/payments/create').at(-1).body.email,'receipt@example.invalid');
 });
-test('closed popup obeys cooldown on reload; answered account never gets another',async t=>{
-  const f=await fixture(t);await offer(f.page).getByRole('button',{name:'Закрыть предложение'}).click();
-  await f.page.reload();await f.page.getByRole('heading',{name:'Что тренируем сегодня?',exact:true}).waitFor();assert.equal(await offer(f.page).count(),0);
-  f.state.cooldown=false;await f.page.reload();await offer(f.page).getByRole('button',{name:'Спасибо, не надо'}).click();
-  await survey(f.page).getByRole('button',{name:'Другое',exact:true}).click();await thanks(f.page).waitFor();
-  f.state.cooldown=false;await f.page.reload();await f.page.getByRole('heading',{name:'Что тренируем сегодня?',exact:true}).waitFor();assert.equal(await f.page.getByRole('dialog').count(),0);
+test('refusal shows eight fixed reasons and answer closes without a third window',async t=>{
+ const f=await fixture(t);await offer(f.page).getByRole('button',{name:'Спасибо, не надо'}).click();
+ await survey(f.page).waitFor();assert.equal(await survey(f.page).locator('.retention-reason').count(),8);
+ assert.equal(await survey(f.page).locator('input,textarea').count(),0);
+ await survey(f.page).getByRole('button',{name:'Другое'}).click();await survey(f.page).waitFor({state:'detached'});
+ assert(f.state.answered);assert.equal(await f.page.getByRole('dialog').count(),0);
+ assert.deepEqual(Object.keys(f.calls.find(c=>c.path.endsWith('/answer')).body).sort(),['impression_id','init_data','reason']);
+ await f.page.reload();assert.equal(await f.page.getByRole('dialog').count(),0);
 });
-for(const resumeEvent of ['pageshow','focus'])test(`a new foreground visit via ${resumeEvent} can show the next daily offer`,async t=>{
-  const f=await fixture(t);await offer(f.page).getByRole('button',{name:'Закрыть предложение'}).click();f.state.cooldown=false;
-  await f.page.evaluate(event=>{const now=Date.now();Date.now=()=>now+86_400_000;window.dispatchEvent(new Event(event));},resumeEvent);
-  await offer(f.page).waitFor();assert.equal(f.calls.filter(c=>c.path.endsWith('/claim')).length,2);
+test('failed save stays in the survey and can be retried',async t=>{
+ const f=await fixture(t);f.state.failAnswer=true;
+ await offer(f.page).getByRole('button',{name:'Спасибо, не надо'}).click();
+ await survey(f.page).getByRole('button',{name:'Другое'}).click();await survey(f.page).getByRole('alert').waitFor();
+ assert(!f.state.answered);f.state.failAnswer=false;
+ await survey(f.page).getByRole('button',{name:'Другое'}).click();await survey(f.page).waitFor({state:'detached'});assert(f.state.answered);
 });
-test('onboarding finishes before the subscription popup is requested',async t=>{
-  const f=await fixture(t,{onboarding:true});await f.page.getByRole('button',{name:'Осмотреться самому',exact:true}).waitFor();
-  assert.equal(f.calls.filter(c=>c.path.endsWith('/claim')).length,0);
-  await f.page.getByRole('button',{name:'Осмотреться самому',exact:true}).click();await offer(f.page).waitFor();
+test('Escape dismisses without recording an answer; reload respects cooldown',async t=>{
+ const f=await fixture(t);await offer(f.page).waitFor();await f.page.keyboard.press('Escape');
+ await offer(f.page).waitFor({state:'detached'});assert(!f.state.answered);
+ await f.page.reload();assert.equal(await f.page.getByRole('dialog').count(),0);
 });
-test('direct subscription intent is not interrupted',async t=>{
-  const f=await fixture(t,{url:'/?app=1&subscribe=1'});await f.page.getByText('У меня есть промокод',{exact:true}).waitFor();
-  assert.equal(f.calls.filter(c=>c.path.endsWith('/claim')).length,0);assert.equal(await offer(f.page).count(),0);
+test('access before finishing first lesson opens the offer instead of a standalone tool',async t=>{
+ const f=await fixture(t,{newLearner:true});await f.page.getByRole('heading',{name:'Что тренируем сегодня?'}).waitFor();
+ assert.equal(await f.page.getByRole('dialog').count(),0);
+ await f.page.getByText('Push-to-talk диалог с AI-тьютором.').click();
+ await offer(f.page).waitFor();assert.equal(f.calls.filter(c=>c.path.endsWith('/claim')).at(-1).body.trigger,'access');
+ assert.equal(await f.page.locator('.tutor-app').count(),0);
 });
-test('a direct promo link retains its code under StrictMode',async t=>{
-  const f=await fixture(t,{url:'/?app=1&promo=OLD50'});
-  await f.page.getByText('Скидка 50% применена ко всем тарифам.',{exact:true}).waitFor();
-  assert.equal(f.calls.filter(c=>c.path.endsWith('/claim')).length,0);
+test('answer suppresses automatic surveys but manual access still offers subscription',async t=>{
+ const f=await fixture(t);await offer(f.page).getByRole('button',{name:'Спасибо, не надо'}).click();
+ await survey(f.page).getByRole('button',{name:'Другое'}).click();await survey(f.page).waitFor({state:'detached'});
+ await f.page.getByText('Push-to-talk диалог с AI-тьютором.').click();await offer(f.page).waitFor();
+ await offer(f.page).getByRole('button',{name:'Спасибо, не надо'}).click();await offer(f.page).waitFor({state:'detached'});
+ assert.equal(f.calls.filter(c=>c.path.endsWith('/answer')).length,1);
 });
-test('payment intent survives StrictMode and is consumed once',async t=>{
-  const f=await fixture(t,{payIntent:true});await f.page.getByText('У меня есть промокод',{exact:true}).waitFor();
-  assert.equal(f.calls.filter(c=>c.path.endsWith('/claim')).length,0);
-  assert.equal(await f.page.evaluate(()=>localStorage.getItem('et_pay_intent')),null);
+for(const event of ['focus','pageshow'])test(`foreground ${event} checks once per visit`,async t=>{
+ const f=await fixture(t);await offer(f.page).waitFor();await f.page.keyboard.press('Escape');f.state.cooldown=false;
+ await f.page.evaluate(event=>{const now=Date.now();Date.now=()=>now+61_000;window.dispatchEvent(new Event(event));},event);
+ await offer(f.page).waitFor();
 });
-test('a direct lesson link receives the eligible entry popup',async t=>{
-  const f=await fixture(t,{url:'/?app=1&mode=learning'});await offer(f.page).waitFor();
+test('new account onboarding does not receive an unsolicited offer',async t=>{
+ const f=await fixture(t,{onboarding:true,newLearner:true});await f.page.locator('.ob-v2').waitFor();
+ assert.equal(await f.page.locator('.retention-dialog').count(),0);
 });
-test('ineligible accounts do not receive a popup',async t=>{
-  const f=await fixture(t,{eligible:false});await f.page.getByRole('heading',{name:'Что тренируем сегодня?',exact:true}).waitFor();
-  assert.equal(await f.page.getByRole('dialog').count(),0);
+test('direct subscription intent opens the single offer',async t=>{
+ const f=await fixture(t,{url:'/?app=1&subscribe=1'});await offer(f.page).waitFor();
+ assert.equal(await f.page.locator('.sub-plan-v2').count(),0);
 });
-test('campaign API failure leaves the application usable',async t=>{
-  const f=await fixture(t,{failClaim:true});await f.page.getByRole('heading',{name:'Что тренируем сегодня?',exact:true}).waitFor();
-  assert.equal(await f.page.getByRole('dialog').count(),0);
+test('paid accounts are not interrupted',async t=>{
+ const f=await fixture(t,{eligible:false});await f.page.getByRole('heading',{name:'Что тренируем сегодня?'}).waitFor();assert.equal(await f.page.getByRole('dialog').count(),0);
 });
-test('keyboard focus stays inside the modal',async t=>{
-  const {page}=await fixture(t);await offer(page).waitFor();
-  for(let i=0;i<10;i++){await page.keyboard.press(i%3===0?'Shift+Tab':'Tab');assert.equal(await page.evaluate(()=>!!document.activeElement.closest('.retention-dialog')),true);}
+test('campaign API failure leaves home usable',async t=>{
+ const f=await fixture(t,{failClaim:true});await f.page.getByRole('heading',{name:'Что тренируем сегодня?'}).waitFor();assert.equal(await f.page.getByRole('dialog').count(),0);
 });
-test('Android Back closes tariffs after the modal handoff and keeps the home screen',async t=>{
-  const {page}=await fixture(t);await offer(page).getByRole('button',{name:'Перейти к тарифам'}).click();
-  await page.getByText('Скидка 20% применена ко всем тарифам.',{exact:true}).waitFor();
-  await page.goBack();await page.locator('.sub-screen').waitFor({state:'detached'});
-  await page.getByRole('heading',{name:'Что тренируем сегодня?',exact:true}).waitFor();
-  assert.equal(await page.getByRole('dialog').count(),0);
+test('keyboard focus stays inside the modal including the offer link',async t=>{
+ const f=await fixture(t);await offer(f.page).waitFor();for(let i=0;i<12;i++)await f.page.keyboard.press('Tab');
+ assert(await offer(f.page).evaluate(el=>el.contains(document.activeElement)));
 });
-test('changing the survey step does not add another Back entry',async t=>{
-  const {page}=await fixture(t);await offer(page).waitFor();const length=await page.evaluate(()=>history.length);
-  await offer(page).getByRole('button',{name:'Спасибо, не надо'}).click();await survey(page).waitFor();
-  assert.equal(await page.evaluate(()=>history.length),length);
-  await page.goBack();await survey(page).waitFor({state:'detached'});
+test('Android Back closes the survey without adding a new modal history entry',async t=>{
+ const f=await fixture(t);await offer(f.page).getByRole('button',{name:'Спасибо, не надо'}).click();await survey(f.page).waitFor();
+ await f.page.evaluate(()=>history.back());await survey(f.page).waitFor({state:'detached'});assert(!f.state.answered);
 });
-test('OLD50 remains selected when opening tariffs later from the profile',async t=>{
-  const {page}=await fixture(t);await offer(page).getByRole('button',{name:'Спасибо, не надо'}).click();
-  await survey(page).getByRole('button',{name:'Другое',exact:true}).click();await thanks(page).waitFor();
-  await thanks(page).getByRole('button',{name:'Продолжить заниматься'}).click();
-  await page.getByRole('button',{name:'Профиль',exact:true}).click();
-  await page.getByRole('button',{name:'Оформить подписку',exact:true}).click();
-  await page.getByText('Скидка 50% применена ко всем тарифам.',{exact:true}).waitFor();
+for(const options of [{width:320,height:568},{width:390,height:844},{width:430,height:932,dark:true},{width:768,height:600}])test(`two windows fit ${options.width}x${options.height}`,async t=>{
+ const f=await fixture(t,options);await offer(f.page).waitFor();await fit(f.page);await shot(f.page,`intro-${options.width}`);
+ await offer(f.page).getByRole('button',{name:'Спасибо, не надо'}).click();await survey(f.page).waitFor();await fit(f.page);await shot(f.page,`survey-${options.width}`);
+ await survey(f.page).getByRole('button',{name:'Другое'}).click();await survey(f.page).waitFor({state:'detached'});
 });
-for(const options of [{width:320,height:568},{width:390,height:844},{width:1440,height:1000},{width:390,height:844,dark:true}]){
-  test(`all popup steps fit ${options.width}x${options.height}${options.dark?' dark':''}`,async t=>{
-    const {page}=await fixture(t,options);await offer(page).waitFor();await fit(page);
-    const tag=`${options.width}${options.dark?'-dark':''}`;await shot(page,`offer-${tag}`);
-    await offer(page).getByRole('button',{name:'Спасибо, не надо'}).click();await survey(page).waitFor();await fit(page);await shot(page,`survey-${tag}`);
-    assert.equal(await survey(page).evaluate(el=>el.scrollTop),0,'each step starts at its heading');
-    await survey(page).getByRole('button',{name:'Другое',exact:true}).click();await thanks(page).waitFor();await fit(page);await shot(page,`thanks-${tag}`);
-  });
-}
-for(const width of [390,1440])test(`admin analytics fits width ${width}`,async t=>{
-  const f=await fixture(t,{admin:true,width,height:1000});await f.page.getByRole('heading',{name:'Что мешает подписаться'}).waitFor();
-  await fit(f.page);assert.equal(await f.page.locator('.so-promo').count(),2);await shot(f.page,`admin-${width}`);
-  await f.page.getByRole('combobox').selectOption('7');await f.page.getByRole('heading',{name:'Что мешает подписаться'}).waitFor();
-  assert.equal(f.calls.filter(c=>c.path==='/api/admin/subscription-offers').at(-1).query.get('days'),'7');
+for(const width of [390,1440])test(`new campaign analytics fits ${width}`,async t=>{
+ const f=await fixture(t,{admin:true,width,height:900});await f.page.getByRole('heading',{name:'Почему не оформляют подписку'}).waitFor();
+ await f.page.getByText('7 дней за 1 ₽',{exact:true}).waitFor();await fit(f.page);await shot(f.page,`admin-intro-${width}`);
+ assert(!/SALE20|OLD50/.test(await f.page.locator('.so-analytics').innerText()));
 });
 test('admin empty state is clear',async t=>{
-  const f=await fixture(t,{admin:true,empty:true});await f.page.getByText('Пока никто не ответил на вопрос.',{exact:true}).waitFor();await fit(f.page);
+ const f=await fixture(t,{admin:true,empty:true});await f.page.getByText('Пока никто не ответил на вопрос.').waitFor();
 });

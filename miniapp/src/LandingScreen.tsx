@@ -16,7 +16,6 @@
 import { useEffect } from "react";
 import { ymHit, ymReachGoal } from "./metrika";
 import { LandingNav } from "./LandingNav";
-import { TRIAL_PERIOD } from "./trial";
 import "./Landing.css";
 
 interface Props {
@@ -128,14 +127,14 @@ function Hero({ onCta, onBuy }: { onCta: () => void; onBuy: () => void }) {
           </p>
           <div className="lp-cta-pair">
             <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
-              Начать бесплатно — {TRIAL_PERIOD} полного доступа
+              Пройти первый урок бесплатно
             </button>
             <button type="button" className="lp-btn lp-btn--ghost lp-btn--md" onClick={onBuy}>
               Оплатить сразу
             </button>
           </div>
           <p className="lp-hero__note">
-            Первые {TRIAL_PERIOD} всё открыто без ограничений. Карта не нужна —
+            Первый полный урок бесплатно. Карта для него не нужна —
             вход в один тап через Яндекс ID или email.
           </p>
           <div className="lp-hero__proof">
@@ -320,19 +319,19 @@ function Pricing({
       <div className="lp-container">
         <h2 className="lp-h2 lp-h2--center">Стоимость</h2>
         <p className="lp-section__sub">
-          Сначала {TRIAL_PERIOD} полного доступа бесплатно — платить, только
-          если зайдёт. Дешевле одного занятия с репетитором (1 000–1 500 ₽).
-          Оплата картой через ЮKassa, разовая, без автосписаний.
+          Первый урок бесплатно. Затем — 7 дней полного доступа за 1 ₽ при первом подключении.
+          Далее подписка автоматически продлевается по месячному тарифу.
+          Сумма и период списаний указаны перед оплатой. Отмена — в профиле.
         </p>
         <div className="lp-plans">
           <PlanCard
-            title="Пробная неделя"
-            price="199 ₽"
+            title="Первое подключение"
+            price="1 ₽"
             period="7 дней"
-            hint="Дешевле чашки кофе. Один раз на аккаунт"
+            hint="Затем — месячный тариф с автопродлением"
             onCta={onCta}
             onBuy={() => onBuy("trial7")}
-            ctaLabel={`Начать бесплатно — ${TRIAL_PERIOD}`}
+            ctaLabel="Первый урок бесплатно"
           />
           <PlanCard
             title="Месячный"
@@ -341,7 +340,7 @@ function Pricing({
             hint="Самый частый выбор"
             onCta={onCta}
             onBuy={() => onBuy("monthly")}
-            ctaLabel={`Начать бесплатно — ${TRIAL_PERIOD}`}
+            ctaLabel="Первый урок бесплатно"
             highlighted
           />
           <PlanCard
@@ -352,7 +351,7 @@ function Pricing({
             hint="Выгода 50% — для тех, кто уже втянулся"
             onCta={onCta}
             onBuy={() => onBuy("yearly")}
-            ctaLabel={`Начать бесплатно — ${TRIAL_PERIOD}`}
+            ctaLabel="Первый урок бесплатно"
           />
         </div>
         <p className="lp-offer-link">
@@ -417,10 +416,9 @@ function Faq() {
     },
     {
       q: "Сколько времени занимает в день?",
-      a: <>15 минут в день хватает, чтобы держать привычку. Первые{" "}
-        {TRIAL_PERIOD} после регистрации ограничений нет вообще. Дальше на
-        бесплатном тарифе остаётся 5 минут разговора в день, с подпиской —
-        без лимитов.</>,
+      a: <>Полный урок занимает примерно 15–20 минут. Первый урок бесплатный:
+        его можно сохранить и продолжить позже. Дальнейшие занятия и отдельные
+        тренажёры доступны по подписке.</>,
     },
     {
       q: "Как происходит оплата? Это безопасно?",
@@ -437,11 +435,9 @@ function Faq() {
     },
     {
       q: "А если не понравится?",
-      a: <>Первые {TRIAL_PERIOD} всё открыто без ограничений — разговор,
-        подкасты, грамматика. Успеешь понять, твоё это или нет, до любой
-        оплаты. Дальше остаются бесплатные 5 минут разговора в день, а
-        подписку берёшь, только если зайдёт. Оплата разовая, автосписаний
-        нет.</>,
+      a: <>Пройди первый полный урок бесплатно, без карты. Если понравится,
+        подключи 7 дней за 1 ₽. Затем подписка автоматически продлевается
+        по месячному тарифу. Отменить автопродление можно в профиле до следующего списания.</>,
     },
   ];
   return (
@@ -469,7 +465,7 @@ function FinalCta({ onCta, onBuy }: { onCta: () => void; onBuy: () => void }) {
         <h2 className="lp-h2">Хватит молчать.<br />Скажи первую фразу сегодня.</h2>
         <div className="lp-cta-pair">
           <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
-            Начать бесплатно — {TRIAL_PERIOD} полного доступа
+            Пройти первый урок бесплатно
           </button>
           <button type="button" className="lp-btn lp-btn--ghost lp-btn--md" onClick={onBuy}>
             Оплатить сразу
@@ -477,7 +473,7 @@ function FinalCta({ onCta, onBuy }: { onCta: () => void; onBuy: () => void }) {
         </div>
         <p className="lp-final__note">
           Без карты и без автосписаний. Дальше — 5 минут разговора в день
-          бесплатно или подписка, если зайдёт.
+          первый урок бесплатно, дальше — подписка.
         </p>
       </div>
     </section>
