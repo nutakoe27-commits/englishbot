@@ -443,6 +443,7 @@ function TabShell({
     try { localStorage.removeItem(PAY_INTENT_KEY); } catch { /* private mode */ }
   }, []);
   const [onboardingManual, setOnboardingManual] = useState<boolean>(false);
+  const [subscriptionCatalog, setSubscriptionCatalog] = useState(false);
   const [subscriptionPromo] = useState(initialPromo);
   const [skipEntryOffer] = useState(() => subscribeOpen || !!initialSchool
     || new URLSearchParams(window.location.search).has("payment_id"));
@@ -495,8 +496,8 @@ function TabShell({
   }, [initialSchool]);
 
   useEffect(() => {
-    if (subscribeOpen && toolAccess === false) { setSubscribeOpen(false); requestSubscription(); }
-  }, [subscribeOpen, toolAccess]);
+    if (subscribeOpen && !subscriptionCatalog && toolAccess === false) { setSubscribeOpen(false); requestSubscription(); }
+  }, [subscribeOpen, subscriptionCatalog, toolAccess]);
 
   const switchTab = (next: TabKey) => {
     if (next === "words" && !toolAccess) { requestSubscription(); return; }
@@ -549,7 +550,7 @@ function TabShell({
       <AccountSheet
         embedded
         onLoggedOut={onLoggedOut}
-        onOpenSubscribe={() => toolAccess ? setSubscribeOpen(true) : requestSubscription()}
+        onOpenSubscribe={() => { setSubscriptionCatalog(true); setSubscribeOpen(true); }}
         onOpenTutorial={() => setOnboardingManual(true)}
       />
     );
@@ -580,6 +581,7 @@ function TabShell({
       <BottomNav active={activeForNav as TabKey} onChange={switchTab} />
       {subscribeOpen && (
         <SubscribeScreen
+          allowPlanSelection={subscriptionCatalog}
           initialPromoCode={subscriptionPromo}
           onClose={() => setSubscribeOpen(false)}
         />

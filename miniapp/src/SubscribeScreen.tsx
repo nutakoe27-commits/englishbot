@@ -2,7 +2,7 @@
  * SubscribeScreen.tsx — страница подписки с тарифами и оплатой через ЮKassa.
  *
  * Два режима:
- *  - `mode='select'` (дефолт) — показывает 3 тарифа из /api/payments/plans,
+ *  - Выбор — показывает доступные тарифы из /api/payments/plans,
  *    клик создаёт платёж и редиректит на confirmation_url ЮKassa.
  *  - `mode='return'` — юзер вернулся с ЮKassa (URL содержит ?payment_id=N).
  *    Опрашиваем /api/payments/status каждые 2с до status='succeeded' либо
@@ -37,11 +37,13 @@ interface Props {
   onClose: () => void;
   onPaid?: () => void;
   initialReturnPaymentId?: number;
+  // Explicit profile navigation may browse all eligible plans without a subscription.
+  allowPlanSelection?: boolean;
   // Промокод из deep-link (бот шлёт ?promo=SALE20) — авто-применяется на старте.
   initialPromoCode?: string;
 }
 
-export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initialPromoCode }: Props) {
+export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initialPromoCode, allowPlanSelection = false }: Props) {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [me, setMe] = useState<MeInfo | null>(null);
   const [programAccess,setProgramAccess] = useState<LearningAccess | null>(null);
@@ -72,13 +74,13 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
     void (async () => {
       const [p, m, access] = await Promise.all([listPlans(), fetchMe(),learningGet<LearningAccess>('/access').catch(() => null)]);
       if (!alive) return;
-      if (m && !m.has_subscription && !initialReturnPaymentId) { onClose(); requestSubscription(); return; }
+      if (m && !m.has_subscription && !initialReturnPaymentId && !allowPlanSelection) { onClose(); requestSubscription(); return; }
       setPlans(p); setMe(m); setLoading(false);
       setProgramAccess(access);
       if (m?.email) setEmailInput(m.email);
     })();
     return () => { alive = false; };
-  }, [initialReturnPaymentId]);
+  }, [initialReturnPaymentId, allowPlanSelection]);
 
   useEffect(() => {
     if (!returnPaymentId || returnStatus !== "pending") return;
@@ -126,7 +128,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
       if (r.already_used) { setPromoApplied(null); setPromoMsg("Этот промокод ты уже использовал."); return; }
       if (!r.valid) { setPromoApplied(null); setPromoMsg("Промокод недействителен."); return; }
       setPromoApplied({ code, pct: r.discount_percent });
-      setPromoMsg(`Скидка ${r.discount_percent}% применена ко всем тарифам.`);
+      setPromoMsg(`Скидка ${r.discount_percent}% применена к месяцу, году и двум годам. Неделя за 1 ₽ — без промокода.`);
     } finally { setPromoBusy(false); }
   }, [promoInput, promoBusy]);
 
@@ -152,7 +154,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
           return;
         }
         setPromoApplied({ code, pct: r.discount_percent });
-        setPromoMsg(`Скидка ${r.discount_percent}% применена ко всем тарифам.`);
+        setPromoMsg(`Скидка ${r.discount_percent}% применена к месяцу, году и двум годам. Неделя за 1 ₽ — без промокода.`);
       } finally {
         if (alive) setPromoBusy(false);
       }
@@ -167,7 +169,6 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
 
   const launchPayment = useCallback(async (planKey: Plan["key"], emailOverride?: string) => {
     if (busy) return;
-    if (planKey === "trial7") { onClose(); requestSubscription(); return; }
     setBusy(planKey); setError("");
     const planInfo = plans.find((p) => p.key === planKey);
     ymReachGoal("subscribe_plan_clicked", {
@@ -175,7 +176,10 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
       amount_rub: planInfo?.amount_rub,
     });
     try {
-      const r = await createPayment(planKey, emailOverride, promoApplied?.code);
+      const intro = planKey === "trial7";
+      const r = await createPayment(planKey, emailOverride, intro ? undefined : promoApplied?.code,
+        intro ? { recurring_consent: true,
+          renew_amount_rub: planInfo?.renew_amount_rub ?? plans.find(p => p.key === "monthly")?.amount_rub ?? 999 } : undefined);
       if (r.ok && r.confirmation_url) {
         window.location.href = r.confirmation_url;
         return;
@@ -191,8 +195,15 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
         setPromoApplied(null);
         setError("Промокод недействителен.");
       } else if (r.error === "plan_already_used") {
-        setError("Пробную неделю можно купить один раз. Выбери месяц или год.");
+        setError("Неделя за 1 ₽ доступна только при первом подключении. Выбери другой тариф.");
         void listPlans().then(setPlans);
+      } else if (r.error === "renewal_price_changed") {
+        setError("Условия продления изменились. Проверь обновлённую цену и выбери тариф снова.");
+        void listPlans().then(setPlans);
+      } else if (r.error === "payment_pending") {
+        setError("Предыдущий платёж ещё проверяется. Дождись его результата, чтобы избежать повторной оплаты.");
+      } else if (r.error === "recurring_unavailable") {
+        setError("Подключение подписки временно недоступно. Попробуй позже.");
       } else if (r.error === "yookassa_not_configured") {
         setError("Оплата временно недоступна. Сообщи в @kmo_ai, разберёмся.");
       } else {
@@ -348,7 +359,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
                 {plans.map((p) => {
                   const monthlyPrice = plans.find((x) => x.key === "monthly")?.amount_rub ?? 999;
                   const isRecommended = p.badge === "Рекомендуем";
-                  const finalPrice = _discounted(p.amount_rub);
+                  const finalPrice = p.key === "trial7" ? p.amount_rub : _discounted(p.amount_rub);
                   const hasDiscount = !!promoApplied && finalPrice !== p.amount_rub;
                   return (
                     <button

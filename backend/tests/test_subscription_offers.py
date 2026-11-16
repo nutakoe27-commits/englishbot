@@ -255,6 +255,17 @@ class SubscriptionOfferTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(response.status_code,(400,409),response.text)
             mock.assert_not_awaited()
 
+    async def test_profile_catalog_has_four_plans_and_one_ruble_intro(self):
+        with patch.object(settings, 'SUBSCRIPTION_PRICE_TRIAL7_RUB', 199):
+            response = await self.client.get('/api/payments/plans', headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        plans = {plan['key']: plan for plan in response.json()['plans']}
+        self.assertEqual(set(plans), {'trial7', 'monthly', 'yearly', 'twoyear'})
+        self.assertEqual((plans['trial7']['amount_rub'], plans['trial7']['days']), (1, 7))
+        self.assertTrue(plans['trial7']['recurring'])
+        self.assertEqual(plans['trial7']['renew_amount_rub'], plans['monthly']['amount_rub'])
+        self.assertEqual(plans['trial7']['renew_days'], 30)
+
     async def test_ruble_checkout_snapshots_price_and_reuses_payment_across_devices(self):
         with patch.object(payment_routes.yk,"create_payment",AsyncMock(return_value=self.provider())) as mock:
             results=await asyncio.gather(*(self.checkout() for _ in range(5)))
@@ -284,6 +295,8 @@ class SubscriptionOfferTests(unittest.IsolatedAsyncioTestCase):
             offer=await self.claim(trigger="access")
             self.assertEqual(offer["plan"],"monthly")
             self.assertEqual(offer["amount_rub"],settings.SUBSCRIPTION_PRICE_MONTHLY_RUB)
+            catalog = await self.client.get('/api/payments/plans', headers=self.headers)
+            self.assertEqual({plan['key'] for plan in catalog.json()['plans']}, {'monthly', 'yearly', 'twoyear'})
 
     async def test_credit_full_week_renewal_amount_and_cancel_survive_duplicate_webhook(self):
         with patch.object(payment_routes.yk,"create_payment",AsyncMock(return_value=self.provider())):
@@ -316,6 +329,10 @@ class SubscriptionOfferTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(settings,"SUBSCRIPTION_PRICE_MONTHLY_RUB",1999):
             offer=await self.claim(trigger="access")
             self.assertEqual(offer["renew_amount_rub"],999)
+            catalog = await self.client.get('/api/payments/plans', headers=self.headers)
+            plans = {plan['key']: plan for plan in catalog.json()['plans']}
+            self.assertEqual(plans['trial7']['renew_amount_rub'], 999)
+            self.assertEqual(plans['monthly']['amount_rub'], 1999)
             again=await self.checkout(renew_amount_rub=999)
             self.assertEqual(again.json(),response.json())
 

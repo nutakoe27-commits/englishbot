@@ -96,6 +96,7 @@ async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
     """
     used_one_time: set[str] = set()
     viewer_id: Optional[int] = None
+    intro_renewal = int(settings.SUBSCRIPTION_PRICE_MONTHLY_RUB)
     if authorization and settings.DATABASE_URL:
         from .db import Repo
         try:
@@ -106,6 +107,8 @@ async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
                 for plan_key in ONE_TIME_PLANS:
                     if not await intro_eligible(repo, user):
                         used_one_time.add(plan_key)
+                if 'trial7' not in used_one_time:
+                    intro_renewal = await intro_renewal_amount(repo, user.id)
         except Exception:
             # Неавторизованный/битый токен — просто показываем полный список.
             used_one_time = set()
@@ -127,6 +130,8 @@ async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
             terms = recurring.renewal_terms(k)
             if terms:
                 item["renew_plan"], item["renew_amount_rub"], item["renew_days"] = terms
+                if k == "trial7":
+                    item["renew_amount_rub"] = intro_renewal
         # Выгода длинных тарифов относительно помесячной оплаты.
         months = round(int(v["days"]) / 30.4)
         if months >= 12 and monthly > 0:
@@ -137,6 +142,16 @@ async def list_plans(authorization: Optional[str] = Header(None)) -> dict:
             item["months"] = months
         out.append(item)
     return {"plans": out}
+
+
+async def intro_renewal_amount(repo, user_id):
+    """The catalogue and popup must show the terms of an existing checkout."""
+    from sqlalchemy import select
+    from .db.models import Payment
+    data = await repo.s.scalar(select(Payment.checkout_data).where(
+        Payment.user_id == user_id, Payment.plan == 'trial7', Payment.status == 'pending'
+    ).order_by(Payment.id.desc()).limit(1).with_for_update())
+    return int((data or {}).get('renew_amount_rub', settings.SUBSCRIPTION_PRICE_MONTHLY_RUB))
 
 
 async def intro_eligible(repo, user):

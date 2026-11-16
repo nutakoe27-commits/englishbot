@@ -56,15 +56,22 @@ export function SubscriptionOffer({ enabled = true }: { enabled?: boolean }) {
   const dialog = useRef<HTMLDivElement>(null);
   const dismissed = useRef(false);
   const claim = useRef<Promise<Offer> | null>(null);
+  const handledClaim = useRef<Promise<Offer> | null>(null);
+  const claimTrigger = useRef<OfferTrigger>("entry");
   const lastCheck = useRef(0);
   const lastRequested = useRef(0);
   const answered = useRef(false);
 
   useEffect(() => {
     let alive = true;
-    const receive = (data: Offer) => {
+    const receive = (pending: Promise<Offer>, trigger: OfferTrigger) => pending.then(data => {
+      if (!alive || pending !== claim.current || pending === handledClaim.current || (trigger === "entry" && !enabled)) return;
+      handledClaim.current = pending;
       if (data.answered) answered.current = true;
-      if (alive && data.show) { dismissed.current = false; setOffer(data); setStep("offer"); setError(""); setAskEmail(false); }
+      if (data.show) { dismissed.current = false; setOffer(data); setStep("offer"); setError(""); setAskEmail(false); }
+    });
+    const watchClaim = () => {
+      if (claim.current) void receive(claim.current, claimTrigger.current).catch(() => {});
     };
     // React StrictMode replays effects. Both listeners share one claim and
     // its response instead of letting the first request consume the cooldown.
@@ -72,21 +79,23 @@ export function SubscriptionOffer({ enabled = true }: { enabled?: boolean }) {
       lastCheck.current = Date.now();
       claim.current = claimOffer();
     }
-    void claim.current?.then(receive).catch(() => {});
+    watchClaim();
     // A PWA/WebView may stay alive overnight. Check on a new foreground visit,
     // never on a timer during a lesson. The server owns the actual 24h limit.
     const resume = () => {
       if (!enabled || answered.current || document.visibilityState !== "visible" || Date.now() - lastCheck.current < 60_000) return;
       lastCheck.current = Date.now();
       claim.current = claimOffer();
-      void claim.current.then(receive).catch(() => {});
+      claimTrigger.current = "entry";
+      watchClaim();
     };
     const requested = (event: Event) => {
       if (Date.now() - lastRequested.current < 1000) return;
       lastRequested.current = Date.now();
       const trigger = (event as CustomEvent<OfferTrigger>).detail;
       claim.current = claimOffer(trigger);
-      void claim.current.then(receive).catch(() => {
+      claimTrigger.current = trigger;
+      void receive(claim.current, trigger).catch(() => {
         window.dispatchEvent(new CustomEvent("subscription:error"));
       });
     };

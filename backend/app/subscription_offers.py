@@ -82,17 +82,14 @@ async def _audience(session, user, trigger):
 
 
 async def _offer(session, user, impression, state):
-    from .payment_routes import intro_eligible, _plan_catalog
+    from .payment_routes import intro_eligible, intro_renewal_amount, _plan_catalog
     from . import recurring
     eligible = await intro_eligible(Repo(session), user)
     plan = 'trial7' if eligible else 'monthly'
     info = _plan_catalog()[plan]
     renewal = _plan_catalog()['monthly']['amount_rub']
     if eligible:
-        pending = await session.scalar(select(Payment).where(Payment.user_id == user.id,
-            Payment.plan == 'trial7', Payment.status == 'pending').order_by(Payment.id.desc()).limit(1).with_for_update())
-        if pending and pending.checkout_data:
-            renewal = pending.checkout_data.get('renew_amount_rub', renewal)
+        renewal = await intro_renewal_amount(Repo(session), user.id)
     return {"show": True, "impression_id": impression.id, "audience": impression.audience,
             "answered": bool(state and state.answered_at), "plan": plan,
             "amount_rub": info['amount_rub'], "days": info['days'],

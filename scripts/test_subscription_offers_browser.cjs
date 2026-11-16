@@ -106,6 +106,60 @@ async function fit(page) {
   if(await dialog.count()) assert.equal(await dialog.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight+1&&el.scrollWidth<=el.clientWidth;}),true,'dialog fits viewport and scrolls internally');
 }
 
+async function openProfilePlans(page) {
+ await page.getByRole('button',{name:'Профиль',exact:true}).click();
+ await page.getByRole('button',{name:'Оформить подписку',exact:true}).click();
+ await page.locator('.sub-plan-v2').first().waitFor();
+}
+
+for(const width of [320,390])test(`unsubscribed profile opens four tariffs including one-ruble week at ${width}px`,async t=>{
+ const f=await fixture(t,{newLearner:true,width,height:844});
+ await openProfilePlans(f.page);
+ assert.equal(await f.page.locator('.sub-plan-v2').count(),4);
+ const week=f.page.locator('.sub-plan-v2').filter({hasText:'7 дней за 1 ₽'});
+ assert.equal((await week.locator('.sub-plan-v2__price').innerText()).trim(),'1 ₽');
+ assert.match(await week.innerText(),/999 ₽ каждые 30 дней/);
+ assert.equal(await f.page.getByRole('checkbox').count(),0);
+ assert.equal(await offer(f.page).count(),0);
+ await fit(f.page);await shot(f.page,`profile-plans-${width}`);
+ await f.page.locator('.sub-screen').getByRole('button',{name:'Закрыть',exact:true}).click();
+ await f.page.locator('.sub-screen').waitFor({state:'detached'});
+ assert.equal(await offer(f.page).count(),0);
+});
+test('opening and closing profile tariffs never revives a dismissed introductory offer',async t=>{
+ const f=await fixture(t);await offer(f.page).waitFor();await f.page.keyboard.press('Escape');
+ await offer(f.page).waitFor({state:'detached'});
+ await openProfilePlans(f.page);
+ assert.equal(await offer(f.page).count(),0);
+ await f.page.locator('.sub-screen').getByRole('button',{name:'Закрыть',exact:true}).click();
+ await f.page.locator('.sub-screen').waitFor({state:'detached'});
+ assert.equal(await offer(f.page).count(),0);
+ assert.equal(f.calls.filter(c=>c.path.endsWith('/claim')).length,1);
+});
+test('profile week goes straight to checkout with displayed terms, receipt email and no promo',async t=>{
+ const f=await fixture(t,{newLearner:true});f.state.needEmail=true;
+ await openProfilePlans(f.page);
+ await f.page.getByRole('button',{name:'У меня есть промокод'}).click();
+ await f.page.getByPlaceholder('Промокод (если есть)').fill('WELCOME10');
+ await f.page.getByRole('button',{name:'Применить',exact:true}).click();
+ await f.page.getByText(/Неделя за 1 ₽ — без промокода/).waitFor();
+ const week=f.page.locator('.sub-plan-v2').filter({hasText:'7 дней за 1 ₽'});
+ assert.equal(await week.locator('.sub-plan-v2__old').count(),0);
+ await week.click();
+ await f.page.getByPlaceholder('Email').fill('receipt@example.invalid');
+ await f.page.getByRole('button',{name:'Продолжить к оплате'}).click();
+ await f.page.waitForURL('**payment_id=123**');
+ const pay=f.calls.filter(c=>c.path==='/api/payments/create').at(-1).body;
+ assert.deepEqual(pay,{plan:'trial7',email:'receipt@example.invalid',recurring_consent:true,renew_amount_rub:999});
+ assert(!f.calls.some(c=>c.path.endsWith('/claim') && c.body.trigger==='access'));
+});
+for(const [key,title] of [['monthly','Подписка на месяц'],['yearly','Подписка на год'],['twoyear','Подписка на 2 года']])test(`profile can buy ${key} without taking the introductory week`,async t=>{
+ const f=await fixture(t,{newLearner:true});await openProfilePlans(f.page);
+ await f.page.locator('.sub-plan-v2').filter({has:f.page.getByText(title,{exact:true})}).click();
+ await f.page.waitForURL('**payment_id=123**');
+ assert.equal(f.calls.find(c=>c.path==='/api/payments/create').body.plan,key);
+ assert(!f.calls.some(c=>c.path.endsWith('/claim') && c.body.trigger==='access'));
+});
 
 test('single introductory offer explains renewal, links the offer and has no checkbox',async t=>{
  const f=await fixture(t);await offer(f.page).waitFor();
