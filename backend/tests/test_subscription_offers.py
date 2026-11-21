@@ -93,7 +93,7 @@ class SubscriptionOfferTests(unittest.IsolatedAsyncioTestCase):
         first = await self.claim()
         self.assertTrue(first["show"])
         self.assertEqual((first["plan"], first["amount_rub"], first["days"]), ("trial7", 1, 7))
-        self.assertEqual(first["audience"], "lesson_completed")
+        self.assertEqual(first["audience"], "access_required")
         self.assertEqual(len(first["reasons"]), 8)
         self.assertEqual(first["reasons"][-1], {"code": "other", "label": "Другое"})
         self.assertFalse((await self.claim())["show"])
@@ -177,11 +177,54 @@ class SubscriptionOfferTests(unittest.IsolatedAsyncioTestCase):
         await self.payment()
         self.assertFalse((await self.claim())["show"])
 
-    async def test_free_period_and_blocked_accounts_are_excluded(self):
+    async def test_legacy_free_period_does_not_unlock_practice_and_blocked_accounts_are_excluded(self):
         with patch.object(settings, "FREE_PERIOD", True):
-            self.assertFalse((await self.claim())["show"])
+            self.assertTrue((await self.claim())["show"])
         await self.account(is_blocked=True)
         self.assertFalse((await self.claim())["show"])
+
+    async def test_admin_filter_and_renewal_are_independent(self):
+        marker = uuid4().hex
+        async with db_session() as session:
+            await session.execute(update(User).where(User.id.in_(self.users)).values(first_name=marker))
+            (await session.get(User, self.uid)).subscription_until = utcnow() + timedelta(days=7)
+            session.add(RecurringSubscription(user_id=self.uid, plan="monthly", status="active",
+                payment_method_id="test", amount_rub=999, next_charge_at=utcnow()+timedelta(days=7),
+                created_at=utcnow(), updated_at=utcnow()))
+        async def filtered(active):
+            response = await self.client.get("/api/admin/users", params={"q": marker, "has_subscription": active},
+                                             headers=self.admin)
+            self.assertEqual(response.status_code, 200, response.text)
+            return [(row["id"], row["auto_renew_enabled"]) for row in response.json()]
+        self.assertEqual(await filtered(True), [(self.uid, True)])
+        self.assertEqual(await filtered(False), [(self.other, False)])
+        async with db_session() as session:
+            await session.execute(update(RecurringSubscription).where(RecurringSubscription.user_id == self.uid)
+                                  .values(status="canceled", payment_method_id=""))
+        self.assertEqual(await filtered(True), [(self.uid, False)])
+        detail = await self.client.get(f"/api/admin/users/{self.uid}", headers=self.admin)
+        self.assertTrue(detail.json()["has_subscription"])
+        self.assertFalse(detail.json()["auto_renew_enabled"])
+
+    async def test_ltv_counts_all_personal_payments_once_per_payer(self):
+        async with db_session() as session:
+            payments = (await session.scalars(select(Payment).where(Payment.status == "succeeded"))).all()
+            personal = [p for p in payments if p.amount_rub > 0 and p.plan in
+                        {"trial3","trial7","monthly","yearly","twoyear","manual_pay"}]
+            base = sum(p.amount_rub for p in personal)
+            payers = len({p.user_id for p in personal})
+            if payers == 0:
+                self.assertIsNone(await Repo(session).paid_subscriber_ltv())
+        await self.payment(plan="trial7", amount=1)
+        await self.payment(amount=999)
+        await self.payment(uid=self.other, plan="manual_pay", amount=499)
+        for plan in ("gift", "org", "admin_grant", "referral"):
+            await self.payment(plan=plan, amount=100)
+        for status in ("pending", "canceled", "refunded"):
+            await self.payment(status=status, amount=999)
+        from app.admin import _build_metrics
+        metrics = await _build_metrics()
+        self.assertEqual(metrics.paid_subscriber_ltv_rub, float(round((base+1499)/(payers+2), 2)))
 
     async def test_active_school_access_is_excluded(self):
         async with db_session() as session:
@@ -189,18 +232,25 @@ class SubscriptionOfferTests(unittest.IsolatedAsyncioTestCase):
             session.add(org); await session.flush(); self.orgs.append(org.id)
             session.add(OrgMember(org_id=org.id, user_id=self.uid, role="student", active=True, joined_at=utcnow()))
         self.assertFalse((await self.claim())["show"])
+        async with db_session() as session:
+            rows = await Repo(session).search_users("Offer test", has_subscription=True)
+            self.assertIn(self.uid, [user.id for user, active, renewal in rows if active and not renewal])
 
-    async def test_before_first_lesson_only_explicit_access_shows_offer(self):
+    async def test_new_user_receives_offer_before_first_lesson(self):
         async with db_session() as session:
             await session.execute(update(LearningProfile).where(LearningProfile.user_id==self.uid).values(completed_count=0))
-        self.assertFalse((await self.claim())["show"])
+        self.assertTrue((await self.claim())["show"])
         self.assertFalse((await self.claim(trigger="lesson_completed"))["show"])
         self.assertTrue((await self.claim(trigger="access"))["show"])
 
-    async def test_completion_shows_offer_after_an_earlier_manual_dismissal_once(self):
+    async def test_onboarding_defers_entry_offer_but_practice_always_offers_checkout(self):
+        await self.account(tutorial_done_at=None)
+        self.assertFalse((await self.claim())["show"])
+        self.assertTrue((await self.claim(trigger="access"))["show"])
+
+    async def test_legacy_completion_does_not_revive_dismissed_offer(self):
         first = await self.claim(trigger="access")
         await self.post("/event", {"impression_id":first['impression_id'], "action":"closed"})
-        self.assertTrue((await self.claim(trigger="lesson_completed"))["show"])
         self.assertFalse((await self.claim(trigger="lesson_completed"))["show"])
 
     async def test_disabled_recurring_does_not_sell_a_nonrenewing_ruble_week(self):

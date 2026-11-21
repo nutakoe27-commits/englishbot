@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   ApiError,
@@ -622,7 +622,7 @@ function Dashboard() {
   // не падаем, а показываем 0.
   const num = (v: number | null | undefined): string =>
     (v == null ? 0 : v).toString();
-  const items: { label: string; value: string }[] = [
+  const items: { label: string; value: string; description?: string }[] = [
     { label: "В Mini App всего", value: num(metrics.total_users) },
     { label: "Активировали бота", value: num(metrics.bot_activated_total) },
     { label: "Новых в Mini App сегодня", value: num(metrics.new_users_today) },
@@ -633,6 +633,11 @@ function Dashboard() {
     { label: "WAU (7 дн.)", value: num(metrics.wau) },
     { label: "MAU (30 дн.)", value: num(metrics.mau) },
     { label: "Минут сегодня", value: num(metrics.minutes_today) },
+    {
+      label: "LTV платного подписчика",
+      value: metrics.paid_subscriber_ltv_rub == null ? "—" : fmtRub(metrics.paid_subscriber_ltv_rub),
+      description: "Средняя сумма всех успешных оплат личной подписки на одного плательщика за всё время.",
+    },
     { label: "Выручка всего", value: fmtRub(metrics.total_revenue_rub ?? 0) },
   ];
 
@@ -643,7 +648,7 @@ function Dashboard() {
       <h2 style={S.h2}>Метрики</h2>
       <div style={metricsGridStyle(isMobile)}>
         {items.map((it) => (
-          <div key={it.label} style={S.metricCard}>
+          <div key={it.label} style={S.metricCard} title={it.description}>
             <p style={S.metricValue}>{it.value}</p>
             <p style={S.metricLabel}>{it.label}</p>
           </div>
@@ -889,6 +894,14 @@ function RetentionTable({ data }: { data: RetentionCohort[] | null }) {
 }
 
 // ─── Users list ──────────────────────────────────────────────────────────────
+function subscriptionLabel(user: UserBrief) {
+  if (!user.has_subscription) return "нет";
+  if (user.subscription_until && Date.parse(user.subscription_until) > Date.now()) {
+    return `до ${fmtDate(user.subscription_until)}`;
+  }
+  return "Школьный доступ";
+}
+
 const USERS_PAGE = 50;
 
 function UsersList() {
@@ -898,17 +911,21 @@ function UsersList() {
   // пагинация. Меняем только при submit/Enter, чтобы не дёргать запрос
   // на каждый keypress.
   const [appliedQ, setAppliedQ] = useState("");
+  const [subscription, setSubscription] = useState("");
+  const latest = useRef(0);
   const [items, setItems] = useState<UserBrief[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [_, navigate] = useRoute();
 
-  const loadPage = async (query: string, offset: number) => {
+  const loadPage = async (query: string, offset: number, filter: string) => {
+    const request = ++latest.current;
     setLoading(true);
     setErr(null);
     try {
-      const list = await api.users(query, USERS_PAGE, offset);
+      const list = await api.users(query, USERS_PAGE, offset, filter ? filter === "active" : undefined);
+      if (request !== latest.current) return;
       const batch = Array.isArray(list) ? list : [];
       setItems((prev) => {
         const base = offset === 0 || prev === null ? [] : prev;
@@ -916,14 +933,15 @@ function UsersList() {
       });
       setHasMore(batch.length === USERS_PAGE);
     } catch (e) {
+      if (request !== latest.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (request === latest.current) setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadPage("", 0);
+    loadPage("", 0, "");
   }, []);
 
   const submit = (e: React.FormEvent) => {
@@ -931,18 +949,29 @@ function UsersList() {
     setAppliedQ(q);
     setItems([]);
     setHasMore(true);
-    loadPage(q, 0);
+    loadPage(q, 0, subscription);
   };
 
   const loadMore = () => {
     if (loading || !hasMore || items === null) return;
-    loadPage(appliedQ, items.length);
+    loadPage(appliedQ, items.length, subscription);
   };
 
   return (
     <div>
       <h2 style={S.h2}>Пользователи</h2>
-      <form onSubmit={submit} style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <form onSubmit={submit} style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+        <select aria-label="Фильтр по подписке" style={S.input} value={subscription} onChange={(e) => {
+          const filter = e.target.value;
+          setSubscription(filter);
+          setAppliedQ(q);
+          setItems(null);
+          void loadPage(q, 0, filter);
+        }}>
+          <option value="">Все пользователи</option>
+          <option value="active">С активной подпиской</option>
+          <option value="inactive">Без активной подписки</option>
+        </select>
         <input
           style={{ ...S.input, flex: 1 }}
           placeholder="Поиск: имя, @username, tg_id или email"
@@ -968,6 +997,7 @@ function UsersList() {
                   <th style={S.th}>TG ID</th>
                   <th style={S.th}>Вход</th>
                   <th style={S.th}>Подписка</th>
+                  <th style={S.th}>Автопродление</th>
                   <th style={S.th}>Блок</th>
                   <th style={S.th}>Создан</th>
                 </tr>
@@ -992,7 +1022,7 @@ function UsersList() {
                             color: colors.success,
                           }}
                         >
-                          до {fmtDate(u.subscription_until)}
+                          {subscriptionLabel(u)}
                         </span>
                       ) : (
                         <span style={{ ...S.badge, color: colors.textMuted }}>
@@ -1000,6 +1030,7 @@ function UsersList() {
                         </span>
                       )}
                     </td>
+                    <td style={S.td}>{u.auto_renew_enabled ? "Включено" : "Отключено"}</td>
                     <td style={S.td}>
                       {u.is_blocked ? (
                         <span
@@ -1129,13 +1160,10 @@ function UserPage({ id, onBack }: { id: number; onBack: () => void }) {
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <StatusPill
             label="Подписка"
-            value={
-              u.has_subscription
-                ? `до ${fmtDate(u.subscription_until)}`
-                : "нет"
-            }
+            value={subscriptionLabel(u)}
             tone={u.has_subscription ? "success" : "muted"}
           />
+          <StatusPill label="Автопродление" value={u.auto_renew_enabled ? "Включено" : "Отключено"} tone={u.auto_renew_enabled ? "success" : "muted"} />
           {u.cefr_level && (
             <StatusPill
               label="Уровень (тест)"

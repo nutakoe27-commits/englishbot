@@ -1,4 +1,4 @@
-/** Authenticated word audio, including the current free lesson context. */
+/** Authenticated word audio, including the current lesson context. */
 import WebApp from '@twa-dev/sdk';
 import { API_BASE } from './auth';
 let context: AudioContext | null = null;

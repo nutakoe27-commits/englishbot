@@ -28,7 +28,7 @@ export function SubscriptionOffersPage({ onUser }: { onUser: (id: number) => voi
         <option value={7}>7 дней</option><option value={30}>30 дней</option><option value={90}>90 дней</option><option value={365}>Год</option>
       </select></label>
     </div>
-    <p className="so-description">Первый урок бесплатно, затем — 7 дней за 1 ₽ с ежемесячным продлением. После отказа — опрос без дополнительных скидок.
+    <p className="so-description">При первом подключении — 7 дней за 1 ₽ с ежемесячным продлением. После отказа — опрос без дополнительных скидок.
       Повторный показ без ответа возможен через 24 часа; после ответа опрос больше не появляется.</p>
     {loading ? <div className="so-panel" role="status">Загружаем аналитику…</div>
       : error ? <div className="so-panel so-error" role="alert">{error}<button onClick={() => setReload(value => value + 1)}>Повторить</button></div>

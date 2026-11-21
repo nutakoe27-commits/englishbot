@@ -81,6 +81,7 @@ class MetricsResponse(BaseModel):
     wau: int = Field(description="За последние 7 дней включая сегодня")
     mau: int = Field(description="За последние 30 дней")
     minutes_today: int = Field(description="Суммарное время за сегодня (минуты)")
+    paid_subscriber_ltv_rub: Optional[float]
     total_revenue_rub: float
     new_users_today: int = 0
     # Сколько юзеров вообще активировали бота в Telegram (написали /start
@@ -106,6 +107,7 @@ class UserBrief(BaseModel):
     email: Optional[str] = None
     auth_providers: list[str] = Field(default_factory=list)
     is_blocked: bool
+    auto_renew_enabled: bool
     has_subscription: bool
     subscription_until: Optional[str]
     created_at: str
@@ -192,9 +194,9 @@ class BroadcastStartRequest(BaseModel):
 async def _user_to_detail(repo: Repo, u) -> UserDetail:
     """Полный профиль юзера — вернуть после POST-действия, чтобы фронт сразу обновился."""
     from sqlalchemy import select, func
-    from .db.models import DailyUsage
-
-    brief = await _user_to_brief(repo, u)
+    from .db.models import DailyUsage, User
+    flags = (await repo.s.execute(select(*repo.admin_subscription_flags()).select_from(User).where(User.id == u.id))).one()
+    brief = await _user_to_brief(repo, u, *flags)
     used = await repo.get_used_seconds_today(u.id)
     free_seconds = 0  # Standalone practice now requires a subscription.
     bonus = await repo.get_bonus_seconds_today(u.id)
@@ -258,8 +260,7 @@ async def _user_to_detail(repo: Repo, u) -> UserDetail:
     )
 
 
-async def _user_to_brief(repo: Repo, u) -> UserBrief:
-    has_sub = await repo.has_active_subscription(u)
+async def _user_to_brief(repo: Repo, u, has_sub: bool, auto_renew: bool) -> UserBrief:
     try:
         providers = [Repo.identity_key(i["provider"], i.get("via"))
                      for i in await repo.list_identities(u.id)]
@@ -275,8 +276,9 @@ async def _user_to_brief(repo: Repo, u) -> UserBrief:
         auth_providers=providers,
         is_blocked=u.is_blocked,
         has_subscription=has_sub,
+        auto_renew_enabled=auto_renew,
         subscription_until=(
-            u.subscription_until.isoformat() if u.subscription_until else None
+            u.subscription_until.isoformat() + "Z" if u.subscription_until else None
         ),
         created_at=u.created_at.isoformat(),
     )
@@ -318,6 +320,7 @@ async def _build_metrics() -> MetricsResponse:
         mau = await repo.count_active_users_since(today - timedelta(days=29))
         seconds_today = await repo.total_used_seconds_today()
         revenue = await repo.total_revenue_rub()
+        subscriber_ltv = await repo.paid_subscriber_ltv()
 
         # Новые сегодня: по created_at ≥ начало дня МСК (today-дата в колонке сохраняется UTC,
         # но для счётчика достаточно «UTC-день назад»: сравниваем с today в UTC)
@@ -380,6 +383,7 @@ async def _build_metrics() -> MetricsResponse:
             mau=mau,
             minutes_today=seconds_today // 60,
             total_revenue_rub=revenue,
+            paid_subscriber_ltv_rub=subscriber_ltv,
             new_users_today=new_users_today,
             bot_activated_total=bot_activated_total,
             bot_activated_today=bot_activated_today,
@@ -451,13 +455,14 @@ async def admin_online() -> OnlineResponse:
 )
 async def search_users(
     q: str = Query(default="", description="username, имя или tg_id"),
+    has_subscription: Optional[bool] = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> list[UserBrief]:
     async with db_session() as s:
         repo = Repo(s)
-        users = await repo.search_users(q, limit=limit, offset=offset)
-        return [await _user_to_brief(repo, u) for u in users]
+        users = await repo.search_users(q, limit=limit, offset=offset, has_subscription=has_subscription)
+        return [await _user_to_brief(repo, *row) for row in users]
 
 
 @router.get(

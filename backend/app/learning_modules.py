@@ -60,14 +60,14 @@ def grade_grammar(session, activity, key, answers):
 async def require(session, uid, key, stage, *, finishing=False):
     from .db.models import User
     from .db import Repo
-    from .learning_access import require_lesson, require_standalone
+    from .learning_access import require_subscription
     account = await session.get(User, uid, with_for_update=True, populate_existing=True)
     if account is None:
         raise HTTPException(401, 'user_not_found')
     if account.is_blocked:
         raise HTTPException(403, 'account_blocked')
     if not key:
-        await require_standalone(Repo(session), account)
+        await require_subscription(Repo(session), account)
         return None
     if not settings.LEARNING_ENABLED:
         raise HTTPException(404, 'learning_disabled')
@@ -75,7 +75,7 @@ async def require(session, uid, key, stage, *, finishing=False):
         LearningLesson.id == key, LearningLesson.user_id == uid).with_for_update())
     if row is None:
         raise HTTPException(404, 'learning_not_found')
-    await require_lesson(Repo(session), account, row)
+    await require_subscription(Repo(session), account)
     if row.content.get('engine') != 'modules':
         raise HTTPException(409, 'lesson_engine_mismatch')
     if row.step_index != STAGES.index(stage):

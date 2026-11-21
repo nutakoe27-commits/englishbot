@@ -62,6 +62,8 @@ async def tts_word(
     speed: float = Query(default=1.0, ge=0.5, le=2.0),
 ) -> Response:
     """Озвучить слово/короткую фразу. Возвращает audio/wav."""
+    if not settings.DATABASE_URL and not settings.is_development:
+        raise HTTPException(503, "db_not_configured")
     if settings.DATABASE_URL:
         from .db import Repo, db_session
         from .auth import resolve_user

@@ -25,7 +25,7 @@ from . import learning_content as content
 from . import learning_assessment as assessment
 from . import mytracker, presence
 from . import learning_modules as modules
-from .learning_access import access as learning_access
+from .learning_access import access as learning_access, require_subscription
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/learning',tags=['Learning'])
@@ -55,12 +55,7 @@ async def profile(session, uid, lock=False):
 async def owned(session, cls, key, uid):
     row = await session.scalar(select(cls).where(cls.id==key,cls.user_id==uid).with_for_update())
     if row is None: raise HTTPException(404,'learning_not_found')
-    from .learning_access import require_lesson, require_standalone
-    account = await session.get(User, uid)
-    if cls is LearningLesson and row.status != 'completed':
-        await require_lesson(Repo(session), account, row)
-    elif cls is LearningCheckpoint:
-        await require_standalone(Repo(session), account)
+    await require_subscription(Repo(session), await session.get(User, uid))
     return row
 
 async def event(session,uid,key,name,params,iid=None):
@@ -169,6 +164,7 @@ async def setup(body:ProfileInput,authorization:Optional[str]=Header(None)):
     async with db_session() as session:
         account = await user(session,authorization,body.init_data)
         account = await session.get(User,account.id,with_for_update=True,populate_existing=True)
+        await require_subscription(Repo(session), account)
         if account.cefr_level not in content.LEVELS: raise HTTPException(409,'placement_required')
         p = await session.get(LearningProfile,account.id,with_for_update=True)
         if p is None:
@@ -185,7 +181,7 @@ async def setup(body:ProfileInput,authorization:Optional[str]=Header(None)):
     return {'ok':True}
 
 
-async def overview_data(session,uid,placement=None):
+async def overview_data(session,uid,placement=None, *, include_lesson=True):
     p = await session.get(LearningProfile,uid)
     if p is None: return {'enabled':True,'profile':None,'placement_level':placement,'goals':content.GOALS}
     skills = list((await session.scalars(select(LearningSkill).where(LearningSkill.user_id==uid))).all())
@@ -221,7 +217,7 @@ async def overview_data(session,uid,placement=None):
         'completed_count':count,'cycle':p.checkpoint_count//20+1,'cycle_completed':count-p.checkpoint_count,
         'until_checkpoint':max(0,p.checkpoint_count+20-count),'checkpoint_due':count>=p.checkpoint_count+20},
         'placement_level':placement,'goals':content.GOALS,'route':route,'skills':domains,
-        'competencies':list(aggregates.values()),'next_lesson':lesson_data(current) if current else None,
+        'competencies':list(aggregates.values()),'next_lesson':lesson_data(current) if current and include_lesson else None,
         'history':[{'id':h.id,'after_count':h.after_count,'date':h.completed_at.isoformat(),'result':h.result} for h in history]}
 
 @router.get('/overview')
@@ -231,12 +227,13 @@ async def overview(init_data:str='',authorization:Optional[str]=Header(None)):
         account=await user(session,authorization,init_data)
         account=await session.get(User,account.id,with_for_update=True,populate_existing=True)
         p=await session.get(LearningProfile,account.id,with_for_update=True)
-        if p:
+        entitlement = await learning_access(Repo(session), account)
+        if p and entitlement["full_access"]:
             if account.cefr_level in content.LEVELS and account.cefr_level!=p.level:
                 p.level=account.cefr_level; p.updated_at=now(); await refresh_prepared(session,p)
             await prepare_next(session,p)
-        return {**await overview_data(session,account.id,account.cefr_level),
-            'access':await learning_access(Repo(session),account)}
+        return {**await overview_data(session,account.id,account.cefr_level, include_lesson=entitlement["full_access"]),
+            'access':entitlement}
 
 @router.get('/access')
 async def get_access(init_data:str='',authorization:Optional[str]=Header(None)):
@@ -268,9 +265,6 @@ async def start(key:str,body:Input,authorization:Optional[str]=Header(None)):
             row.content={**row.content,'engine':'modules'}
             row.answers={'_legacy':row.answers}; row.step_index=0
         if row.status=='prepared':
-            access=await learning_access(Repo(session),account)
-            if access['remaining_today'] == 0:
-                raise HTTPException(402,'subscription_required')
             activity=await Repo(session).open_session(user_id=account.id,mode='lesson',level=row.level,role=row.topic_key,learning_lesson_id=row.id)
             row.session_id=activity.id
             iid=mytracker.current_instance_id.get()
@@ -465,8 +459,6 @@ async def lesson_audio(key:str,init_data:str='',authorization:Optional[str]=Head
     async with db_session() as session:
         account=await user(session,authorization,init_data)
         row=await owned(session,LearningLesson,key,account.id)
-        from .learning_access import require_lesson
-        await require_lesson(Repo(session), account, row)
         script=row.content['listening']['script']; cache_key=row.id
     response=await audio(script,cache_key)
     async with db_session() as session:
@@ -588,8 +580,7 @@ def checkpoint_data(row):
 async def checkpoint_start(body:Input,authorization:Optional[str]=Header(None)):
     async with db_session() as session:
         account=await user(session,authorization,body.init_data)
-        from .learning_access import require_standalone
-        await require_standalone(Repo(session), account)
+        await require_subscription(Repo(session), account)
         p=await profile(session,account.id,True)
         if p.completed_count<p.checkpoint_count+20: raise HTTPException(409,'checkpoint_not_due')
         row=await session.scalar(select(LearningCheckpoint).where(LearningCheckpoint.user_id==account.id,

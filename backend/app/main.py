@@ -461,6 +461,8 @@ async def translate(body: _TranslateIn, authorization: Optional[str] = Header(No
     от LLM — translations=[].
     """
     from .auth import auth_key
+    if not settings.DATABASE_URL and not settings.is_development:
+        raise HTTPException(503, "db_not_configured")
     if settings.DATABASE_URL:
         from .auth import resolve_user
         from .learning_access import require_practice
@@ -499,6 +501,8 @@ async def explain_correction_endpoint(
     Возвращает {explanation: str}. На ошибку LLM — пустая строка.
     """
     from .auth import auth_key
+    if not settings.DATABASE_URL and not settings.is_development:
+        raise HTTPException(503, "db_not_configured")
     if settings.DATABASE_URL:
         from .auth import resolve_user
         from .learning_access import require_practice

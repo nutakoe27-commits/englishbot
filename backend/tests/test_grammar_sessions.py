@@ -47,6 +47,7 @@ class GrammarLifecycleTests(unittest.IsolatedAsyncioTestCase):
             repo = Repo(session)
             for _ in range(2):
                 user = await repo.create_native_user(email=f"grammar-test-{uuid4().hex}@example.invalid", password_hash="unused", first_name="Test")
+                user.subscription_until = user.created_at + timedelta(days=30)
                 self.uids.append(int(user.id))
             from app.grammar_lessons import THEORY
             topics = list(await repo.list_grammar_topics())
@@ -115,6 +116,8 @@ class GrammarLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_concurrent_preparations_cannot_bypass_subscription_after_expiry(self):
         keys = [await self.prepared(), await self.prepared()]
+        async with db_session() as session:
+            (await session.get(User, self.uid)).subscription_until = None
         with patch.object(settings, 'FREE_PERIOD', False), patch.object(settings, 'FREE_TRIAL_DAYS', 99):
             results = await asyncio.gather(*(self.client.post('/api/grammar/start', headers=self.headers,
                 json={'session_id': key}) for key in keys))

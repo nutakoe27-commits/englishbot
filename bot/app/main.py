@@ -53,24 +53,9 @@ BOT_USERNAME: str = os.getenv("BOT_USERNAME", "kmo_ai_english_bot").lstrip("@")
 BACKEND_URL: str = os.getenv("BACKEND_URL", "http://backend:8000").rstrip("/")
 BACKEND_BOT_SECRET: Optional[str] = os.getenv("BACKEND_BOT_SECRET") or None
 
-# Free Period — промо-период без оплаты. При FREE_PERIOD=1 бот не
-# показывает лимит 10 минут в карточке профиля. Подписка теперь
-# оформляется внутри мини-аппа (SubscribeScreen → ЮKassa); команды
-# /subscribe в боте больше нет. Старые TG-Payments обработчики
-# (pre_checkout/on_successful_payment) оставлены для back-compat
-# существующих invoice'ов.
-FREE_PERIOD: bool = os.getenv("FREE_PERIOD", "0") == "1"
-
 # Приветственный полный доступ новичкам (миграция 0033). Значение должно
 # совпадать с backend'ом: права выдаёт он, а тексты пишем мы.
 FREE_TRIAL_DAYS: int = 0  # Welcome days retired, including stale environment values.
-
-FREE_PERIOD_TEXT = (
-    "🎁 <b>Сейчас всё бесплатно!</b>\n\n"
-    "Доступ к голосовому тьютору, грамматике и подкастам — без лимитов и "
-    "без подписки. Просто открой /start и нажми «🎤 Начать разговор».\n\n"
-    "Когда промо-период закончится — мы напишем заранее."
-)
 
 # Цены синхронизированы с LockScreen/Paywall в mini app.
 PRICE_TRIAL3_RUB = int(os.getenv("SUBSCRIPTION_PRICE_TRIAL3_RUB", "99"))
@@ -659,10 +644,8 @@ async def _send_welcome(message: Message) -> None:
             f"Привет, {user_name}! 👋\n\n"
             "Я — AI-репетитор английского. Со мной можно <b>говорить вслух</b>: "
             "я пойму, отвечу и объясню ошибки по-русски.\n\n"
-            "✨ <b>Первый полный урок бесплатно</b>: грамматика, работа над ошибками, "
-            "слова с озвучкой, подкаст и разговор. Карту привязывать не нужно.\n\n"
-            "Открой программу и пройди первый урок в своём темпе. "
-            "Дальше — 7 дней за 1 ₽ при первом подключении, затем месячная подписка "
+            "✨ <b>7 дней за 1 ₽ при первом подключении.</b> Подписка открывает все уроки, "
+            "подкасты и разговор с ИИ. Затем действует месячный тариф "
             "с автопродлением. Условия и цена продления — перед оплатой."
 
         ),
@@ -912,10 +895,7 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
 
     # Подписка / школа (B2B)
     org_name = profile.get("org_name")
-    if FREE_PERIOD:
-        lines.append("<b>🎁 Бесплатный период</b>")
-        lines.append("Все возможности открыты — без лимитов и без подписки.")
-    elif org_name and not profile["has_subscription"]:
+    if org_name and not profile["has_subscription"]:
         lines.append("<b>🏫 Школа</b>")
         lines.append(f"Полный доступ открыт школой «{org_name}» — без лимитов.")
     else:
@@ -927,7 +907,7 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
             if days > 0:
                 lines.append(f"Осталось: <b>{days}</b> дн.")
         else:
-            lines.append("Первый урок — бесплатно, дальнейшие занятия — по подписке")
+            lines.append("Для занятий нужна подписка.")
     lines.append("")
 
     # Сегодня
@@ -935,12 +915,12 @@ def _build_profile_text(message: Message, profile: Optional[dict]) -> str:
     bonus_today = int(profile.get("bonus_seconds_today") or 0)
     speaking_today = int(profile.get("speaking_seconds_today") or 0)
     lines.append("<b>⏱ Сегодня</b>")
-    if FREE_PERIOD or profile["has_subscription"] or org_name:
+    if profile["has_subscription"] or org_name:
         lines.append(f"Практика: <b>{_fmt_minutes(used_today)}</b> — без лимитов")
     else:
         lines.append(f"Практика: <b>{_fmt_minutes(used_today)}</b>")
-        lines.append("Первый полный урок доступен бесплатно один раз на аккаунт. "
-                     "Следующие уроки и отдельные тренажёры — по подписке.")
+        lines.append("При первом подключении — 7 дней за 1 ₽. "
+                     "Затем подписка продлевается ежемесячно.")
     lines.append("")
 
     # Всего практики
@@ -1291,19 +1271,6 @@ async def cb_subscribe(callback: CallbackQuery) -> None:
     (SubscribeScreen → ЮKassa), кнопок этих в боте больше не отправляется,
     но если юзер тапнет старый — sendInvoice отработает.
     При клике на тариф — посылаем sendInvoice с provider_token ЮКассы."""
-    # Free Period: инвойс не отправляем. Это safety-net на случай, если у юзера
-    # остался старый экран /subscribe в Telegram (под флагом эти кнопки не
-    # рисуются, но callback из истории чата может прилететь).
-    if FREE_PERIOD:
-        await callback.answer("Сейчас всё бесплатно — подписка не нужна.", show_alert=True)
-        if callback.message:
-            await callback.message.answer(
-                text=FREE_PERIOD_TEXT,
-                parse_mode="HTML",
-                reply_markup=_miniapp_keyboard(),
-            )
-        return
-
     plan_key = (callback.data or "").split(":", 1)[-1]
     plan = _PLAN_CATALOG.get(plan_key)
     if not plan:

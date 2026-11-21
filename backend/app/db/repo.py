@@ -20,6 +20,7 @@ from .models import (
     GrammarLessonCache,
     GrammarTopic,
     Payment,
+    RecurringSubscription,
     SettingKV,
     Session as SessionRow,
     User,
@@ -629,8 +630,12 @@ class Repo:
     async def user_active_org(self, user_id: int):
         """Активная школа юзера-ученика (org.active, срок не истёк,
         членство active, role='student'). None — юзер не школьник."""
+        return await self.s.scalar(self._active_school(user_id).limit(1))
+
+    @staticmethod
+    def _active_school(user_id):
         from .models import Organization, OrgMember
-        res = await self.s.execute(
+        return (
             select(Organization)
             .join(OrgMember, OrgMember.org_id == Organization.id)
             .where(
@@ -641,9 +646,7 @@ class Repo:
                 Organization.valid_until.is_not(None),
                 Organization.valid_until > utcnow(),
             )
-            .limit(1)
         )
-        return res.scalar_one_or_none()
 
     async def get_org_by_invite(self, invite_code: str):
         """Школа по ученическому коду."""
@@ -2090,15 +2093,31 @@ class Repo:
         )
         return int(res.scalar() or 0)
 
+    @classmethod
+    def admin_subscription_flags(cls):
+        active = or_(
+            and_(User.subscription_until.is_not(None), User.subscription_until > utcnow()),
+            cls._active_school(User.id).exists(),
+        )
+        renewal = select(RecurringSubscription.id).where(
+            RecurringSubscription.user_id == User.id,
+            RecurringSubscription.status == "active",
+            RecurringSubscription.payment_method_id != "",
+        ).exists()
+        return active, renewal
+
     async def search_users(
-        self, query: str, limit: int = 50, offset: int = 0,
-    ) -> Sequence[User]:
+        self, query: str, limit: int = 50, offset: int = 0, has_subscription: Optional[bool] = None,
+    ):
         """Поиск юзеров по tg_id или username/имени. Пустой query = последние созданные.
 
         offset нужен для пагинации в админке (кнопка «Загрузить ещё»).
         """
         q = (query or "").strip()
-        stmt = select(User)
+        active, renewal = self.admin_subscription_flags()
+        stmt = select(User, active, renewal)
+        if has_subscription is not None:
+            stmt = stmt.where(active if has_subscription else ~active)
         if q:
             like = f"%{q}%"
             conds = [
@@ -2111,12 +2130,12 @@ class Repo:
                 conds.append(User.tg_id == int(q))
             stmt = stmt.where(or_(*conds))
         stmt = (
-            stmt.order_by(User.created_at.desc())
+            stmt.order_by(User.created_at.desc(), User.id.desc())
                 .offset(offset)
                 .limit(limit)
         )
         res = await self.s.execute(stmt)
-        return list(res.scalars().all())
+        return res.all()
 
     async def delete_user(self, user_id: int) -> bool:
         """Hard-delete юзера. CASCADE подчистит связанные таблицы.
@@ -2567,6 +2586,15 @@ class Repo:
              "minutes": by_date.get(since + timedelta(days=i), 0)}
             for i in range(days)
         ]
+
+    async def paid_subscriber_ltv(self) -> Optional[float]:
+        revenue, payers = (await self.s.execute(
+            select(func.sum(Payment.amount_rub), func.count(func.distinct(Payment.user_id))).where(
+                Payment.status == "succeeded", Payment.amount_rub > 0,
+                Payment.plan.in_(("trial3", "trial7", "monthly", "yearly", "twoyear", "manual_pay")),
+            )
+        )).one()
+        return float(round(revenue / payers, 2)) if payers else None
 
     async def total_revenue_rub(self) -> float:
         res = await self.s.execute(

@@ -513,7 +513,7 @@ function TabShell({
   useBackGuard(subscribeOpen, useCallback(() => setSubscribeOpen(false), []));
   useBackGuard(onboardingManual, useCallback(() => setOnboardingManual(false), []));
 
-  const protectedMode = mode === "speaking" || mode === "listening" || mode === "grammar" || tab === "words";
+  const protectedMode = mode === "learning" || mode === "speaking" || mode === "listening" || mode === "grammar" || tab === "words";
   useEffect(() => {
     if (protectedMode && toolAccess === false) { setMode(null); setTab("home"); requestSubscription(); }
   }, [protectedMode, toolAccess]);
@@ -534,7 +534,7 @@ function TabShell({
     body = (
       <ModeSelector
         onPick={(m) => {
-          if (["speaking", "listening", "grammar", "srs"].includes(m) && !toolAccess) { requestSubscription(); return; }
+          if (["learning", "speaking", "listening", "grammar", "srs"].includes(m) && !toolAccess) { requestSubscription(); return; }
           if (m === "srs") { setTab("words"); return; }
           setMode(m);
         }}

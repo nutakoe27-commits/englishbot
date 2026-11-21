@@ -91,6 +91,7 @@ export interface Metrics {
   mau: number;
   minutes_today: number;
   total_revenue_rub: number;
+  paid_subscriber_ltv_rub: number | null;
   new_users_today: number;
   bot_activated_total?: number;
   bot_activated_today?: number;
@@ -140,6 +141,7 @@ export interface LearningProgram {
 }
 
 export interface UserBrief {
+  auto_renew_enabled: boolean;
   id: number;
   tg_id: number | null;
   username: string | null;
@@ -212,9 +214,9 @@ export const api = {
   subscriptionOffers: (days = 30) => request<SubscriptionOfferAnalytics>(`/api/admin/subscription-offers?days=${days}`),
   me: (token?: string) => request<{ ok: boolean }>("/api/admin/me", { token }),
   metrics: () => request<Metrics>("/api/admin/metrics"),
-  users: (q: string, limit = 50, offset = 0) =>
+  users: (q: string, limit = 50, offset = 0, hasSubscription?: boolean) =>
     request<UserBrief[]>(
-      `/api/admin/users?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`,
+      `/api/admin/users?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}${hasSubscription === undefined ? "" : `&has_subscription=${hasSubscription}`}`,
     ),
   user: (id: number) => request<UserDetail>(`/api/admin/users/${id}`),
   grant: (

@@ -438,6 +438,8 @@ async def generate_exercises(
     user_id: Optional[int] = None
     recent_mistakes: list[dict] = []
     default_category = body.category or "other"
+    if not settings.DATABASE_URL and not settings.is_development:
+        raise HTTPException(503, "db_not_configured")
     if settings.DATABASE_URL:
         from .db import Repo
         from .limits import is_section_limit_reached

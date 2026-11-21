@@ -127,15 +127,14 @@ function Hero({ onCta, onBuy }: { onCta: () => void; onBuy: () => void }) {
           </p>
           <div className="lp-cta-pair">
             <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
-              Пройти первый урок бесплатно
+              Начать за 1 ₽
             </button>
             <button type="button" className="lp-btn lp-btn--ghost lp-btn--md" onClick={onBuy}>
               Оплатить сразу
             </button>
           </div>
           <p className="lp-hero__note">
-            Первый полный урок бесплатно. Карта для него не нужна —
-            вход в один тап через Яндекс ID или email.
+            Первые 7 дней за 1 ₽ при первом подключении. Затем — ежемесячное автопродление.
           </p>
           <div className="lp-hero__proof">
             <span className="lp-hero__proof-dot" aria-hidden />
@@ -319,8 +318,7 @@ function Pricing({
       <div className="lp-container">
         <h2 className="lp-h2 lp-h2--center">Стоимость</h2>
         <p className="lp-section__sub">
-          Первый урок бесплатно. Затем — 7 дней полного доступа за 1 ₽ при первом подключении.
-          Далее подписка автоматически продлевается по месячному тарифу.
+          При первом подключении доступны 7 дней за 1 ₽ с ежемесячным автопродлением.
           Сумма и период списаний указаны перед оплатой. Отмена — в профиле.
         </p>
         <div className="lp-plans">
@@ -331,7 +329,7 @@ function Pricing({
             hint="Затем — месячный тариф с автопродлением"
             onCta={onCta}
             onBuy={() => onBuy("trial7")}
-            ctaLabel="Первый урок бесплатно"
+            ctaLabel="Начать за 1 ₽"
           />
           <PlanCard
             title="Месячный"
@@ -340,7 +338,7 @@ function Pricing({
             hint="Самый частый выбор"
             onCta={onCta}
             onBuy={() => onBuy("monthly")}
-            ctaLabel="Первый урок бесплатно"
+            ctaLabel="Начать за 1 ₽"
             highlighted
           />
           <PlanCard
@@ -351,7 +349,7 @@ function Pricing({
             hint="Выгода 50% — для тех, кто уже втянулся"
             onCta={onCta}
             onBuy={() => onBuy("yearly")}
-            ctaLabel="Первый урок бесплатно"
+            ctaLabel="Начать за 1 ₽"
           />
         </div>
         <p className="lp-offer-link">
@@ -416,9 +414,7 @@ function Faq() {
     },
     {
       q: "Сколько времени занимает в день?",
-      a: <>Полный урок занимает примерно 15–20 минут. Первый урок бесплатный:
-        его можно сохранить и продолжить позже. Дальнейшие занятия и отдельные
-        тренажёры доступны по подписке.</>,
+      a: <>Полный урок занимает примерно 15–20 минут. Его можно сохранить и продолжить позже. Все занятия доступны по подписке.</>,
     },
     {
       q: "Как происходит оплата? Это безопасно?",
@@ -435,8 +431,7 @@ function Faq() {
     },
     {
       q: "А если не понравится?",
-      a: <>Пройди первый полный урок бесплатно, без карты. Если понравится,
-        подключи 7 дней за 1 ₽. Затем подписка автоматически продлевается
+      a: <>При первом подключении можно попробовать все занятия 7 дней за 1 ₽. Затем подписка автоматически продлевается
         по месячному тарифу. Отменить автопродление можно в профиле до следующего списания.</>,
     },
   ];
@@ -465,15 +460,14 @@ function FinalCta({ onCta, onBuy }: { onCta: () => void; onBuy: () => void }) {
         <h2 className="lp-h2">Хватит молчать.<br />Скажи первую фразу сегодня.</h2>
         <div className="lp-cta-pair">
           <button type="button" className="lp-btn lp-btn--primary lp-btn--lg" onClick={onCta}>
-            Пройти первый урок бесплатно
+            Начать за 1 ₽
           </button>
           <button type="button" className="lp-btn lp-btn--ghost lp-btn--md" onClick={onBuy}>
             Оплатить сразу
           </button>
         </div>
         <p className="lp-final__note">
-          Без карты и без автосписаний. Дальше — 5 минут разговора в день
-          первый урок бесплатно, дальше — подписка.
+          7 дней за 1 ₽ при первом подключении. Затем подписка продлевается ежемесячно. Автопродление можно отключить в профиле.
         </p>
       </div>
     </section>

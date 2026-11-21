@@ -56,6 +56,6 @@ export function CourseHomeCard({onOpen,onAvailability}: {onOpen: () => void; onA
     <p>{next ? `Научишься ${next.content.spec.objective}.` : 'Связанные занятия: слова, грамматика, понимание речи и разговор.'}</p>
     {p && <><div className="learn-home-meta"><span>{p.level} · цикл {p.cycle}</span><span>{p.cycle_completed}/20 уроков</span></div>
       <progress value={p.cycle_completed} max={20} aria-label="Прогресс цикла" /></>}
-    <button className="learn-primary" onClick={onOpen}>{p?.checkpoint_due ? 'Проверить уровень' : next?.status === 'active' || next?.status === 'paused' ? 'Продолжить урок' : p ? 'Начать урок' : 'Составить программу'} →</button>
+    <button className="learn-primary" onClick={onOpen}>{data.access?.full_access === false ? 'Открыть подписку' : p?.checkpoint_due ? 'Проверить уровень' : next?.status === 'active' || next?.status === 'paused' ? 'Продолжить урок' : p ? 'Начать урок' : 'Составить программу'} →</button>
   </section>;
 }

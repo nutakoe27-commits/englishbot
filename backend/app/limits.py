@@ -21,7 +21,6 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from .config import settings
 from .db import Repo
 
 log = logging.getLogger(__name__)
@@ -174,7 +173,7 @@ class LimitsContext:
                     from .db.models import User
                     account = await session.get(User, self.user_db_id)
                     self.has_subscription = bool(account and not account.is_blocked and
-                        (settings.FREE_PERIOD or await repo.has_full_access(account)))
+                        await repo.has_full_access(account))
                     if not self.has_subscription:
                         self.free_seconds_per_day = 0
                         self.bonus_seconds_today = 0
@@ -212,14 +211,7 @@ class LimitsContext:
 
 async def context_for_user(repo: Repo, repo_factory, user, *, lesson_id: Optional[str] = None) -> LimitsContext:
     """Собрать LimitsContext для уже резолвнутого User (веб/JWT-путь)."""
-    # Welcome-триал (0033): первые FREE_TRIAL_DAYS дней — те же права, что
-    # у подписчика. Флаг держим отдельно, чтобы клиент показал «полный
-    # доступ ещё N дней», а не «подписка активна».
-    trial_until_dt = repo.free_trial_until(user)
-    trial_active = repo.in_free_trial(user)
-    has_sub = trial_active or await repo.has_active_subscription(user)
-    if settings.FREE_PERIOD:
-        has_sub = True
+    has_sub = await repo.has_full_access(user)
     free_seconds = 0
     used = await repo.get_speaking_seconds_today(user.id)
     bonus = 0
@@ -233,8 +225,8 @@ async def context_for_user(repo: Repo, repo_factory, user, *, lesson_id: Optiona
     return LimitsContext(
         user_db_id=user.id,
         tg_id=int(user.tg_id) if user.tg_id is not None else 0,
-        trial_active=trial_active,
-        trial_until=trial_until_dt.isoformat() if trial_until_dt else None,
+        trial_active=False,
+        trial_until=None,
         has_subscription=has_sub,
         free_seconds_per_day=free_seconds,
         used_seconds_today=used,
@@ -279,14 +271,5 @@ _SECTION_QUOTA = {
 
 
 async def is_section_limit_reached(repo: Repo, user, *, section: str) -> bool:
-    """True, если free-юзер исчерпал дневную квоту секции.
-
-    Подписчики и FREE_PERIOD — всегда False (безлимит). `user` — ORM User.
-    """
-    if settings.FREE_PERIOD:
-        return False
-    # Welcome-триал снимает и посекционные квоты — человек должен успеть
-    # попробовать подкасты и грамматику, а не только разговор.
-    if await repo.has_full_access(user):
-        return False
-    return True
+    """Practice requires an active subscription or school seat."""
+    return not await repo.has_full_access(user)

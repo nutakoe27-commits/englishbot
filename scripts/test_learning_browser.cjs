@@ -44,8 +44,8 @@ async function fixture(t,{profile=true,mistakes=false,failFinish=false,failSrsFi
  if(savedTurns)row.modules.conversation={completed:false,turns:savedTurns};
  if(cachedPodcast)row.modules.listening={completed:false,podcast:{session_id:103,transcript:'My name is Alex. I live in Bristol.',audio_url:'/api/listening/audio/test.wav',used_words:['name']}};
  let level=curriculumLevel || 'A1',completed=curriculumOrdinal-1,turns=savedTurns,started=accessKind==='exhausted'||lessonStatus!=='prepared'?1:0;
- const access=()=>{const full=['paid','promotion'].includes(accessKind);const available=accessKind!=='exhausted'&&completed===0;return {full_access:full,free_lesson_available:available,free_lesson_id:available?row.id:null,trial_active:false,trial_until:null,daily_limit:full?null:1,used_today:available?0:1,remaining_today:full?null:available?1:0,resets_at:null,conversation_seconds:null};};
- const overview=()=>({enabled:true,access:access(),placement_level:level,goals:{general:'Общий английский',travel:'Путешествия',work:'Работа'},profile:profile?{goal:'general',goal_label:'Общий английский',level,completed_count:completed,cycle:row.content.spec.cycle,cycle_completed:completed%20,until_checkpoint:20-completed%20,checkpoint_due:false}:null,next_lesson:profile?row:null,
+ const access=()=>{const full=accessKind==='paid';return {full_access:full,free_lesson_available:false,free_lesson_id:null,trial_active:false,trial_until:null,daily_limit:full?null:0,used_today:0,remaining_today:full?null:0,resets_at:null,conversation_seconds:null};};
+ const overview=()=>({enabled:true,access:access(),placement_level:level,goals:{general:'Общий английский',travel:'Путешествия',work:'Работа'},profile:profile?{goal:'general',goal_label:'Общий английский',level,completed_count:completed,cycle:row.content.spec.cycle,cycle_completed:completed%20,until_checkpoint:20-completed%20,checkpoint_due:false}:null,next_lesson:profile && access().full_access?row:null,
   route:Array.from({length:20},(_,i)=>{const number=(row.content.spec.cycle-1)*20+i+1;return {...(curriculumLevel?curriculumContent(level,number).spec:row.content.spec),ordinal:number,position:i+1,status:number<=completed?'completed':number===completed+1?row.status:'locked',id:number===completed+1?row.id:null};}),
   skills:['grammar','vocabulary','listening','speaking'].map((key,i)=>({key,label:['Грамматика','Лексика','Понимание речи','Разговор'][i],attempts:0,accuracy:null})),history:[]});
  await context.routeWebSocket('**/ws/voice**',ws=>{
@@ -367,52 +367,52 @@ test('lesson conversation keeps a readable chat area on a short mobile viewport'
 });
 
 
-for(const width of [320,390,430,768])test(`completed free lesson and single offer fit ${width}px`,async t=>{
+for(const width of [320,390,430,768])test(`locked course and single offer fit ${width}px`,async t=>{
  const f=await fixture(t,{accessKind:'exhausted',width});
- await f.page.getByRole('region',{name:'Доступ к программе'}).getByText('Первый урок завершён',{exact:true}).waitFor();
+ await f.page.getByRole('region',{name:'Доступ к программе'}).getByText('Нужна подписка',{exact:true}).waitFor();
  await f.page.getByRole('button',{name:'Открыть подписку →',exact:true}).click();
- const offer=f.page.getByRole('dialog',{name:'Ещё 7 дней — за 1 ₽'});await offer.waitFor();
+ const offer=f.page.getByRole('dialog',{name:'7 дней за 1 ₽'});await offer.waitFor();
  assert.equal(f.calls.filter(c=>c.key==='/api/learning/lessons/lesson-one/start').length,0);
  assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  await f.page.getByRole('button',{name:'Закрыть предложение'}).click();
 });
-test('a paused first free lesson can resume without a date limit',async t=>{
+test('a paused first lesson requires payment',async t=>{
  const f=await fixture(t,{accessKind:'free',lessonStatus:'paused',step:4});
- await f.page.getByRole('button',{name:'Продолжить урок →',exact:true}).click();
- await f.page.getByRole('heading',{name:'Знакомимся',exact:true}).waitFor();
- assert.equal(f.calls.filter(c=>c.key==='/api/learning/lessons/lesson-one/start').length,1);
+ await f.page.getByRole('button',{name:'Открыть подписку →',exact:true}).click();
+ await f.page.getByRole('dialog',{name:'7 дней за 1 ₽'}).waitFor();
+ assert.equal(f.calls.filter(c=>c.key.endsWith('/lesson-one/start')).length,0);
 });
 test('server access denial refreshes the card and opens one offer',async t=>{
- const f=await fixture(t,{accessKind:'free',limitDuringStart:true});
+ const f=await fixture(t,{accessKind:'paid',limitDuringStart:true});
  await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
- await f.page.getByRole('dialog',{name:'Ещё 7 дней — за 1 ₽'}).waitFor();
+ await f.page.getByRole('dialog',{name:'7 дней за 1 ₽'}).waitFor();
  assert.equal(f.calls.filter(c=>c.key==='/api/learning/lessons/lesson-one/start').length,1);
 });
 test('returning after payment refreshes the course access without losing progress',async t=>{
  const f=await fixture(t,{accessKind:'exhausted'});
- await f.page.getByText('Первый урок завершён',{exact:true}).waitFor();f.activateSubscription();
+ await f.page.getByText('Нужна подписка',{exact:true}).waitFor();f.activateSubscription();
  await f.page.evaluate(()=>window.dispatchEvent(new Event('focus')));
  await f.page.getByText('Полный доступ',{exact:true}).waitFor();
  await start(f.page);assert.equal(f.row.content.spec.ordinal,1);
 });
 test('welcome day copy is gone',async t=>{
  const f=await fixture(t,{accessKind:'trial'});
- await f.page.getByText('Первый урок — бесплатно',{exact:true}).waitFor();
+ await f.page.getByText('Нужна подписка',{exact:true}).waitFor();
  assert.equal(await f.page.getByText(/Пробный доступ закончится через/).count(),0);
 });
 test('new calendar day cannot unlock another free lesson',async t=>{
- const f=await fixture(t,{accessKind:'exhausted'});await f.page.getByText('Первый урок завершён',{exact:true}).waitFor();
+ const f=await fixture(t,{accessKind:'exhausted'});await f.page.getByText('Нужна подписка',{exact:true}).waitFor();
  f.newDay();await f.page.evaluate(()=>window.dispatchEvent(new Event('focus')));
  await f.page.getByRole('button',{name:'Открыть подписку →',exact:true}).waitFor();
 });
-test('completing the first free lesson opens the ruble offer immediately',async t=>{
- const f=await fixture(t,{accessKind:'free'});await summary(f);
+test('completing a subscribed lesson does not open a checkout',async t=>{
+ const f=await fixture(t,{accessKind:'paid'});await summary(f);
  await f.page.getByRole('button',{name:'Завершить урок',exact:true}).click();
- await f.page.getByRole('dialog',{name:'Ещё 7 дней — за 1 ₽'}).waitFor();
- assert.equal(f.calls.filter(c=>c.key==='/api/subscription-offers/claim').at(-1).body.trigger,'lesson_completed');
+ await f.page.getByText('Урок завершён',{exact:false}).first().waitFor();
+ assert.equal(f.calls.filter(c=>c.body?.trigger==='lesson_completed').length,0);
 });
-test('free lesson conversation has no daily timer',async t=>{
- const f=await fixture(t,{accessKind:'free',step:4,width:320});
+test('subscribed lesson conversation has no daily timer',async t=>{
+ const f=await fixture(t,{accessKind:'paid',step:4,width:320});
  await f.page.getByRole('button',{name:'Начать урок →',exact:true}).click();
  await f.page.getByRole('button',{name:'Начать разговор',exact:true}).click();
  await f.page.locator('.msg--tutor').waitFor();

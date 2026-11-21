@@ -181,7 +181,7 @@ export function SubscriptionOffer({ enabled = true }: { enabled?: boolean }) {
   if (!open || !offer) return null;
   const intro = offer.plan === "trial7";
   const title = step === "survey" ? "Почему вы пока не хотите оформить подписку?"
-    : intro ? "Ещё 7 дней — за 1 ₽" : "Продолжим заниматься?";
+    : intro ? "7 дней за 1 ₽" : "Продолжим заниматься?";
 
   return createPortal(
     <div className="retention-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
@@ -200,7 +200,6 @@ export function SubscriptionOffer({ enabled = true }: { enabled?: boolean }) {
         <h2 id="retention-title">{title}</h2>
         <p id="retention-description" className="retention-description">
           {step === "survey" ? "Выберите основную причину. Ваш ответ поможет нам сделать занятия удобнее."
-            : offer.audience === "lesson_completed" ? "Первый урок позади. Продолжайте программу и занимайтесь во всех тренажёрах."
             : "Этот раздел доступен по подписке. Откройте все уроки, разговоры, слова и подкасты."}
         </p>
         {step === "survey" ? <div className="retention-reasons" aria-busy={!!saving}>

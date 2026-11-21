@@ -151,7 +151,6 @@ function LessonRunner({initial,onExit,onDone}: {initial: LearningLesson; onExit:
     finishBody.current ||= {elapsed_sec:elapsed()};
     const data=await learningPost<LearningLesson>(path+'/finish',finishBody.current,true);
     clock.current.running=false; update(data);
-    if (data.content.spec.ordinal === 1) requestSubscription("lesson_completed");
   });
   const step=lesson.step_index;
   const course={goal:lesson.content.spec.goal,lessonId:lesson.id,level:lesson.content.spec.level as Level,topicKey:lesson.content.spec.topic_key,
@@ -237,10 +236,20 @@ export function LearningScreen({onExit,onPlacement}: {onExit: () => void; onPlac
   const [goal,setGoal]=useState('general'), [busy,setBusy]=useState(false), [error,setError]=useState('');
   const alive=useRef(true), pending=useRef(false), starting=useRef<{key: string; requestId: string} | null>(null), loadVersion=useRef(0);
   const openSubscription = () => requestSubscription();
+  const load=useCallback(async () => {
+    const version=++loadVersion.current;
+    const result=await learningGet<LearningOverview>('/overview');
+    if(alive.current && version===loadVersion.current) {setData(result); setGoal(result.profile?.goal || 'general');}
+  },[]);
   const refreshAccess=useCallback(async () => {
     const access=await learningGet<LearningAccess>('/access');
-    if(alive.current) setData(previous => previous ? {...previous,access} : previous);
-  },[]);
+    if(!alive.current) return;
+    if(access.full_access && data?.access?.full_access === false) {
+      await load();
+    } else {
+      setData(previous => previous ? {...previous,access} : previous);
+    }
+  },[data?.access?.full_access,load]);
   useEffect(() => {
     if(!data?.enabled) return;
     const refresh=() => {if(!document.hidden) void refreshAccess().catch(() => {});};
@@ -248,11 +257,6 @@ export function LearningScreen({onExit,onPlacement}: {onExit: () => void; onPlac
     window.addEventListener('focus',refresh);document.addEventListener('visibilitychange',refresh);
     return () => {clearInterval(timer);window.removeEventListener('focus',refresh);document.removeEventListener('visibilitychange',refresh);};
   },[data?.enabled,refreshAccess]);
-  const load=async () => {
-    const version=++loadVersion.current;
-    const result=await learningGet<LearningOverview>('/overview');
-    if(alive.current && version===loadVersion.current) {setData(result); setGoal(result.profile?.goal || 'general');}
-  };
   useEffect(() => {
     alive.current=true; void load().catch(e => {if(alive.current) setError(message(e));});
     return () => {alive.current=false; if(starting.current) void learningPost(`/lessons/${starting.current.key}/pause`,{elapsed_sec:0,request_id:starting.current.requestId},true).catch(() => {});};
@@ -273,21 +277,21 @@ export function LearningScreen({onExit,onPlacement}: {onExit: () => void; onPlac
   };
   const returnToProgram=() => {setLesson(null); setCheckpoint(null); void act(load);};
   const begin=() => act(async () => {
+    if(data?.access?.full_access === false) {openSubscription();return;}
     if(data?.profile?.checkpoint_due) {
       const value=await learningPost<Checkpoint>('/checkpoint/start'); if(alive.current) setCheckpoint(value);
     } else if(data?.next_lesson) {
-      if(data.next_lesson.status==='prepared' && data.access?.remaining_today===0) {openSubscription();return;}
       starting.current={key:data.next_lesson.id,requestId:crypto.randomUUID()};
       const value=await learningPost<LearningLesson>(`/lessons/${data.next_lesson.id}/start`,{request_id:starting.current.requestId});
       if(alive.current) {setLesson(value); starting.current=null;}
     }
   });
-  const needsSubscription=data?.access?.full_access === false && !data.access.free_lesson_available;
+  const needsSubscription=data?.access?.full_access === false;
   if(lesson) return <LessonRunner key={lesson.id} initial={lesson} onExit={returnToProgram} onDone={returnToProgram} />;
   if(checkpoint) return <CheckpointRunner key={checkpoint.id} initial={checkpoint} onExit={returnToProgram} onDone={returnToProgram} />;
   return <div className="learn-screen"><header className="learn-header"><button className="learn-link" onClick={onExit}>← Главная</button><span>Персональная программа</span></header>
     <h1>Твой английский, шаг за шагом</h1>
-    {data?.access && <LearningAccessCard access={data.access} onSubscribe={needsSubscription ? undefined : () => openSubscription()} />}
+    {data?.access && <LearningAccessCard access={data.access} onSubscribe={!data.profile ? openSubscription : undefined} />}
     {error && <p className="learn-error" role="alert">{error}<button className="learn-link" disabled={busy} onClick={() => void act(load)}>Повторить загрузку</button></p>}
     {!data && !error && <p role="status">Собираем твой маршрут…</p>}
     {data && !data.enabled && <p>Программа пока недоступна в этом сервисе.</p>}
@@ -300,15 +304,15 @@ export function LearningScreen({onExit,onPlacement}: {onExit: () => void; onPlac
         <button className="learn-primary" disabled={busy} onClick={() => void act(async () => {await learningSetup(goal); await load();})}>{busy ? 'Сохраняем…' : 'Создать мою программу'}</button></>}
     </section>}
     {data?.profile && <><section className="learn-home-card"><span className="learn-eyebrow">{data.profile.checkpoint_due ? 'Контрольная точка' : `Урок ${data.next_lesson?.content.spec.ordinal || data.profile.completed_count+1}`}</span>
-      <h2>{data.profile.checkpoint_due ? 'Пора проверить развитие' : data.next_lesson?.content.spec.title}</h2>
-      <p>{data.profile.checkpoint_due ? 'Диагностика сохранит новый результат и откроет следующий цикл.' : `Научишься ${data.next_lesson?.content.spec.objective}. 15–20 минут, в своём темпе.`}</p>
+      <h2>{needsSubscription ? 'Продолжить программу' : data.profile.checkpoint_due ? 'Пора проверить развитие' : data.next_lesson?.content.spec.title}</h2>
+      {needsSubscription ? <p>Твой прогресс сохранён. Оформи подписку, чтобы продолжить занятия.</p> : data.profile.checkpoint_due ? <p>Диагностика сохранит новый результат и откроет следующий цикл.</p> : data.next_lesson && <p>Научишься {data.next_lesson.content.spec.objective}. 15–20 минут, в своём темпе.</p>}
       {!data.profile.checkpoint_due && data.next_lesson?.content.spec.cycle_focus && <p className="learn-muted">{data.next_lesson.content.spec.cycle_focus}</p>}
       {!data.profile.checkpoint_due && !!data.next_lesson?.content.spec.outcomes?.length && <ul className="learn-outcomes" aria-label="Задачи урока">
         {data.next_lesson.content.spec.outcomes.map(outcome => <li key={outcome}>{outcome}</li>)}
       </ul>}
-      <button className="learn-primary" disabled={busy} onClick={() => void begin()}>{busy ? 'Открываем…' : data.profile.checkpoint_due ? 'Начать проверку' : data.next_lesson?.status==='active' || data.next_lesson?.status==='paused' ? 'Продолжить урок' : needsSubscription ? 'Открыть подписку' : 'Начать урок'} →</button>
+      <button className="learn-primary" disabled={busy} onClick={() => void begin()}>{busy ? 'Открываем…' : needsSubscription ? 'Открыть подписку' : data.profile.checkpoint_due ? 'Начать проверку' : data.next_lesson?.status==='active' || data.next_lesson?.status==='paused' ? 'Продолжить урок' : 'Начать урок'} →</button>
     </section><LearningMap data={data} onLesson={id => void act(async () => {
-      if(id===data.next_lesson?.id && data.next_lesson.status==='prepared' && data.access?.remaining_today===0) {openSubscription();return;}
+      if(needsSubscription) {openSubscription();return;}
       const value=await learningPost<LearningLesson>(`/lessons/${id}/start`,{request_id:crypto.randomUUID()}); if(alive.current) setLesson(value);
     })} /><details className="learn-settings"><summary>Настройки программы</summary><LevelPicker value={data.profile.level} onSaved={load} /><label className="learn-input-label">Цель обучения<select value={goal} onChange={e => setGoal(e.target.value)}>{Object.entries(data.goals || {}).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>
       <button className="learn-secondary" disabled={busy} onClick={() => void act(async () => {await learningSetup(goal); await load();})}>Сохранить цель</button></details></>}

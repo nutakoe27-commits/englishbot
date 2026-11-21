@@ -387,6 +387,8 @@ async def generate_podcast(
     user_id: Optional[int] = None
     vocab_words: list[str] = []
     avoid_topics: list[str] = []
+    if not settings.DATABASE_URL and not settings.is_development:
+        raise HTTPException(503, "db_not_configured")
     if settings.DATABASE_URL:
         from .db import Repo
         from .limits import is_section_limit_reached

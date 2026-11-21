@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     # ─── Активация новых пользователей (миграция 0033) ───────────────────
     # Backward-compatible setting; welcome days no longer grant access.
-    FREE_TRIAL_DAYS: int = 0  # Deprecated: ignored; one free lesson replaces welcome days.
+    FREE_TRIAL_DAYS: int = 0  # Deprecated: ignored; welcome days have been retired.
     # Апсейл после платного триала trial7: сколько дней из 7 нужно было
     # позаниматься, чтобы получить предложение года со скидкой.
     TRIAL7_UPSELL_MIN_ACTIVE_DAYS: int = 4
@@ -208,9 +208,7 @@ class Settings(BaseSettings):
     # Скорость речи Kokoro (0.5 — медленно, 1.0 — обычно, 2.0 — быстро).
     KOKORO_TTS_SPEED: float = 1.0
 
-    # ─── Free Period (промо без оплаты) ──────────────────────────────────
-    # Когда True — все юзеры считаются подписчиками, дневной лимит 10 мин
-    # снят, кнопка подписки и /subscribe в боте скрыты.
+    # Deprecated compatibility setting. Practice requires a subscription.
     FREE_PERIOD: bool = False
 
     # ─── LLM таймаут на один turn (секунды) ──────────────────────────────

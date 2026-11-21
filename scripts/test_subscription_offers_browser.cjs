@@ -32,7 +32,7 @@ function analytics(empty=false) {
   };
 }
 
-async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboarding=false,url='/?app=1',admin=false,empty=false,legacyUuid=false,payIntent=false,failClaim=false,newLearner=false,paymentStatus='succeeded'}={}) {
+async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboarding=false,url='/?app=1',admin=false,empty=false,legacyUuid=false,payIntent=false,failClaim=false,recentlyDismissed=false,paymentStatus='succeeded'}={}) {
   const context = await browser.newContext({viewport:{width,height},serviceWorkers:'block'});
   t.after(async()=>{
     if(process.env.OFFERS_DEBUG) for(const page of context.pages()) console.log('DEBUG PAGE',await page.locator('body').innerText());
@@ -45,7 +45,7 @@ async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboard
     if(legacyUuid) Object.defineProperty(crypto,'randomUUID',{value:undefined});
     if(payIntent) localStorage.setItem('et_pay_intent','1');
   },{dark,legacyUuid,payIntent});
-  const state={eligible,claimed:false,cooldown:true,answered:false,failAnswer:false,failAdmin:false,onboarding,newLearner,needEmail:false,paid:false,paymentStatus};
+  const state={eligible,claimed:recentlyDismissed,cooldown:true,answered:false,failAnswer:false,failAdmin:false,onboarding,needEmail:false,paid:false,paymentStatus};
   const calls=[];
   await context.route('**/*',async route=>{
     const u = new URL(route.request().url());
@@ -61,7 +61,7 @@ async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboard
     if(u.pathname==='/api/me/progress') return json({streak:{current:3,best:5},total_minutes:48,total_words:12,achievements_earned:2,achievements_total:10});
     if(u.pathname==='/api/me/level') return json({level:2,lifetime_points:150,into_level:50,level_span:100,progress_pct:50});
     if(u.pathname==='/api/learning/overview') return json({enabled:false});
-    if(u.pathname==='/api/learning/access') return json({full_access:!state.eligible || state.paid,free_lesson_available:state.newLearner,daily_limit:1,used_today:state.newLearner?0:1,remaining_today:state.newLearner?1:0,conversation_seconds:null});
+    if(u.pathname==='/api/learning/access') return json({full_access:!state.eligible || state.paid,free_lesson_available:false,daily_limit:0,used_today:0,remaining_today:0,conversation_seconds:null});
     if(u.pathname==='/api/push/key') return json({enabled:false});
     if(u.pathname==='/api/payments/plans') return json({plans:[
       {key:'trial7',title:'7 дней за 1 ₽',days:7,amount_rub:1,recurring:true,renew_amount_rub:999,renew_days:30},
@@ -72,9 +72,9 @@ async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboard
     if(u.pathname==='/api/payments/promo/check') return json({valid:true,already_used:false,discount_percent:u.searchParams.get('code')==='OLD50'?50:20});
     if(u.pathname==='/api/subscription-offers/claim') {
       if(failClaim) return json({detail:'synthetic campaign outage'},503);
-      if(!state.eligible || state.paid || (body.trigger==='entry' && (state.answered || state.newLearner || state.claimed && state.cooldown))) return json({show:false,answered:state.answered});
+      if(!state.eligible || state.paid || (body.trigger==='entry' && (state.onboarding || state.answered || state.claimed && state.cooldown))) return json({show:false,answered:state.answered});
       state.claimed=true;state.cooldown=true;
-      return json({show:true,impression_id:body.request_id,audience:body.trigger==='access'?'access_required':'lesson_completed',plan:'trial7',amount_rub:1,days:7,renew_amount_rub:999,available:true,answered:state.answered,reasons});
+      return json({show:true,impression_id:body.request_id,audience:'access_required',plan:'trial7',amount_rub:1,days:7,renew_amount_rub:999,available:true,answered:state.answered,reasons});
     }
     if(u.pathname==='/api/subscription-offers/event') return json({ok:true});
     if(u.pathname==='/api/subscription-offers/answer') {
@@ -97,7 +97,7 @@ async function fixture(t, {width=390,height=844,dark=false,eligible=true,onboard
   await page.goto((admin?ADMIN:BASE)+(admin?'#/subscription-offers':url));
   return {page,state,calls};
 }
-const offer = page=>page.getByRole('dialog',{name:'Ещё 7 дней — за 1 ₽'});
+const offer = page=>page.getByRole('dialog',{name:'7 дней за 1 ₽'});
 const survey = page=>page.getByRole('dialog',{name:'Почему вы пока не хотите оформить подписку?'});
 async function shot(page,name) {if(SHOTS) {await page.mouse.move(0,0);await page.screenshot({path:path.join(SHOTS,name+'.png'),fullPage:true,animations:'disabled'});}}
 async function fit(page) {
@@ -113,7 +113,7 @@ async function openProfilePlans(page) {
 }
 
 for(const width of [320,390])test(`unsubscribed profile opens four tariffs including one-ruble week at ${width}px`,async t=>{
- const f=await fixture(t,{newLearner:true,width,height:844});
+ const f=await fixture(t,{recentlyDismissed:true,width,height:844});
  await openProfilePlans(f.page);
  assert.equal(await f.page.locator('.sub-plan-v2').count(),4);
  const week=f.page.locator('.sub-plan-v2').filter({hasText:'7 дней за 1 ₽'});
@@ -137,7 +137,7 @@ test('opening and closing profile tariffs never revives a dismissed introductory
  assert.equal(f.calls.filter(c=>c.path.endsWith('/claim')).length,1);
 });
 test('profile week goes straight to checkout with displayed terms, receipt email and no promo',async t=>{
- const f=await fixture(t,{newLearner:true});f.state.needEmail=true;
+ const f=await fixture(t,{recentlyDismissed:true});f.state.needEmail=true;
  await openProfilePlans(f.page);
  await f.page.getByRole('button',{name:'У меня есть промокод'}).click();
  await f.page.getByPlaceholder('Промокод (если есть)').fill('WELCOME10');
@@ -154,7 +154,7 @@ test('profile week goes straight to checkout with displayed terms, receipt email
  assert(!f.calls.some(c=>c.path.endsWith('/claim') && c.body.trigger==='access'));
 });
 for(const [key,title] of [['monthly','Подписка на месяц'],['yearly','Подписка на год'],['twoyear','Подписка на 2 года']])test(`profile can buy ${key} without taking the introductory week`,async t=>{
- const f=await fixture(t,{newLearner:true});await openProfilePlans(f.page);
+ const f=await fixture(t,{recentlyDismissed:true});await openProfilePlans(f.page);
  await f.page.locator('.sub-plan-v2').filter({has:f.page.getByText(title,{exact:true})}).click();
  await f.page.waitForURL('**payment_id=123**');
  assert.equal(f.calls.find(c=>c.path==='/api/payments/create').body.plan,key);
@@ -228,8 +228,8 @@ test('Escape dismisses without recording an answer; reload respects cooldown',as
  await offer(f.page).waitFor({state:'detached'});assert(!f.state.answered);
  await f.page.reload();assert.equal(await f.page.getByRole('dialog').count(),0);
 });
-test('access before finishing first lesson opens the offer instead of a standalone tool',async t=>{
- const f=await fixture(t,{newLearner:true});await f.page.getByRole('heading',{name:'Что тренируем сегодня?'}).waitFor();
+test('practice after dismissing the offer still requires a subscription',async t=>{
+ const f=await fixture(t,{recentlyDismissed:true});await f.page.getByRole('heading',{name:'Что тренируем сегодня?'}).waitFor();
  assert.equal(await f.page.getByRole('dialog').count(),0);
  await f.page.getByText('Push-to-talk диалог с AI-тьютором.').click();
  await offer(f.page).waitFor();assert.equal(f.calls.filter(c=>c.path.endsWith('/claim')).at(-1).body.trigger,'access');
@@ -248,8 +248,13 @@ for(const event of ['focus','pageshow'])test(`foreground ${event} checks once pe
  await offer(f.page).waitFor();
 });
 test('new account onboarding does not receive an unsolicited offer',async t=>{
- const f=await fixture(t,{onboarding:true,newLearner:true});await f.page.locator('.ob-v2').waitFor();
+ const f=await fixture(t,{onboarding:true});await f.page.locator('.ob-v2').waitFor();
  assert.equal(await f.page.locator('.retention-dialog').count(),0);
+});
+test('direct lesson entry without a subscription opens the offer before lesson content',async t=>{
+ const f=await fixture(t,{url:'/?app=1&mode=learning',recentlyDismissed:true});
+ await offer(f.page).waitFor();
+ assert.equal(f.calls.filter(c=>c.path.match(/lessons.+start$/)).length,0);
 });
 test('direct subscription intent opens the single offer',async t=>{
  const f=await fixture(t,{url:'/?app=1&subscribe=1'});await offer(f.page).waitFor();

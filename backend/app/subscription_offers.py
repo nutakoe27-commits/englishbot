@@ -69,16 +69,14 @@ async def _locked_user(session, authorization, init_data):
 
 
 async def _audience(session, user, trigger):
-    from .learning_access import full_access, access
     from .payment_routes import intro_eligible
-    if user.is_blocked or await full_access(Repo(session), user):
+    if user.is_blocked or await Repo(session).has_full_access(user):
         return None
     if trigger == "access":
         return "access_required"
-    if not await intro_eligible(Repo(session), user):
-        return None
-    data = await access(Repo(session), user)
-    return "lesson_completed" if not data['free_lesson_available'] else None
+    if trigger == "entry" and user.tutorial_done_at and await intro_eligible(Repo(session), user):
+        return "access_required"
+    return None
 
 
 async def _offer(session, user, impression, state):
@@ -125,10 +123,6 @@ async def claim(body: ClaimRequest, authorization: Optional[str] = Header(None))
             # cannot manufacture a second impression or revive a closed popup.
             if previous.shown_at >= now - timedelta(minutes=5) and not previous.closed_at and not previous.clicked_at:
                 return await _offer(session, user, previous, state)
-            return {"show": False}
-        if body.trigger == "lesson_completed" and await session.scalar(select(Impression.id).where(
-            Impression.user_id == user.id, Impression.campaign == CAMPAIGN,
-            Impression.audience == "lesson_completed").limit(1).with_for_update()):
             return {"show": False}
         if body.trigger == "entry" and state and state.last_shown_at > now - timedelta(hours=24):
             return {"show": False}
