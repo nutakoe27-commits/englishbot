@@ -1242,8 +1242,11 @@ class Repo:
         )
         return res.scalar_one_or_none()
 
-    async def find_payment_by_id(self, payment_id: int) -> Optional[Payment]:
-        res = await self.s.execute(select(Payment).where(Payment.id == payment_id))
+    async def find_payment_by_id(self, payment_id: int, *, lock: bool = False) -> Optional[Payment]:
+        stmt = select(Payment).where(Payment.id == payment_id)
+        if lock:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        res = await self.s.execute(stmt)
         return res.scalar_one_or_none()
 
     async def mark_payment_status(self, payment_id: int, status: str) -> None:

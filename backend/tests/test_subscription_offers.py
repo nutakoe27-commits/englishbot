@@ -89,6 +89,129 @@ class SubscriptionOfferTests(unittest.IsolatedAsyncioTestCase):
             session.add(row); await session.flush()
             return row.id
 
+    async def due_subscription(self):
+        async with db_session() as session:
+            sub = RecurringSubscription(user_id=self.uid, plan="monthly", status="active",
+                payment_method_id="test-method", amount_rub=999, period_days=30,
+                next_charge_at=utcnow()-timedelta(minutes=1), created_at=utcnow(), updated_at=utcnow())
+            session.add(sub)
+            await session.flush()
+            return sub.id
+
+    async def test_daily_renewals_continue_after_third_decline_and_return_to_normal_schedule(self):
+        sid = await self.due_subscription()
+        now = utcnow().replace(microsecond=0)
+        decline = {"status":"canceled", "cancellation_details":{"reason":"insufficient_funds"}}
+        with patch.object(recurring, "dispatch"), patch.object(recurring.yk, "create_recurring_payment", new_callable=AsyncMock) as create:
+            for i in range(5):
+                confirmed = {**decline, "id":uuid4().hex}
+                create.return_value = confirmed, 200
+                with patch.object(recurring, "utcnow", return_value=now), patch("app.db.repo.utcnow", return_value=now):
+                    self.assertTrue(await recurring._claim(sid))
+                    self.assertEqual(await recurring.charge_one(sid), "failed")
+                    self.assertFalse(await recurring._claim(sid))
+                    # Provider may deliver the same cancellation after our API response.
+                    with patch.object(recurring.yk, "fetch_payment", new=AsyncMock(return_value=confirmed)):
+                        response = await self.client.post("/api/payments/yookassa/webhook",json={"object":{"id":confirmed["id"]}})
+                        self.assertEqual(response.status_code, 200)
+                async with db_session() as session:
+                    sub = await session.get(RecurringSubscription, sid)
+                    self.assertEqual((sub.status, sub.attempts, sub.next_charge_at), ("active", i+1, now+timedelta(days=1)))
+                    self.assertIsNone((await session.get(User, self.uid)).subscription_until)
+                now += timedelta(days=1)
+            success = {"id": uuid4().hex, "status": "succeeded"}
+            create.return_value = success, 200
+            with patch.object(recurring, "utcnow", return_value=now), patch("app.db.repo.utcnow", return_value=now):
+                self.assertTrue(await recurring._claim(sid))
+                self.assertEqual(await recurring.charge_one(sid), "succeeded")
+                self.assertFalse(await recurring._claim(sid))
+            async with db_session() as session:
+                sub = await session.get(RecurringSubscription, sid)
+                until = (await session.get(User, self.uid)).subscription_until
+                self.assertEqual((sub.status,sub.attempts,sub.last_error), ("active",0,None))
+                self.assertEqual(sub.next_charge_at, until-timedelta(hours=settings.RECURRING_CHARGE_BEFORE_HOURS))
+            self.assertEqual(len({c.kwargs["idempotence_key"] for c in create.await_args_list}), 6)
+
+    async def test_concurrent_cancellation_event_and_worker_apply_one_decline(self):
+        sid = await self.due_subscription()
+        confirmed = {"id":uuid4().hex, "status":"canceled", "cancellation_details":{"reason":"insufficient_funds"}}
+        webhook = None
+
+        async def provider(**request):
+            nonlocal webhook
+            confirmed["metadata"] = request["metadata"]
+            webhook = asyncio.create_task(self.client.post("/api/payments/yookassa/webhook", json={"object":{"id":confirmed["id"]}}))
+            await fetched.wait()
+            return confirmed, 200
+
+        fetched = asyncio.Event()
+        async def fetch(_):
+            fetched.set()
+            return confirmed
+
+        with patch.object(recurring, "dispatch"), patch.object(recurring.yk, "create_recurring_payment", side_effect=provider), patch.object(recurring.yk, "fetch_payment", side_effect=fetch):
+            self.assertEqual(await asyncio.wait_for(recurring.charge_one(sid), 5), "failed")
+            self.assertEqual((await asyncio.wait_for(webhook, 5)).status_code, 200)
+        async with db_session() as session:
+            sub = await session.get(RecurringSubscription, sid)
+            self.assertEqual((sub.status, sub.attempts), ("active", 1))
+            self.assertGreater(sub.next_charge_at, utcnow()+timedelta(hours=23))
+
+    async def test_rejected_create_error_id_is_not_a_payment_id(self):
+        sid = await self.due_subscription()
+        rejected = {"id":uuid4().hex, "type":"error", "code":"invalid_request"}
+        with patch.object(recurring, "dispatch"), patch.object(recurring.yk, "create_recurring_payment", return_value=(rejected,400)):
+            self.assertEqual(await recurring.charge_one(sid), "failed")
+            self.assertEqual(await recurring.charge_one(sid), "skipped")
+        async with db_session() as session:
+            sub = await session.get(RecurringSubscription, sid)
+            local = await session.scalar(select(Payment).where(Payment.recurring_subscription_id==sid))
+            self.assertEqual((sub.attempts, sub.last_error, local.status), (1, "invalid_request", "canceled"))
+            self.assertNotEqual(local.provider_payment_id, rejected["id"])
+
+    async def test_pending_renewal_timeout_and_late_webhook_after_user_cancels(self):
+        sid = await self.due_subscription()
+        pid = uuid4().hex
+        with patch.object(recurring,"dispatch"), patch.object(recurring.yk,"create_recurring_payment",new_callable=AsyncMock) as create:
+            create.side_effect = [(None,None), ({"id":pid,"status":"pending"},200)]
+            self.assertEqual(await recurring.charge_one(sid), "retry_later")
+            self.assertEqual(await recurring.charge_one(sid), "pending")
+            self.assertEqual(create.await_args_list[0], create.await_args_list[1])
+            with patch.object(recurring.yk,"fetch_payment",new=AsyncMock(return_value={"id":pid,"status":"pending"})) as fetch:
+                self.assertEqual(await recurring.charge_one(sid), "pending")
+                fetch.assert_awaited_once_with(pid)
+            response = await self.client.post("/api/payments/recurring/cancel",headers=self.headers)
+            self.assertEqual(response.json()["status"], "canceled")
+            with patch.object(recurring.yk,"fetch_payment",new=AsyncMock(return_value={"id":pid,"status":"canceled"})):
+                response = await self.client.post("/api/payments/yookassa/webhook",json={"object":{"id":pid}})
+                self.assertEqual(response.status_code, 200)
+            with patch.object(recurring,"utcnow",return_value=utcnow()+timedelta(days=2)):
+                self.assertFalse(await recurring._claim(sid))
+                self.assertEqual(await recurring.charge_one(sid),"skipped")
+            async with db_session() as session:
+                sub = await session.get(RecurringSubscription,sid)
+                self.assertEqual((sub.status,sub.payment_method_id,sub.attempts),("canceled","",0))
+                self.assertEqual(await session.scalar(select(func.count()).select_from(Payment).where(Payment.recurring_subscription_id==sid)),1)
+            self.assertEqual(create.await_count,2)
+
+    async def test_old_unresolved_request_cannot_create_another_charge(self):
+        sid = await self.due_subscription()
+        with patch.object(recurring,"dispatch"), patch.object(recurring.yk,"create_recurring_payment",new_callable=AsyncMock) as create:
+            create.return_value = None,None
+            self.assertEqual(await recurring.charge_one(sid),"retry_later")
+            with patch.object(recurring,"utcnow",return_value=utcnow()+timedelta(days=2)):
+                self.assertEqual(await recurring.charge_one(sid),"retry_later")
+            create.assert_awaited_once()
+
+    async def test_revoked_method_stops_daily_retries(self):
+        sid = await self.due_subscription()
+        with patch.object(recurring, "dispatch"), patch.object(recurring.yk, "create_recurring_payment", new_callable=AsyncMock) as create:
+            create.return_value = {"id":uuid4().hex,"status":"canceled","cancellation_details":{"reason":"permission_revoked"}},200
+            self.assertEqual(await recurring.charge_one(sid),"failed")
+            async with db_session() as session:
+                self.assertEqual((await session.get(RecurringSubscription,sid)).status,"failed")
+            self.assertFalse(await recurring._claim(sid))
+
     async def test_expired_trial_first_return_and_account_wide_cooldown(self):
         first = await self.claim()
         self.assertTrue(first["show"])

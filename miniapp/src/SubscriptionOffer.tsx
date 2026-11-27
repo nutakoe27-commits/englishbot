@@ -217,7 +217,7 @@ export function SubscriptionOffer({ enabled = true }: { enabled?: boolean }) {
             <Button type="submit" fullWidth size="lg" disabled={paying || !offer.available}>
               {paying ? "Открываем оплату…" : intro ? "Подключить 7 дней за 1 ₽" : `Подключить за ${offer.amount_rub} ₽`}
             </Button>
-            <p className="retention-fineprint">* {intro ? `Сейчас — 1 ₽ за 7 дней. Затем — ${offer.renew_amount_rub} ₽ каждые 30 дней автоматически.` : `${offer.renew_amount_rub} ₽ каждые 30 дней автоматически.`} Отменить автопродление можно в профиле до следующего списания. {intro && "Предложение доступно один раз при первом подключении."}</p>
+            <p className="retention-fineprint">* {intro ? `Сейчас — 1 ₽ за 7 дней. Затем — ${offer.renew_amount_rub} ₽ каждые 30 дней автоматически.` : `${offer.renew_amount_rub} ₽ каждые 30 дней автоматически.`} При неудачной оплате повторяем попытку раз в сутки. Отменить автопродление можно в профиле до следующего списания. {intro && "Предложение доступно один раз при первом подключении."}</p>
             <a className="retention-offer-link" href="/oferta.html" target="_blank" rel="noreferrer">Ознакомиться с офертой</a>
             {!offer.available && <p className="retention-error" role="status">Подключение подписки временно недоступно. Попробуйте позже.</p>}
             {error && <p className="retention-error" role="alert">{error}</p>}

@@ -514,14 +514,16 @@ async def yookassa_webhook(request: Request) -> dict:
     async with db_session() as session:
         repo = Repo(session)
         payment = await repo.find_payment_by_provider_id(provider_pid)
+        if payment is not None:
+            payment = await repo.find_payment_by_id(payment.id, lock=True)
         if payment is None:
             # Вебхук мог обогнать запись provider_payment_id (у автосписаний
             # ответ ЮKassa и нотификация приходят почти одновременно) —
             # находим платёж по нашему id из metadata и дописываем связь.
             meta_pid = str((confirmed.get("metadata") or {}).get("payment_id") or "")
             if meta_pid.isdigit():
-                cand = await repo.find_payment_by_id(int(meta_pid))
-                if cand is not None and str(cand.provider_payment_id or "").startswith("tmp_"):
+                cand = await repo.find_payment_by_id(int(meta_pid), lock=True)
+                if cand is not None and (cand.provider_payment_id == provider_pid or str(cand.provider_payment_id or "").startswith("tmp_")):
                     cand.provider_payment_id = provider_pid
                     await session.flush()
                     payment = cand
@@ -583,10 +585,9 @@ async def yookassa_webhook(request: Request) -> dict:
                     )
         elif real_status == "canceled":
             if payment.status != "succeeded":  # не отменяем то, что уже зачтено
-                was_pending = payment.status == "pending"
                 await repo.mark_payment_status(int(payment.id), "canceled")
                 from . import recurring
-                rec_notes = await recurring.after_cancel(repo, payment, confirmed) if was_pending else []
+                rec_notes = await recurring.after_cancel(repo, payment, confirmed)
                 await session.commit()
                 recurring.dispatch(rec_notes)
         else:

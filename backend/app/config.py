@@ -117,9 +117,6 @@ class Settings(BaseSettings):
     YOOKASSA_RECURRING_ENABLED: bool = False
     # За сколько часов до конца подписки списывать следующий период.
     RECURRING_CHARGE_BEFORE_HOURS: int = 24
-    # Через сколько часов повторять неудачное списание и сколько раз.
-    RECURRING_RETRY_HOURS: int = 24
-    RECURRING_MAX_ATTEMPTS: int = 3
     # Напоминание о предстоящем списании — за столько часов до него.
     RECURRING_REMIND_BEFORE_HOURS: int = 24
     # Как часто планировщик проверяет, кого пора списывать (секунды).

@@ -391,7 +391,7 @@ export function SubscribeScreen({ onClose, onPaid, initialReturnPaymentId, initi
                           {p.key === "trial7"
                             ? `Через ${p.days} ${_daysWord(p.days)} — подписка на месяц: ${p.renew_amount_rub ?? monthlyPrice} ₽ каждые ${p.renew_days ?? 30} дней, продлевается автоматически.`
                             : `Продлевается автоматически: ${p.amount_rub} ₽ каждые ${p.days} ${_daysWord(p.days)}${hasDiscount ? ", скидка — на первую оплату" : ""}.`}
-                          {" "}Отменить можно в профиле.
+                          {" "}При неудачной оплате повторяем попытку раз в сутки. Отменить можно в профиле.
                         </div>
                       )}
                     </button>

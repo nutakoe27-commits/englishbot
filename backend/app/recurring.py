@@ -18,8 +18,8 @@ recurring.py — автопродление месячной подписки ч
        - charge_due(): пора списывать → захват строки (locked_until), платёж
          по payment_method_id без участия человека. succeeded → подписка
          продлевается тем же credit_subscription_for_payment, что и обычная
-         оплата; canceled → повтор через RECURRING_RETRY_HOURS, после
-         RECURRING_MAX_ATTEMPTS или при отзыве карты — status=failed.
+         оплата; временный отказ → повтор через сутки до успеха или отмены;
+         окончательный отказ способа оплаты → status=failed.
   4. Профиль: GET/POST /api/payments/recurring[/cancel|/resume].
 
 Защита от двойного списания:
@@ -96,14 +96,12 @@ def _remind_hours(period_days: int) -> int:
 
 # Причины отказа ЮKassa, после которых повторять бессмысленно: способ
 # оплаты больше не годится. Остальные (недостаточно средств, сбой банка) —
-# повторяем через RECURRING_RETRY_HOURS.
+# повторяем через сутки, пока действует поручение на автосписание.
 PERMANENT_REASONS = {
     "permission_revoked", "card_expired", "invalid_card_number",
     "payment_method_restricted", "country_forbidden", "fraud_suspected",
 }
 
-# HTTP-ответы ЮKassa, которые не говорят о карте ничего: попытку не тратим.
-TRANSIENT_HTTP = {401, 403, 429, 500, 502, 503, 504}
 
 
 def enabled() -> bool:
@@ -200,9 +198,11 @@ async def _user_until(repo, user_id: int) -> Optional[datetime]:
     )).scalar_one_or_none()
 
 
-async def _get_sub(repo, *, user_id: Optional[int] = None, sub_id: Optional[int] = None):
+async def _get_sub(repo, *, user_id: Optional[int] = None, sub_id: Optional[int] = None, lock: bool = False):
     from .db.models import RecurringSubscription as RS
     q = select(RS).where(RS.user_id == user_id) if user_id is not None else select(RS).where(RS.id == sub_id)
+    if lock:
+        q = q.with_for_update().execution_options(populate_existing=True)
     return (await repo.s.execute(q)).scalar_one_or_none()
 
 
@@ -221,26 +221,27 @@ async def after_credit(repo, payment, confirmed: Optional[dict]) -> list[dict]:
     user_id = int(payment.user_id)
     until = await _user_until(repo, user_id)
     now = utcnow()
-    sub = await _get_sub(repo, user_id=user_id)
+    sub = await _get_sub(repo, user_id=user_id, lock=True)
     meta = (confirmed or {}).get("metadata") or {}
 
     if payment.recurring_subscription_id:
         # Продление прошло.
-        if sub is not None:
+        if not await repo.nudge_once(user_id=user_id, kind="recurring_renewed", dedup_key=str(payment.id)):
+            return notes
+        if sub is not None and sub.status == "active" and (sub.setup_payment_id or 0) < payment.id:
             sub.attempts = 0
             sub.last_error = None
             sub.locked_until = None
             sub.next_charge_at = _charge_at(until, sub.charge_before_hours)
             sub.updated_at = now
-        if await repo.nudge_once(user_id=user_id, kind="recurring_renewed", dedup_key=str(payment.id)):
-            amount = int(float(payment.amount_rub))
-            notes.append(dict(
-                user_id=user_id, tag="recurring",
-                title="Подписка продлена",
-                body=f"Списали {amount} ₽, доступ до {_fmt_date(until)}.",
-                tg_text=(f"✅ Подписка продлена до <b>{_fmt_date(until)}</b>, списано {amount} ₽.\n"
-                         "Отключить автопродление можно в профиле приложения."),
-            ))
+        amount = int(float(payment.amount_rub))
+        notes.append(dict(
+            user_id=user_id, tag="recurring",
+            title="Подписка продлена",
+            body=f"Списали {amount} ₽, доступ до {_fmt_date(until)}.",
+            tg_text=(f"✅ Подписка продлена до <b>{_fmt_date(until)}</b>, списано {amount} ₽.\n"
+                     "Отключить автопродление можно в профиле приложения."),
+        ))
         return notes
 
     saved = yk.saved_method(confirmed or {})
@@ -310,12 +311,14 @@ async def after_credit(repo, payment, confirmed: Optional[dict]) -> list[dict]:
 
 async def _fail(repo, sub, *, reason: str, payment_id: Optional[int]) -> list[dict]:
     """Неудачное автосписание: повтор или отключение. Возвращает уведомления."""
+    if sub is None or sub.status != "active" or not sub.payment_method_id:
+        return []
     now = utcnow()
     sub.attempts = int(sub.attempts or 0) + 1
     sub.last_error = (reason or "unknown")[:255]
     sub.locked_until = None
     sub.updated_at = now
-    final = reason in PERMANENT_REASONS or sub.attempts >= int(settings.RECURRING_MAX_ATTEMPTS)
+    final = reason in PERMANENT_REASONS
     key = f"{payment_id or 'x'}"
     notes: list[dict] = []
     if final:
@@ -330,15 +333,15 @@ async def _fail(repo, sub, *, reason: str, payment_id: Optional[int]) -> list[di
                          "оплаченного периода; продлить можно в профиле приложения."),
             ))
     else:
-        sub.next_charge_at = now + timedelta(hours=int(settings.RECURRING_RETRY_HOURS))
+        sub.next_charge_at = now + timedelta(days=1)
         if await repo.nudge_once(user_id=sub.user_id, kind="recurring_retry", dedup_key=key):
             notes.append(dict(
                 user_id=sub.user_id, tag="recurring",
                 title="Не прошла оплата подписки",
-                body="Попробуем ещё раз через сутки. Проверь карту.",
+                body="Повторяем раз в сутки до оплаты. Отменить автопродление можно в профиле.",
                 tg_text=("⚠️ Не получилось списать оплату за следующий период "
-                         f"(попытка {sub.attempts} из {settings.RECURRING_MAX_ATTEMPTS}). "
-                         "Попробуем снова через сутки — проверь, что на карте есть деньги."),
+                         "с сохранённой карты. Повторяем раз в сутки до оплаты. "
+                         "Отменить автопродление можно в профиле."),
             ))
     logger.info("[recurring] sub=%s fail reason=%s attempts=%s final=%s",
                 sub.id, reason, sub.attempts, final)
@@ -349,8 +352,8 @@ async def after_cancel(repo, payment, confirmed: Optional[dict]) -> list[dict]:
     """Вебхук: платёж canceled. Касается только автосписаний."""
     if not payment.recurring_subscription_id:
         return []
-    sub = await _get_sub(repo, sub_id=int(payment.recurring_subscription_id))
-    if sub is None or sub.status != "active":
+    sub = await _get_sub(repo, sub_id=int(payment.recurring_subscription_id), lock=True)
+    if sub is None or (payment.notes or "").split(" |", 1)[0] != _attempt_note(sub):
         return []
     reason = str(((confirmed or {}).get("cancellation_details") or {}).get("reason") or "canceled")
     return await _fail(repo, sub, reason=reason, payment_id=int(payment.id))
@@ -364,6 +367,10 @@ def _idem_key(sub) -> str:
     return f"rec-{sub.id}-{ts}-{int(sub.attempts or 0)}"
 
 
+def _attempt_note(sub) -> str:
+    return f"recurring sub={sub.id} key={_idem_key(sub)}"
+
+
 async def _claim(sub_id: int, minutes: int = 15) -> bool:
     """Атомарно забрать строку под списание. False — её уже взял другой процесс."""
     from .db.models import RecurringSubscription as RS
@@ -372,7 +379,7 @@ async def _claim(sub_id: int, minutes: int = 15) -> bool:
         res = await s.execute(
             update(RS)
             .where(
-                RS.id == sub_id, RS.status == "active", RS.next_charge_at <= now,
+                RS.id == sub_id, RS.status == "active", RS.payment_method_id != "", RS.next_charge_at <= now,
                 or_(RS.locked_until.is_(None), RS.locked_until < now),
             )
             .values(locked_until=now + timedelta(minutes=minutes), updated_at=now)
@@ -384,11 +391,12 @@ async def charge_one(sub_id: int) -> str:
     """Списать один период. Возвращает итог для логов и тестов:
     succeeded | pending | failed | retry_later | skipped."""
     from .db.repo import Repo
+    from .db.models import Payment
 
     async with db_session() as s:
         repo = Repo(s)
-        sub = await _get_sub(repo, sub_id=sub_id)
-        if sub is None or sub.status != "active" or not sub.payment_method_id:
+        sub = await _get_sub(repo, sub_id=sub_id, lock=True)
+        if sub is None or sub.status != "active" or not sub.payment_method_id or sub.next_charge_at > utcnow():
             return "skipped"
         user = await repo.get_user_by_id(int(sub.user_id))
         if user is None:
@@ -411,45 +419,77 @@ async def charge_one(sub_id: int) -> str:
         idem = _idem_key(sub)
         amount = int(sub.amount_rub)
         email = sub.email or user.email
-        local = await repo.create_pending_payment(
-            user_id=int(sub.user_id), plan=str(sub.plan or RECURRING_PLAN), amount_rub=amount,
-            days_granted=int(sub.period_days), provider_payment_id="tmp_" + secrets.token_urlsafe(16),
-            notes=f"recurring sub={sub.id} key={idem}",
-        )
-        local.recurring_subscription_id = int(sub.id)
+        note = _attempt_note(sub)
+        # Reuse the original payment_id (also present in provider metadata).
+        # Older workers appended diagnostic text to notes on uncertain responses.
+        local = await s.scalar(select(Payment).where(
+            Payment.recurring_subscription_id == sub.id,
+            or_(Payment.notes == note, Payment.notes.startswith(note + " |")),
+        ).order_by(Payment.provider_payment_id.startswith("tmp_"), Payment.id).limit(1))
+        first_submission = local is None
+        if local is None:
+            local = await repo.create_pending_payment(
+                user_id=int(sub.user_id), plan=str(sub.plan or RECURRING_PLAN), amount_rub=amount,
+                days_granted=int(sub.period_days), provider_payment_id="tmp_" + secrets.token_urlsafe(16),
+                notes=note,
+            )
+            local.recurring_subscription_id = int(sub.id)
+            local.checkout_data = {"receipt_email": email}
+        email = (local.checkout_data or {}).get("receipt_email", email)
+        amount = int(local.amount_rub)
+        provider_id = local.provider_payment_id
         local_id, method_id, user_id = int(local.id), sub.payment_method_id, int(sub.user_id)
-        sub_plan = str(sub.plan or RECURRING_PLAN)
+        sub_plan = str(local.plan)
+        if provider_id.startswith("tmp_") and local.created_at <= utcnow() - timedelta(hours=23):
+            # YooKassa guarantees idempotence for 24 hours. Wait for its webhook
+            # or operator reconciliation rather than resubmitting an unknown charge.
+            sub.locked_until = utcnow() + timedelta(days=1)
+            logger.error("[recurring] reconcile payment_id=%s: provider ID unknown", local_id)
+            return "retry_later"
 
-    resp, http = await yk.create_recurring_payment(
-        payment_method_id=method_id, amount_rub=amount,
-        description=f"English Tutor: продление подписки на {PERIOD_WORD.get(sub_plan, 'месяц')}",
-        metadata={"user_id": str(user_id), "plan": sub_plan,
-                  "payment_id": str(local_id), "recurring_subscription_id": str(sub_id)},
-        customer_email=email, idempotence_key=idem,
-    )
+    if not provider_id.startswith("tmp_"):
+        resp = await yk.fetch_payment(provider_id)
+        http = 200 if resp else None
+    else:
+        # Serialize submission with cancellation. Local payment is already
+        # committed so a webhook can identify it even if the worker crashes.
+        async with db_session() as s:
+            sub = await _get_sub(Repo(s), sub_id=sub_id, lock=True)
+            if not sub or sub.status != "active" or sub.payment_method_id != method_id or _idem_key(sub) != idem:
+                return "skipped"
+            resp, http = await yk.create_recurring_payment(
+                payment_method_id=method_id, amount_rub=amount,
+                description=f"English Tutor: продление подписки на {PERIOD_WORD.get(sub_plan, 'месяц')}",
+                metadata={"user_id": str(user_id), "plan": sub_plan,
+                          "payment_id": str(local_id), "recurring_subscription_id": str(sub_id)},
+                customer_email=email, idempotence_key=idem,
+            )
 
     notes: list[dict] = []
     outcome = "pending"
     async with db_session() as s:
         repo = Repo(s)
-        sub = await _get_sub(repo, sub_id=sub_id)
-        local = await repo.find_payment_by_id(local_id)
-
-        if resp is None or (http in TRANSIENT_HTTP):
-            # Результат неизвестен или проблема не с картой. Повторим позже с
-            # тем же Idempotence-Key (attempts и next_charge_at не меняем).
-            await repo.mark_payment_status(local_id, "canceled")
-            local.notes = (local.notes or "") + f" | transient http={http}"
-            sub.locked_until = utcnow() + timedelta(minutes=30)
+        local = await repo.find_payment_by_id(local_id, lock=True)
+        if local.status == "succeeded":
+            return "succeeded"
+        sub = await _get_sub(repo, sub_id=sub_id, lock=True)
+        current = sub is not None and sub.status == "active" and _idem_key(sub) == idem
+        # A provider error can itself carry a request ID. Only a successful
+        # response contains a payment ID. A later rejected POST also cannot
+        # disprove an earlier timed-out POST with the same key.
+        pid = str((resp or {}).get("id") or "") if http in (200, 201) else ""
+        rejected = first_submission and http is not None and 400 <= http < 500 and http not in (408, 409)
+        if not pid and not rejected:
+            if current:
+                sub.locked_until = utcnow() + timedelta(minutes=30)
             logger.warning("[recurring] sub=%s transient (http=%s) — повтор через 30 мин", sub_id, http)
             return "retry_later"
 
-        pid = str(resp.get("id") or "")
-        if not pid:
+        if rejected:
             # 4xx с описанием ошибки: платёж не создан, вина способа оплаты/данных.
             await repo.mark_payment_status(local_id, "canceled")
-            reason = str(resp.get("code") or resp.get("description") or f"http_{http}")
-            notes = await _fail(repo, sub, reason=reason, payment_id=local_id)
+            reason = str((resp or {}).get("code") or (resp or {}).get("description") or f"http_{http}")
+            notes = await _fail(repo, sub, reason=reason, payment_id=local_id) if current else []
             outcome = "failed"
         else:
             existing = await repo.find_payment_by_provider_id(pid)
@@ -471,11 +511,12 @@ async def charge_one(sub_id: int) -> str:
                 if local.status != "succeeded":
                     await repo.mark_payment_status(int(local.id), "canceled")
                 reason = str((resp.get("cancellation_details") or {}).get("reason") or "canceled")
-                notes = await _fail(repo, sub, reason=reason, payment_id=int(local.id))
+                notes = await _fail(repo, sub, reason=reason, payment_id=int(local.id)) if current else []
                 outcome = "failed"
             else:
                 # pending: ждём вебхук; строку держим, чтобы не списать дважды.
-                sub.locked_until = utcnow() + timedelta(hours=6)
+                if current:
+                    sub.locked_until = utcnow() + timedelta(hours=6)
                 outcome = "pending"
         await s.commit()
 
@@ -490,7 +531,7 @@ async def charge_due(limit: int = 50) -> dict:
     async with db_session() as s:
         ids = (await s.execute(
             select(RS.id).where(
-                RS.status == "active", RS.next_charge_at <= now,
+                RS.status == "active", RS.payment_method_id != "", RS.next_charge_at <= now,
                 or_(RS.locked_until.is_(None), RS.locked_until < now),
             ).order_by(RS.next_charge_at).limit(limit)
         )).scalars().all()
@@ -534,9 +575,10 @@ async def remind_due() -> int:
         dispatch([dict(
             user_id=user_id, tag="recurring",
             title=f"{when} продлим подписку",
-            body=f"Спишем {amount} ₽ за {word}. Отменить — в профиле.",
+            body=f"Спишем {amount} ₽ за {word}. При отказе повторяем раз в сутки. Отмена — в профиле.",
             tg_text=(f"🔔 {when} ({_fmt_date(at)}) продлим подписку: спишем {amount} ₽ "
-                     f"за {word}. Если не нужно — отмени подписку в профиле приложения."),
+                     f"за {word}. При временном отказе повторяем раз в сутки до оплаты. "
+                     "Отменить автопродление можно в профиле приложения."),
         )])
         sent += 1
     return sent
@@ -602,7 +644,7 @@ async def cancel_recurring(authorization: Optional[str] = Header(None)) -> dict:
     async with db_session() as s:
         repo = Repo(s)
         user = await auth_lib.resolve_user(repo, authorization=authorization)
-        sub = await _get_sub(repo, user_id=int(user.id))
+        sub = await _get_sub(repo, user_id=int(user.id), lock=True)
         if sub is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "no_recurring")
         if sub.status in ("active", "canceled") and (sub.status == "active" or sub.payment_method_id):
@@ -627,7 +669,7 @@ async def resume_recurring(authorization: Optional[str] = Header(None)) -> dict:
     async with db_session() as s:
         repo = Repo(s)
         user = await auth_lib.resolve_user(repo, authorization=authorization)
-        sub = await _get_sub(repo, user_id=int(user.id))
+        sub = await _get_sub(repo, user_id=int(user.id), lock=True)
         if sub is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "no_recurring")
         if sub.status == "failed":
